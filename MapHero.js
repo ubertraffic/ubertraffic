@@ -74,7 +74,7 @@ function shellHtml() {
 + '.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon,.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon{filter:invert(1) brightness(1.6)}'
 + '.pin{width:26px;height:26px;position:relative;cursor:pointer;transition:transform .4s ease}'
 + '.pin .glow{position:absolute;top:50%;left:50%;width:26px;height:26px;transform:translate(-50%,-50%);border-radius:50%;filter:blur(6px);opacity:.9;transition:background .6s ease}'
-+ '.pin .dot{position:absolute;top:50%;left:50%;width:15px;height:15px;transform:translate(-50%,-50%);border-radius:50%;border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;transition:background .6s ease,width .4s ease,height .4s ease}'
++ '.pin .dot{position:absolute;top:50%;left:50%;width:17px;height:17px;transform:translate(-50%,-50%);border-radius:50%;border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;transition:background .6s ease,width .4s ease,height .4s ease}'
 + '.pin.done .dot{width:19px;height:19px}'
 + '.pin .chk{color:#fff;font-size:12px;font-weight:900;line-height:1}'
 + '.pin .ring{position:absolute;top:50%;left:50%;width:15px;height:15px;transform:translate(-50%,-50%);border-radius:50%;animation:ping 1.9s ease-out infinite}'
@@ -147,7 +147,8 @@ function shellHtml() {
 + 'function pinEl(p){var el=document.createElement("div");el.className="pin";setPinClass(el,p);'
 + 'el.addEventListener("click",function(){if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({type:"worker_tap",requestId:p.requestId}));});return el;}'
 + 'function setPinClass(el,p){var meta=p._meta;el.className="pin"+(p.pulse?" pulse":"")+(p.status==="on_site"?" arrived":"")+(p.status==="done"?" done":"");'
-+ 'var inner=(p.status==="done"?"<div class=\\"chk\\">\\u2713</div>":"");'
++ 'var PIN_ICON={getting_ready:"\\u2026",on_the_way:"\\u2794",on_site:"\\u25C9",waiting:"\\u25CE",done:"\\u2713"};'
++ 'var inner="<div class=\\"chk\\">"+(PIN_ICON[p.status]||"\\u00b7")+"</div>";'
 + 'el.innerHTML="<div class=\\"glow\\" style=\\"background:"+meta.color+"\\"></div>"+((p.pulse||p.status==="on_site")?"<div class=\\"ring\\" style=\\"background:"+meta.color+"55\\"></div>":"")+"<div class=\\"dot\\" style=\\"background:"+meta.color+"\\">"+inner+"</div>";}'
 // ---- the LIVE updater: diff state, move things, ease camera. NO rebuild. ----
 + 'function apply(st){if(!S.ready){window.__pending=st;return;}'
