@@ -140,7 +140,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   async function accept(itemId) {
     setBusy(true); setBusyId(itemId); setMsg('');
     try { await acceptSpot(itemId); tap('success'); setMsg('✓ Spot accepted'); await refresh(); }
-    catch (e) { setMsg('Accept failed: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
+    catch (e) { setMsg('Accept failed: ' + friendly(e)); logError('accept', e, { correlationId: itemId, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
   }
   // Pass — soft, session-local. Tidies your list; job stays live for others.
   function pass(itemId) { setPassed((prev) => { const n = new Set(prev); n.add(itemId); return n; }); }
