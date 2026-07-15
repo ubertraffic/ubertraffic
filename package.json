@@ -6,6 +6,7 @@
     "lucide-react-native": "*",
     "react-native-svg": "*",
     "react-native-webview": "*",
+    "expo-location": "*",
     "react-native-url-polyfill": "*"
   }
 }
