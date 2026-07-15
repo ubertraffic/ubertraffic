@@ -17,7 +17,7 @@ import { WebView } from 'react-native-webview';
 import MapPostSheet from './MapPostSheet';
 import { C, E } from './theme';
 
-const MAPTILER_KEY = 'YOUR_MAPTILER_KEY';
+const MAPTILER_KEY = '4wtbhulnLrfGxXqYgSOp';
 const STYLE_URL = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=' + MAPTILER_KEY;
 const SYDNEY = { lat: -33.8688, lng: 151.2093 };
 
