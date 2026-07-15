@@ -37,7 +37,7 @@ function statusWords(s) {
 }
 import { useRealtime } from './useRealtime';
 import { cacheGet, cacheSet, cacheClearAll } from './screenCache';
-import { setRole, setOnline, setVehicle, getMyProfile, updateMyName, setMyOperatorLocation, addCapability, listMyCapabilities, removeCapability, listMyDispatches, acceptSpot, listMyAssignments } from './operatorService';
+import { setRole, setOnline, setVehicle, getMyProfile, updateMyName, setMyOperatorLocation, addCapability, listMyCapabilities, removeCapability, listMyDispatches, acceptSpot, listMyAssignments, getDemandHeat } from './operatorService';
 import { getPosition } from './location';
 import { getUnreadCounts } from './messagesService';
 import { readinessForTrades } from './credentialsService';
@@ -78,6 +78,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [readiness, setReadiness] = useState({});      // trade_id -> { ready, missing[] }
   const [myLoc, setMyLoc] = useState(null);            // operator's own location for the map
   const [opMapJobs, setOpMapJobs] = useState([]);      // operator's assigned job sites
+  const [demandHeat, setDemandHeat] = useState([]);    // where jobs are nearby — the "money map" heat (find-mode only)
   const [myAssigns, setMyAssigns] = useState([]);      // operator's own active assignments (for in-map lifecycle)
   const [dismissedDone, setDismissedDone] = useState([]);  // assignment ids whose "job done" moment the worker has dismissed → back to feed
   const [chat, setChat] = useState(null);              // { a, title, sub, info } — job room over the map
@@ -261,6 +262,22 @@ export function OperatorHome({ session, onOpenProfile }) {
     : profile.is_online ? 'find'
     : 'offline';
 
+  // Demand heat ("where the work is") — the worker's money map. Fetched ONLY when actively
+  // finding work (online, no active job) and on a SLOW 90s timer: demand shifts over minutes,
+  // not seconds, so a lazy refresh gives the same value at a fraction of the DB cost. The moment
+  // a worker has a job (or goes offline), this stops entirely — no ongoing load for working users.
+  useEffect(() => {
+    if (mission !== 'find' || !myLoc) { setDemandHeat([]); return; }
+    let alive = true;
+    const pull = async () => {
+      try { const d = await getDemandHeat(myLoc.lat, myLoc.lng, 40); if (alive) setDemandHeat(d || []); }
+      catch (_) { /* heat is ambient — a miss just means no update this tick */ }
+    };
+    pull();
+    const t = setInterval(pull, 90000); // 90s — demand trend, not live tracking
+    return () => { alive = false; clearInterval(t); };
+  }, [mission, myLoc]);
+
   return (
     <>
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
@@ -269,7 +286,7 @@ export function OperatorHome({ session, onOpenProfile }) {
         // mission is finding work or actively working (Laws 1+2 — don't let the map compete then).
         const mapHeight = (mission === 'find' || mission === 'working') ? 150 : 300;
         return (
-      <MapHero height={mapHeight} me={myLoc} markers={profile.is_online ? opMapJobs : []} mode="work" offline={!profile.is_online} dockedBottom
+      <MapHero height={mapHeight} me={myLoc} markers={profile.is_online ? opMapJobs : []} mode="work" offline={!profile.is_online} dockedBottom demand={demandHeat}
         hubJobs={profile.is_online ? [
           // MY active jobs — with the next lifecycle step, done right on the map
           ...(myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status)).map((a) => {

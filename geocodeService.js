@@ -5,6 +5,7 @@
 // ~1 req/sec and a real User-Agent — so callers should DEBOUNCE (the UI does).
 // TICKET: at scale, self-host Nominatim or move to a keyed provider + rate limit.
 
+import { logWarn } from './errorService';
 const ENDPOINT = 'https://nominatim.openstreetmap.org/search';
 
 /**
@@ -65,5 +66,5 @@ export async function reverseGeocode(lat, lng) {
     const state = a.state_code || a.state;
     if (suburb) return state ? `${suburb}, ${state}` : suburb;
     return r.display_name || null;
-  } catch (_) { return null; }
+  } catch (e) { logWarn('reverse_geocode', e); return null; }
 }

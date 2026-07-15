@@ -13,6 +13,7 @@
 
 import { Platform } from 'react-native';
 import { supabase } from './supabaseClient';
+import { logWarn } from './errorService';
 
 // ---- soft module loading (never throws in Snack) --------------------------------
 let Notifications = null;
@@ -92,6 +93,7 @@ export async function registerForPush(userId) {
 
     return { ok: true, token };
   } catch (e) {
+    logWarn('push_register', e, { appContext: 'operator' });
     return { ok: false, reason: 'error', error: e };
   }
 }
