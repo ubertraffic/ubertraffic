@@ -38,7 +38,7 @@ function statusWords(s) {
 import { useRealtime } from './useRealtime';
 import { cacheGet, cacheSet, cacheClearAll } from './screenCache';
 import { setRole, setOnline, setVehicle, getMyProfile, updateMyName, setMyOperatorLocation, addCapability, listMyCapabilities, removeCapability, listMyDispatches, acceptSpot, listMyAssignments, getDemandHeat } from './operatorService';
-import { getPosition } from './location';
+import { getPosition, watchPosition } from './location';
 import { getUnreadCounts } from './messagesService';
 import { readinessForTrades } from './credentialsService';
 import { unregisterPush } from './pushService';
@@ -84,7 +84,15 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [chat, setChat] = useState(null);              // { a, title, sub, info } — job room over the map
   const [arrivePrompt, setArrivePrompt] = useState(null);  // assignmentId awaiting on-site confirm (GPS override)
   const [opMapExpanded, setOpMapExpanded] = useState(false);
-  useEffect(() => { (async () => { try { const p = await getPosition(); setMyLoc({ lat: p.lat, lng: p.lng }); } catch (_) {} })(); }, []);
+  // Live location — follow the worker as they move (real GPS on Expo Go via
+  // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
+  // to DEV_LOCATION when real GPS isn't available. stop() cleans up on unmount.
+  useEffect(() => {
+    let stop = null; let alive = true;
+    watchPosition((p) => { if (alive) setMyLoc({ lat: p.lat, lng: p.lng }); })
+      .then((fn) => { if (alive) { stop = fn; } else if (fn) { fn(); } });
+    return () => { alive = false; if (stop) stop(); };
+  }, []);
   useEffect(() => { (async () => { try { setOpMapJobs(await getOperatorMapJobs()); } catch (_) {} })(); }, [jobs]);
   useEffect(() => { (async () => { try { setMyAssigns(await listMyAssignments()); } catch (_) {} })(); }, [jobs]);
 
