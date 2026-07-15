@@ -7,6 +7,7 @@ import { S_ } from './styles';
 import Icon from './Icon';
 import { supabase } from './supabaseClient';
 import { submitRating } from './ratingsService';
+import { logError } from './errorService';
 import { listMaterialClaims, resolveMaterialClaim, submitMaterialClaim } from './completionService';
 import { verifiedCredentialsFor } from './credentialsService';
 import { Entrance, PressableScale, AnimatedBar, useCountUp, CrossFade, useAttentionBump } from './Motion';
@@ -81,7 +82,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
       await resolveMaterialClaim(claimId, ok);
       const updated = await listMaterialClaims(request.id);
       setClaims(updated);
-    } catch (e) { setErr((e && e.message) || 'Could not update the materials claim — try again.'); }
+    } catch (e) { setErr((e && e.message) || 'Could not update the materials claim — try again.'); logError('materials_resolve', e, { correlationId: claimId, appContext: 'client' }); }
   }
 
   if (!visible || !request) return null;
@@ -244,7 +245,7 @@ export function MaterialsClaim({ visible, assignment, onClose, onDone }) {
       await submitMaterialClaim(assignment.id, amt, receipt.trim() || null, note.trim() || null);
       onDone && onDone();
       onClose && onClose();
-    } catch (e) { setErr((e && e.message) || 'Could not submit.'); setBusy(false); }
+    } catch (e) { setErr((e && e.message) || 'Could not submit.'); setBusy(false); logError('materials_submit', e, { correlationId: assignment.id, appContext: 'operator' }); }
   }
 
   return (

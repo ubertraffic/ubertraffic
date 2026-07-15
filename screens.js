@@ -42,6 +42,7 @@ import { getPosition } from './location';
 import { getUnreadCounts } from './messagesService';
 import { readinessForTrades } from './credentialsService';
 import { unregisterPush } from './pushService';
+import { logError } from './errorService';
 
 // local copy (App.js has its own) — small, avoids a circular screens<->App import
 function TrackerContainer({ requestId, onAction, perspective = 'client' }) {
@@ -177,7 +178,7 @@ export function OperatorHome({ session, onOpenProfile }) {
       try { const pos = await getPosition(); lat = pos.lat; lng = pos.lng; } catch (_) {}
       await checkOut(id, lat, lng, null); await refresh();
     }
-    catch (e) { setMsg('Complete failed: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
+    catch (e) { setMsg('Complete failed: ' + friendly(e)); logError('complete', e, { correlationId: id, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
   }
   // the next lifecycle action for one of my assignments
   function nextAction(a) {
@@ -511,7 +512,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
       await startJourney(id, lat, lng);
       setMsg('You\u2019re on the way. The client\u2019s been notified.');
       await refresh();
-    } catch (e) { setMsg('Couldn\u2019t start journey: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
+    } catch (e) { setMsg('Couldn\u2019t start journey: ' + friendly(e)); logError('start_journey', e, { correlationId: id, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
   }
 
   // Geofenced arrival: capture GPS, call check_in; hard-block if too far.
@@ -545,7 +546,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
       try { const pos = await getPosition(); lat = pos.lat; lng = pos.lng; } catch (_) {}
       await checkOut(id, lat, lng, null);
       await refresh();
-    } catch (e) { setMsg('Complete failed: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
+    } catch (e) { setMsg('Complete failed: ' + friendly(e)); logError('complete', e, { correlationId: id, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
   }
 
   // Phone died / GPS lost mid-shift: report finishing so the job enters reconciliation

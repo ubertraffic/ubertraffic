@@ -40,6 +40,7 @@ import { C, MONO, S, R, T, E, M, Z, shadow, shadowSm } from './theme';
 import { SH, S_ } from './styles';
 import { OperatorHome, OperatorJobs, OperatorEarnings, Account } from './screens';
 import { RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, tap, StepFade, PrimaryBtn, estTotal, jobCrewSize, jobTitle, jobSubtitle, Center } from './components2';
+import { logError } from './errorService';
 import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerLine, MatchCard, EmptyState, isStalledAssignment, requestHasStall, repLine, autoReleaseIn, friendly } from './components';
 
 /* ============================================================ ROOT */
@@ -859,11 +860,11 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       setReviewReq(null);
       await load();
       if (assignmentId) setRatePrompt({ assignmentId, rateeName });
-    } catch (e) { setMsg('Approve failed: ' + friendly(e)); throw e; } finally { setBusy(false); }
+    } catch (e) { setMsg('Approve failed: ' + friendly(e)); logError('approve', e, { correlationId: assignmentId, appContext: 'client' }); throw e; } finally { setBusy(false); }
   }
   async function cancel(reqId) {
     setBusy(true); setMsg('');
-    try { await cancelRequest(reqId); await load(); } catch (e) { setMsg('Cancel failed: ' + friendly(e)); } finally { setBusy(false); }
+    try { await cancelRequest(reqId); await load(); } catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); }
   }
   async function repost(reqId) {
     setBusy(true); setMsg('');
@@ -1155,12 +1156,12 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
       if (assignmentId) setRatePrompt({ assignmentId, rateeName });
       // no inline message — the green "Payment cleared · $X" toast carries the moment
     }
-    catch (e) { setMsg('Approve failed: ' + friendly(e)); throw e; } finally { setBusy(false); setBusyId(null); }
+    catch (e) { setMsg('Approve failed: ' + friendly(e)); logError('approve', e, { correlationId: assignmentId, appContext: 'client' }); throw e; } finally { setBusy(false); setBusyId(null); }
   }
   async function cancel(reqId) {
     setBusy(true); setBusyId(reqId); setMsg('');
     try { await cancelRequest(reqId); await load(); setMsg('Job cancelled.'); }
-    catch (e) { setMsg('Cancel failed: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
+    catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); setBusyId(null); }
   }
   async function repost(reqId) {
     setBusy(true); setBusyId(reqId); setMsg('');
