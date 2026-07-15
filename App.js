@@ -1,0 +1,1421 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
+  ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, PanResponder,
+  Animated, Dimensions, Pressable, Keyboard, Modal, Easing,
+} from 'react-native';
+import { supabase } from './supabaseClient';
+import { createRequest, listMyRequests } from './requestsService';
+import { submitRating, myRatingForAssignment } from './ratingsService';
+import { searchAddress, reverseGeocode } from './geocodeService';
+import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor } from './taxonomyService';
+import {
+  setRole, setOnline, setVehicle, getMyProfile, updateMyName,
+  setMyOperatorLocation, getOperatorCoverage, getDemandHeat,
+  addCapability, listMyCapabilities, removeCapability,
+  listMyDispatches, acceptSpot, listMyAssignments,
+} from './operatorService';
+import { submitCredential, submitBusinessAbn } from './accountService';
+import { getUnreadCounts } from './messagesService';
+import { cacheGet, cacheSet, cacheBindUser, cacheClearAll } from './screenCache';
+import JobChat from './JobChat';
+import { Entrance, PressableScale, AnimatedBar, useCountUp, CrossFade, useAttentionBump } from './Motion';
+import { advanceAssignment, checkIn, checkOut, approveRequest, cancelRequest, cancelAssignment, repostRequest, startJourney, getMapJobs, getOperatorMapJobs, updateMyLocation, listMyRequestsFull, reportMissedCheckout, submitMaterialClaim, listMaterialClaims, resolveMaterialClaim, getTrackerState } from './completionService';
+import { getPosition } from './location';
+import { useRealtime } from './useRealtime';
+import LiveTrackerCard from './LiveTrackerCard';
+import PublicProfile from './PublicProfile';
+import { registerForPush, unregisterPush, addPushTapListener } from './pushService';
+import MapHero from './MapHero';
+import SearchingScreen from './SearchingScreen';
+import TradePicker from './TradePicker';
+import CredentialsScreen from './CredentialsScreen';
+import { readinessForTrades, verifiedCredentialsFor } from './credentialsService';
+import Icon, { iconForType } from './Icon';
+import TabBar from './TabBar';
+import Pulse from './Pulse';
+import { getPulseStats } from './pulseService';
+import MomentToasts from './MomentToast';
+import { C, MONO, S, R, T, E, M, Z, shadow, shadowSm } from './theme';
+import { SH, S_ } from './styles';
+import { OperatorHome, OperatorJobs, OperatorEarnings, Account } from './screens';
+import { RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, tap, StepFade, PrimaryBtn, estTotal, jobCrewSize, jobTitle, jobSubtitle, Center } from './components2';
+import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerLine, MatchCard, EmptyState, isStalledAssignment, requestHasStall, repLine, autoReleaseIn, friendly } from './components';
+
+/* ============================================================ ROOT */
+// ── DEV auto-login ──────────────────────────────────────────────────────────
+// Skips the login screen during Snack development (Snack wipes the session on
+// reload). Flip DEV_AUTOLOGIN to false — and it's a no-op — before any real
+// build. The password is NOT committed: paste your test password locally.
+// This is dev-only convenience; never ship it (CLAUDE.md §1).
+const DEV_AUTOLOGIN = true;
+const DEV_EMAIL = 'oddsmate.au@gmail.com';
+const DEV_PASSWORD = '';   // ← paste your test password here locally; leave blank in the repo
+
+export default function App() {
+  const [session, setSession] = useState(null);
+  const [booting, setBooting] = useState(true);
+  const [pushDeepLink, setPushDeepLink] = useState(null);   // { request_id } from a tapped push
+
+  // Register this device for push whenever we have a signed-in user. Safe no-op in Snack
+  // (no native module) — activates automatically in an EAS build. Also wires tap→deep-link.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    registerForPush(session.user.id);
+    const unsub = addPushTapListener((data) => {
+      if (data && data.request_id) setPushDeepLink({ request_id: data.request_id, at: Date.now() });
+    });
+    return () => { unsub && unsub(); };
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!cancelled && data.session) { setSession(data.session); setBooting(false); return; }
+      // no session — dev auto-login if enabled and a password is present
+      if (DEV_AUTOLOGIN && DEV_PASSWORD) {
+        try {
+          const { data: signIn } = await supabase.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD });
+          if (!cancelled) setSession(signIn.session);
+        } catch (_) { /* fall through to the login screen */ }
+      }
+      if (!cancelled) setBooting(false);
+    })();
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => { cancelled = true; sub.subscription.unsubscribe(); };
+  }, []);
+
+  if (booting) return <Center><ActivityIndicator color={C.indigo} size="large" /></Center>;
+  return session ? <Shell session={session} pushDeepLink={pushDeepLink} /> : <Login />;
+}
+
+/* ============================================================ LOGIN */
+function Login() {
+  const [mode, setMode] = useState('signin');   // 'signin' | 'signup' — explicit, never guessed
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');    // signup only
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  async function submit() {
+    const e = email.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { setMsg('Enter a valid email address.'); return; }
+    if (password.length < 6) { setMsg('Password must be at least 6 characters.'); return; }
+    if (mode === 'signup' && password !== confirm) { setMsg('Passwords don\u2019t match.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      if (mode === 'signin') {
+        // SIGN IN ONLY. Never creates an account. Wrong password / unknown email both return
+        // "invalid login credentials" from Supabase (it doesn't reveal which, by design).
+        const { error } = await supabase.auth.signInWithPassword({ email: e, password });
+        if (error) {
+          if (/invalid login credentials/i.test(error.message)) {
+            setMsg('Wrong email or password. New here? Tap "Create account".');
+          } else if (/email not confirmed/i.test(error.message)) {
+            setMsg('Check your email to confirm your account, then sign in.');
+          } else {
+            setMsg(friendly(error));
+          }
+          setBusy(false); return;
+        }
+        // success → session set by the auth listener
+      } else {
+        // SIGN UP ONLY. Deliberate account creation. An existing email is rejected clearly —
+        // no silent junk accounts, no "log straight into a new account" hole.
+        const { data, error } = await supabase.auth.signUp({ email: e, password });
+        if (error) {
+          if (/already|registered|exists/i.test(error.message)) {
+            setMsg('An account with that email already exists. Try signing in.');
+          } else {
+            setMsg(friendly(error));
+          }
+          setBusy(false); return;
+        }
+        if (!data.session) {
+          // Email confirmation is on — no session yet. Tell them honestly.
+          setMsg('Account created. Check your email to confirm, then sign in.');
+          setMode('signin'); setBusy(false); return;
+        }
+        // success with immediate session → auth listener takes over
+      }
+    } catch (err) { setMsg(friendly(err)); } finally { setBusy(false); }
+  }
+
+  return (
+    <KeyboardAvoidingView style={S_.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <StatusBar barStyle="dark-content" />
+      <View style={S_.loginWrap}>
+        <View style={S_.mark} />
+        <Text style={T.display}>SiteCall</Text>
+        <Text style={[T.small, { marginTop: 4, marginBottom: 24 }]}>{mode === 'signin' ? 'Welcome back — sign in' : 'Create your account'}</Text>
+
+        {/* explicit mode toggle — the user says whether they're signing in or up. No guessing. */}
+        <View style={S_.authToggle}>
+          <TouchableOpacity style={[S_.authTab, mode === 'signin' && S_.authTabOn]} onPress={() => { setMode('signin'); setMsg(''); }} activeOpacity={0.8}>
+            <Text style={[S_.authTabT, mode === 'signin' && S_.authTabTOn]}>Sign in</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[S_.authTab, mode === 'signup' && S_.authTabOn]} onPress={() => { setMode('signup'); setMsg(''); }} activeOpacity={0.8}>
+            <Text style={[S_.authTabT, mode === 'signup' && S_.authTabTOn]}>Create account</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={[T.label, { marginBottom: 8 }]}>Email</Text>
+        <TextInput style={S_.input} placeholder="you@example.com" placeholderTextColor={C.mute2}
+          autoCapitalize="none" keyboardType="email-address" autoCorrect={false}
+          value={email} onChangeText={setEmail} editable={!busy} />
+        <Text style={[T.label, { marginBottom: 8, marginTop: 4 }]}>Password</Text>
+        <TextInput style={S_.input} placeholder="at least 6 characters" placeholderTextColor={C.mute2}
+          secureTextEntry autoCapitalize="none" value={password} onChangeText={setPassword} editable={!busy} />
+        {mode === 'signup' && (
+          <>
+            <Text style={[T.label, { marginBottom: 8, marginTop: 4 }]}>Confirm password</Text>
+            <TextInput style={S_.input} placeholder="re-enter your password" placeholderTextColor={C.mute2}
+              secureTextEntry autoCapitalize="none" value={confirm} onChangeText={setConfirm} editable={!busy} />
+          </>
+        )}
+        <PrimaryBtn label={mode === 'signin' ? 'Sign in' : 'Create account'} onPress={submit} busy={busy} />
+        {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+/* ============================================================ SHELL (tab spine) */
+const CLIENT_TABS = [
+  { key: 'home', icon: 'home', label: 'Home' },
+  { key: 'requests', icon: 'requests', label: 'Requests' },
+  { key: 'activity', icon: 'activity', label: 'Activity' },
+  { key: 'account', icon: 'account', label: 'Account' },
+];
+const OP_TABS = [
+  { key: 'home', icon: 'home', label: 'Home' },
+  { key: 'jobs', icon: 'jobs', label: 'Jobs' },
+  { key: 'earnings', icon: 'earnings', label: 'Earnings' },
+  { key: 'account', icon: 'account', label: 'Account' },
+];
+
+function Shell({ session, pushDeepLink }) {
+  // bind the screen cache to this user — if the account changes, the cache wipes itself so no
+  // stale data from a previous session/account can ever paint. Safe by construction.
+  cacheBindUser(session?.user?.id);
+  const [role, setRoleSide] = useState('client');  // client | operator — VIEW side only
+  const [tab, setTab] = useState('home');
+  const [wantNew, setWantNew] = useState(false);   // signal: open new-request flow on Requests
+  const [focusReq, setFocusReq] = useState(null);  // signal: open a specific request on Requests
+  const [myName, setMyName] = useState(null);      // personalisation: first name in the header
+  const [acct, setAcct] = useState(null);          // identity + capabilities (drives the gate)
+  const [gate, setGate] = useState(null);          // { side } when user taps a locked side
+  const [profileId, setProfileId] = useState(null);  // public profile being viewed
+
+  const loadName = useCallback(async () => {
+    try {
+      const p = await getMyProfile();
+      setMyName((p.full_name || '').split(' ')[0] || null);
+      if (p.full_name) cacheSet('profile-name', p.full_name);   // pre-warm so Account never flickers email→name
+      setAcct(p);
+      // default the VIEW to a side the account can actually do
+      const canWorkSide = p && (p.can_work || p.can_task);
+      if (p && !p.can_hire && canWorkSide) setRoleSide('operator');
+      else if (p && p.can_hire && !canWorkSide) setRoleSide('client');
+    } catch (_) {}
+  }, []);
+  useEffect(() => { loadName(); }, [loadName]);
+
+  const canHire = !acct || acct.can_hire;   // before load, don't lock (avoids flash-lock)
+  const canWork = !acct || acct.can_work || acct.can_task;  // Work side = site work OR task work
+
+  const tabs = role === 'client' ? CLIENT_TABS : OP_TABS;
+
+  // switching sides now respects capability — a locked side opens the "get verified" gate
+  function switchRole(r) {
+    if (r === 'client' && !canHire) { setGate({ side: 'hire' }); return; }
+    if (r === 'operator' && !canWork) { setGate({ side: 'work' }); return; }
+    setRoleSide(r); setTab('home');
+  }
+  function goPost() { setWantNew(true); setTab('requests'); }
+  function goOpen(reqId) { setFocusReq(reqId); setTab('requests'); }
+
+  // A tapped push notification deep-links to its job (open the request on the Requests tab).
+  useEffect(() => {
+    if (pushDeepLink && pushDeepLink.request_id) { setRoleSide('client'); goOpen(pushDeepLink.request_id); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pushDeepLink?.at]);
+
+  return (
+    <View style={S_.fill}>
+      <StatusBar barStyle="dark-content" />
+      {/* compact top bar with role switch */}
+      <View style={S_.topbar}>
+        <View style={S_.markSm}><Icon name="pin" size={17} color="#fff" strokeWidth={2.4} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={T.heading}>SiteCall</Text>
+          <Text style={[T.label, { fontSize: 9.5, marginTop: 1 }]}>{myName ? `G'day, ${myName}` : session.user.email}</Text>
+        </View>
+        <View style={S_.roleSwitch}>
+          <RoleChip label="Hire" on={role === 'client'} locked={!canHire} onPress={() => switchRole('client')} accent={C.indigo} />
+          <RoleChip label="Work" on={role === 'operator'} locked={!canWork} onPress={() => switchRole('operator')} accent={C.green} />
+        </View>
+      </View>
+
+      {/* tab content */}
+      <View style={{ flex: 1 }}>
+        {tab === 'home' ? (
+          // BOTH homes stay mounted — we toggle visibility so the map never
+          // unmounts/reloads when switching Hire<->Work. Seamless, no page flash.
+          <View style={{ flex: 1 }}>
+            <View style={[S_.homeLayer, role !== 'client' && S_.homeHidden]} pointerEvents={role === 'client' ? 'auto' : 'none'}>
+              <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} />
+            </View>
+            <View style={[S_.homeLayer, role !== 'operator' && S_.homeHidden]} pointerEvents={role === 'operator' ? 'auto' : 'none'}>
+              <OperatorHome session={session} onOpenProfile={setProfileId} />
+            </View>
+          </View>
+        ) : role === 'client' ? (
+          tab === 'requests' ? <ClientRequests session={session} openNew={wantNew} onOpenedNew={() => setWantNew(false)} focusReq={focusReq} onFocused={() => setFocusReq(null)} />
+          : tab === 'activity' ? <ClientActivity session={session} />
+          : <Account session={session} role="client" onNameSaved={loadName} onOpenProfile={setProfileId} />
+        ) : (
+          tab === 'jobs' ? <OperatorJobs session={session} onOpenProfile={setProfileId} />
+          : tab === 'earnings' ? <OperatorEarnings session={session} />
+          : <Account session={session} role="operator" onNameSaved={loadName} onOpenProfile={setProfileId} />
+        )}
+      </View>
+
+      <TabBar tabs={tabs} active={tab} onChange={setTab} />
+      {/* MomentToasts retired: the Live Tracker card now covers lifecycle moments calmly and
+          persistently, so the popping toasts were redundant (competing peers). Kept the import
+          so it's a one-line re-enable if we ever want it for events the tracker doesn't cover. */}
+      {/* <MomentToasts /> */}
+      <CapabilityGate
+        gate={gate}
+        onClose={() => setGate(null)}
+        onUnlocked={() => { setGate(null); loadName(); }}
+      />
+      <PublicProfile visible={!!profileId} userId={profileId} meId={session.user.id} onClose={() => setProfileId(null)} />
+    </View>
+  );
+}
+
+// The gate shown when a user taps a side they haven't unlocked. It routes them into REAL
+// verification: submit a credential / ABN → it lands 'pending' → an admin (or the SafeWork/ABR
+// API) approves → capability is granted server-side. No self-granting: a client can never mark
+// itself verified (enforced by RLS + server functions). This is safety-critical for site work.
+function CapabilityGate({ gate, onClose, onUnlocked }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState('');
+  const [num, setNum] = useState('');
+  React.useEffect(() => { if (gate) { setDone(false); setErr(''); setNum(''); setBusy(false); } }, [gate]);
+  if (!gate) return null;
+  const isHire = gate.side === 'hire';
+  const title = isHire ? 'Get verified to hire' : 'Get verified to work';
+  const need = isHire
+    ? 'To post paid jobs we verify your business against the Australian Business Register. Enter your ABN to submit for verification.'
+    : gate.side === 'task'
+      ? 'Driving tasks (Bunnings/parts runs) need a verified driver\'s licence. Enter your licence number to submit for verification.'
+      : 'Site work needs a verified White Card. Enter your White Card number to submit for verification.';
+  const inputLabel = isHire ? 'ABN (11 digits)' : gate.side === 'task' ? 'Driver licence number' : 'White Card number';
+
+  async function submit() {
+    setBusy(true); setErr('');
+    try {
+      if (isHire) {
+        await submitBusinessAbn(num);
+      } else {
+        const credId = gate.side === 'task' ? 'drivers_licence' : 'white_card';
+        await submitCredential(credId, num || null, null);
+      }
+      setDone(true);
+    } catch (e) {
+      setErr(friendly ? friendly(e) : (e.message || 'Submission failed'));
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={S_.gateScrim}>
+        <View style={S_.gateCard}>
+          {done ? (
+            <>
+              <View style={S_.gatePendingBadge}><Text style={S_.gatePendingBadgeT}>Under review</Text></View>
+              <Text style={S_.gateTitle}>Submitted for verification</Text>
+              <Text style={S_.gateSub}>
+                {isHire
+                  ? 'We\'re checking your ABN against the business register. You\'ll be able to hire once it\'s approved.'
+                  : 'We\'re verifying your credential. You\'ll be able to accept jobs once it\'s approved — usually quickly.'}
+              </Text>
+              <TouchableOpacity style={S_.gateBtn} onPress={() => { onUnlocked && onUnlocked(); }}>
+                <Text style={S_.gateBtnT}>Done</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={S_.gateTitle}>{title}</Text>
+              <Text style={S_.gateSub}>{need}</Text>
+              <Text style={S_.gateInputLabel}>{inputLabel}</Text>
+              <TextInput
+                style={S_.gateInput} value={num} onChangeText={setNum}
+                placeholder={inputLabel} placeholderTextColor={C.mute2}
+                keyboardType={isHire ? 'number-pad' : 'default'}
+                autoCapitalize="characters"
+              />
+              {!!err && <Text style={S_.gateErr}>{err}</Text>}
+              <TouchableOpacity style={[S_.gateBtn, (busy || !num.trim()) && { opacity: 0.5 }]} onPress={submit} disabled={busy || !num.trim()}>
+                <Text style={S_.gateBtnT}>{busy ? 'Submitting…' : 'Submit for verification'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10 }}>
+                <Text style={S_.gateCancel}>Not now</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/* ============================================================ CLIENT · HOME (hero map) */
+/* ============================================================ RISING REQUEST SHEET */
+const SHEET_SCREEN_H = Dimensions.get('window').height;
+const SHEET_RATES = {
+  'Excavator': 110, 'Line pump': 180, 'Dozer': 160, 'Tipper': 120, 'Mobile crane': 250, 'Water cart': 110,
+  'Labourer': 40, 'Traffic controller': 38, 'Machine operator': 55, 'Dogman / rigger': 60, 'Spotter': 45, 'Concreter': 58,
+  'Bunnings pickup': 30, 'Parts run': 30, 'Bin / tip run': 50, 'Materials drop': 40,
+};
+const sheetRateFor = (name, kind) => SHEET_RATES[name] || (kind === 'task' ? 40 : 55);
+
+function RequestSheet({ visible, onClose, myLoc, onPosted }) {
+  const y = useRef(new Animated.Value(SHEET_SCREEN_H)).current;
+  const dim = useRef(new Animated.Value(0)).current;
+  const [tax, setTax] = useState(null);
+  const [phase, setPhase] = useState('door');
+  const [door, setDoor] = useState(null);
+  const [cat, setCat] = useState(null);
+  const [items, setItems] = useState([]);
+  const [loc, setLoc] = useState('');
+  const [coords, setCoords] = useState(null);
+  const [when, setWhen] = useState('now');
+  const [schedDay, setSchedDay] = useState(0);    // 0=today, 1=tomorrow, ... offset in days
+  const [schedHour, setSchedHour] = useState(9);  // 24h local hour chosen for a booked job
+  const [contactName, setContactName] = useState('');   // optional site contact (who to ask for)
+  const [contactPhone, setContactPhone] = useState(''); // optional site contact phone
+  const [materialsCap, setMaterialsCap] = useState(''); // optional materials budget
+  const [jobDetails, setJobDetails] = useState('');     // duties — what the worker will do (shown before accepting)
+  const [busy, setBusy] = useState(false);
+  const [locBusy, setLocBusy] = useState(false);   // reverse-geocoding "use my location"
+  const [err, setErr] = useState('');
+  const [kbH, setKbH] = useState(0);   // live keyboard height so the sheet lifts just enough
+
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s = Keyboard.addListener(showEvt, (e) => setKbH(e.endCoordinates?.height || 0));
+    const h = Keyboard.addListener(hideEvt, () => setKbH(0));
+    return () => { s.remove(); h.remove(); };
+  }, []);
+
+  useEffect(() => { loadTaxonomy().then(setTax).catch(() => setTax({ categories: [], trades: [] })); }, []);
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(y, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 220, mass: 0.9 }),
+        Animated.timing(dim, { toValue: 1, duration: 220, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(y, { toValue: SHEET_SCREEN_H, duration: 240, useNativeDriver: true }),
+        Animated.timing(dim, { toValue: 0, duration: 200, useNativeDriver: true }),
+      ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setJobDetails(''); setSchedDay(0); setSchedHour(9); });
+    }
+  }, [visible]);
+
+  function pickTrade(t) {
+    tap('medium');
+    const kind = t.kind === 'plant' ? 'gear' : t.kind;
+    const ex = items.find((i) => i.trade_id === t.id);
+    if (ex) setItems(items.map((i) => i.trade_id === t.id ? { ...i, qty: i.qty + 1 } : i));
+    else setItems([...items, { trade_id: t.id, kind, type: t.name, qty: 1, rate: sheetRateFor(t.name, kind), priceMode: kind === 'task' ? 'job' : 'hour', tickets: kind === 'crew' ? ['White Card'] : [] }]);
+    setPhase('rate');
+  }
+  const setRateS = (tid, v) => setItems(items.map((i) => i.trade_id === tid ? { ...i, rate: Math.max(5, v) } : i));
+  const bumpS = (tid, d) => setItems(items.map((i) => i.trade_id === tid ? { ...i, qty: Math.max(1, i.qty + d) } : i));
+  const removeItemS = (tid) => setItems(items.filter((i) => i.trade_id !== tid));
+
+  // Build a UTC ISO timestamp from the chosen LOCAL day-offset + hour (§6: store UTC).
+  // new Date(y,m,d,h) constructs in the device's local zone; toISOString() serialises to UTC.
+  function scheduledISO() {
+    const base = new Date();
+    base.setDate(base.getDate() + schedDay);
+    base.setHours(schedHour, 0, 0, 0);
+    return base.toISOString();
+  }
+
+  async function send() {
+    setBusy(true); setErr('');
+    try {
+      const isBooked = when === 'scheduled';
+      const sched = isBooked ? scheduledISO() : null;
+      if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
+      await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails });
+      setPhase('sent');
+      setTimeout(() => { onPosted && onPosted(); }, 1100);   // let the "sent" beat land, then drop home
+    } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
+  }
+
+  const cats = (tax?.categories) || [];
+  // Merged first screen: ALL trades grouped by category across every door, each group carrying its
+  // door's accent colour. Lets the client pick their trade in ONE screen instead of door→trade
+  // (the door step was just a filter; the trade screen was already category-grouped). Research-backed
+  // friction reduction — one genuinely redundant tap removed.
+  const allTradeGroups = tax ? FRONT_DOORS.flatMap((dr) =>
+    groupedTradesForDoor(tax, dr.key).map((g) => ({ ...g, doorColor: dr.color, doorKey: dr.key }))
+  ) : [];
+  const canSend = items.length > 0 && loc.trim();
+
+  return (
+    <Animated.View pointerEvents={visible ? 'auto' : 'none'} style={[SH.host, { opacity: dim }]}>
+      <Pressable style={SH.backdrop} onPress={() => { Keyboard.dismiss(); onClose(); }} />
+      <KeyboardAvoidingView
+        style={SH.kav}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        pointerEvents="box-none"
+      >
+      <Animated.View style={[SH.sheet, { transform: [{ translateY: y }] }]}>
+        <View>
+          <View style={SH.grab} />
+
+          {/* PINNED HEADER — question + assembled answers stay put while options scroll */}
+          {phase !== 'sent' && (
+          <View style={SH.header}>
+            {(() => {
+              // Progress indicator (Baymard research: progress indicators produce larger gains than
+              // changing form format). Shows the builder how far through posting they are — turns
+              // "how long is this?" into "nearly there." Steps in order: what → pay → where → when → review.
+              const STEPS = ['door', 'rate', 'where', 'when', 'review'];
+              const pos = Math.max(0, STEPS.indexOf(phase));
+              const frac = (pos + 1) / STEPS.length;
+              return (
+                <View style={SH.progressTrack}>
+                  <View style={[SH.progressFill, { width: `${Math.round(frac * 100)}%` }]} />
+                </View>
+              );
+            })()}
+            {items.length > 0 && (
+              <View style={{ marginBottom: 8 }}>
+                {items.map((it) => (
+                  <View key={it.trade_id} style={SH.itemChip}>
+                    <Text style={SH.itemChipT}>{it.type}{it.qty > 1 ? ` ×${it.qty}` : ''} · ${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text>
+                    <TouchableOpacity onPress={() => removeItemS(it.trade_id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={SH.itemChipX}>✕</Text></TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+            {phase !== 'where' && phase !== 'when' && loc ? (
+              <TouchableOpacity style={SH.answered} onPress={() => setPhase('where')} activeOpacity={0.7}>
+                <Text style={SH.answeredLabel}>WHERE</Text>
+                <Text style={SH.answeredValue} numberOfLines={1}>{loc}</Text>
+                <Text style={SH.answeredEdit}>edit</Text>
+              </TouchableOpacity>
+            ) : null}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={SH.q}>{
+                phase === 'door' ? 'What do you need?'
+                : phase === 'rate' ? "How's the pay?"
+                : phase === 'where' ? "Where's the site?"
+                : phase === 'when' ? 'When do you need it?'
+                : phase === 'sent' ? '' 
+                : 'Ready to send?'
+              }</Text>
+              {/* back button on every step except the first (door) and the final sent screen, so
+                  the client can move backward through the flow without leaving the sheet. */}
+              {phase !== 'door' && phase !== 'sent' && (
+                <TouchableOpacity
+                  onPress={() => {
+                    const prev = { rate: 'door', where: 'rate', when: 'where', review: 'when' };
+                    setPhase(prev[phase] || 'door');
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Text style={SH.back}>‹ back</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+          )}
+
+          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="none" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: phase === 'where' ? 320 : 24, paddingTop: 4 }} style={{ height: SHEET_SCREEN_H * (phase === 'where' ? 0.56 : 0.44) }}>
+
+            <StepFade phase={phase}>
+            {phase === 'door' && (
+              <>
+                {!tax ? <ActivityIndicator color={C.indigo} style={{ marginTop: 16 }} />
+                  : allTradeGroups.length === 0
+                  ? <Text style={[SH.hint, { marginTop: 4 }]}>Nothing here yet.</Text>
+                  : allTradeGroups.map((g) => (
+                    <View key={g.doorKey + '-' + g.category.id} style={{ marginBottom: 18 }}>
+                      <Text style={[SH.groupHead, { color: g.doorColor }]}>{g.category.name}</Text>
+                      <View style={SH.wrapChips}>
+                        {g.trades.map((t) => (
+                          <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: g.doorColor }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
+                            <Text style={SH.pickT}>{t.name}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                  ))}
+              </>
+            )}
+
+            {phase === 'rate' && items.length > 0 && (
+              <>
+                <Text style={SH.hint}>Pre-filled to the going rate — tweak if you like.</Text>
+                {items.slice(-1).map((it) => (
+                  <View key={it.trade_id} style={SH.rateRow}>
+                    <TouchableOpacity style={SH.rStep} onPress={() => setRateS(it.trade_id, it.rate - 5)}><Text style={SH.rStepT}>−</Text></TouchableOpacity>
+                    <Text style={SH.rVal}>${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text>
+                    <TouchableOpacity style={SH.rStep} onPress={() => setRateS(it.trade_id, it.rate + 5)}><Text style={SH.rStepT}>＋</Text></TouchableOpacity>
+                    {it.kind !== 'gear' && (
+                      <View style={SH.qtyBox}>
+                        <TouchableOpacity onPress={() => bumpS(it.trade_id, -1)}><Text style={SH.rStepT}>−</Text></TouchableOpacity>
+                        <Text style={SH.qtyVal}>×{it.qty}</Text>
+                        <TouchableOpacity onPress={() => bumpS(it.trade_id, 1)}><Text style={SH.rStepT}>＋</Text></TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                ))}
+                <View style={SH.twoBtn}>
+                  <TouchableOpacity style={SH.ghost} onPress={() => setPhase('door')}><Text style={SH.ghostT}>＋ Add another</Text></TouchableOpacity>
+                  <TouchableOpacity style={SH.next} onPress={() => setPhase('where')}><Text style={SH.nextT}>Next ›</Text></TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {phase === 'where' && (
+              <>
+                {myLoc && (
+                  <TouchableOpacity
+                    style={SH.useLoc}
+                    activeOpacity={0.8}
+                    disabled={busy || locBusy}
+                    onPress={async () => {
+                      setLocBusy(true);
+                      try {
+                        const label = await reverseGeocode(myLoc.lat, myLoc.lng);
+                        setLoc(label || 'Current location');
+                        setCoords({ lat: myLoc.lat, lng: myLoc.lng });
+                        setPhase('when');
+                      } catch (_) {
+                        setLoc('Current location');
+                        setCoords({ lat: myLoc.lat, lng: myLoc.lng });
+                        setPhase('when');
+                      } finally { setLocBusy(false); }
+                    }}>
+                    {locBusy ? <ActivityIndicator color={C.indigo} size="small" />
+                      : <><Text style={SH.useLocPin}>◎</Text><Text style={SH.useLocT}>Use my current location</Text><Text style={SH.useLocSub}>you're on site</Text></>}
+                  </TouchableOpacity>
+                )}
+                {myLoc && <Text style={SH.orType}>or type an address</Text>}
+                <AddressField value={loc} onChangeText={(t) => { setLoc(t); setCoords(null); }} onPick={(r) => { setLoc(r.label); setCoords({ lat: r.lat, lng: r.lng }); }} picked={!!coords} disabled={busy} />
+                <TouchableOpacity style={[SH.next, { marginTop: 16, opacity: loc.trim() ? 1 : 0.4 }]} disabled={!loc.trim()} onPress={() => setPhase('when')}><Text style={SH.nextT}>Next ›</Text></TouchableOpacity>
+              </>
+            )}
+
+            {phase === 'when' && (
+              <>
+                <TouchableOpacity style={[SH.opt, when === 'now' && SH.optOn]} onPress={() => { tap('light'); setWhen('now'); }}><Text style={[SH.optT, when === 'now' && SH.optTOn]}>Now — urgent</Text>{when === 'now' && <Text style={SH.optTick}>✓</Text>}</TouchableOpacity>
+                <TouchableOpacity style={[SH.opt, when === 'scheduled' && SH.optOn]} onPress={() => { tap('light'); setWhen('scheduled'); }}><Text style={[SH.optT, when === 'scheduled' && SH.optTOn]}>Book ahead</Text>{when === 'scheduled' && <Text style={SH.optTick}>✓</Text>}</TouchableOpacity>
+                {when === 'scheduled' && (
+                  <View style={{ marginTop: 14 }}>
+                    <Text style={SH.optionalLabel}>Which day</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+                      {[0, 1, 2, 3, 4, 5, 6].map((off) => {
+                        const d = new Date(); d.setDate(d.getDate() + off);
+                        const lbl = off === 0 ? 'Today' : off === 1 ? 'Tomorrow' : d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric' });
+                        return (
+                          <TouchableOpacity key={off} style={[SH.dayChip, schedDay === off && SH.dayChipOn]} onPress={() => setSchedDay(off)}>
+                            <Text style={[SH.dayChipT, schedDay === off && SH.dayChipTOn]}>{lbl}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                    <Text style={SH.optionalLabel}>Start time</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+                      {[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].map((h) => {
+                        const lbl = h === 12 ? '12pm' : h > 12 ? `${h - 12}pm` : `${h}am`;
+                        return (
+                          <TouchableOpacity key={h} style={[SH.dayChip, schedHour === h && SH.dayChipOn]} onPress={() => setSchedHour(h)}>
+                            <Text style={[SH.dayChipT, schedHour === h && SH.dayChipTOn]}>{lbl}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+                <TouchableOpacity style={[SH.next, { marginTop: 16 }]} onPress={() => setPhase('review')}><Text style={SH.nextT}>Review ›</Text></TouchableOpacity>
+              </>
+            )}
+
+            {phase === 'review' && (
+              <>
+                <View style={SH.reviewCard}>
+                  {items.map((it) => (
+                    <View key={it.trade_id} style={SH.reviewRow}><Text style={SH.reviewName}>{it.type}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text><Text style={SH.reviewRate}>${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text></View>
+                  ))}
+                  <View style={SH.reviewDiv} />
+                  <View style={SH.reviewRow}><Text style={SH.reviewMeta}>{loc || 'No location'}</Text></View>
+                  <View style={SH.reviewRow}><Text style={SH.reviewMeta}>{when === 'now' ? 'Now — urgent' : (() => { const d = new Date(); d.setDate(d.getDate() + schedDay); d.setHours(schedHour, 0, 0, 0); return 'Booked · ' + d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }) + ' at ' + d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }); })()}</Text></View>
+                </View>
+                {!!err && <Text style={SH.err}>{err}</Text>}
+                {/* Job details / duties — the "bio" workers read before accepting. Prominent (first,
+                    above the other optionals) and taught by the placeholder so clients write something useful. */}
+                <Text style={SH.optionalLabel}>What's the job? <Text style={SH.optionalHint}>(what they'll be doing — workers see this before accepting)</Text></Text>
+                <TextInput
+                  style={[SH.optionalInput, { minHeight: 76, textAlignVertical: 'top', paddingTop: 10 }]}
+                  value={jobDetails}
+                  onChangeText={(t) => setJobDetails(t.slice(0, 300))}
+                  placeholder="e.g. Directing traffic at the north entrance from 6am. Hi-vis and own boots. About 6 hours."
+                  placeholderTextColor={C.mute2}
+                  multiline
+                  maxLength={300}
+                />
+                <Text style={SH.optionalLabel}>Site contact <Text style={SH.optionalHint}>(optional — who to ask for)</Text></Text>
+                <TextInput style={SH.optionalInput} value={contactName} onChangeText={setContactName} placeholder="Name on site" placeholderTextColor={C.mute2} />
+                <TextInput style={SH.optionalInput} value={contactPhone} onChangeText={setContactPhone} placeholder="Their phone" placeholderTextColor={C.mute2} keyboardType="phone-pad" />
+                <Text style={SH.optionalLabel}>Materials budget <Text style={SH.optionalHint}>(optional — if they'll buy parts)</Text></Text>
+                <TextInput style={SH.optionalInput} value={materialsCap} onChangeText={setMaterialsCap} placeholder="$0 cap you'll cover" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
+                <TouchableOpacity style={[SH.send, !canSend && { opacity: 0.4 }]} disabled={!canSend || busy} onPress={send}><Text style={SH.sendT}>{busy ? 'Sending…' : 'Send request →'}</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => setPhase('when')} style={{ marginTop: 12, alignItems: 'center' }}><Text style={SH.back}>‹ back</Text></TouchableOpacity>
+              </>
+            )}
+
+            {phase === 'sent' && (
+              <View style={{ alignItems: 'center', paddingVertical: 30 }}>
+                <View style={SH.sentCheck}><Text style={SH.sentCheckT}>✓</Text></View>
+                <Text style={SH.sentT}>Request sent</Text>
+                <Text style={SH.sentSub}>Finding workers near your site…</Text>
+              </View>
+            )}
+            </StepFade>
+          </ScrollView>
+        </View>
+      </Animated.View>
+      </KeyboardAvoidingView>
+    </Animated.View>
+  );
+}
+
+
+// TrackerContainer — fetches + live-subscribes the unified tracker state for one job and
+// renders the LiveTrackerCard. Self-contained so it drops in anywhere a job is active.
+// Polls lightly (for ETA drift while en_route) AND reacts to realtime row changes — belt
+// and braces, since ETA moves continuously but row-changes fire on state transitions.
+function TrackerContainer({ requestId, onAction, perspective = 'client' }) {
+  const [state, setState] = useState(null);
+  const aliveRef = useRef(true);
+  const refresh = React.useCallback(async () => {
+    if (!requestId) return;
+    try { const s = await getTrackerState(requestId, perspective); if (aliveRef.current) setState(s); } catch (_) {}
+  }, [requestId, perspective]);
+
+  useEffect(() => { aliveRef.current = true; refresh(); return () => { aliveRef.current = false; }; }, [refresh]);
+  useRealtime(['assignments', 'requests'], refresh);
+  // light poll so a moving worker's ETA/progress stays fresh even without a row change.
+  // While FINDING (crew still assembling), poll fast (5s) so spots visibly trickle in one-by-one;
+  // once en_route, 15s is plenty for ETA drift.
+  useEffect(() => {
+    if (!state || !['en_route', 'finding'].includes(state.stage)) return;
+    const everyMs = state.stage === 'finding' ? 5000 : 15000;
+    const t = setInterval(refresh, everyMs);
+    return () => clearInterval(t);
+  }, [state?.stage, refresh]);
+
+  if (!state || !state.exists) return null;
+  return <LiveTrackerCard state={state} onAction={onAction} />;
+}
+
+function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
+  const [mine, setMine] = useState(() => cacheGet('client-requests'));   // shared cache → instant paint
+  const [mapJobs, setMapJobs] = useState([]);
+  const [myLoc, setMyLoc] = useState(null);
+  const [unread, setUnread] = useState({});
+  const [chat, setChat] = useState(null);   // { a, title, sub } — the open job room
+  const [ratePrompt, setRatePrompt] = useState(null);  // { assignmentId, rateeName } post-approve
+  const [reviewReq, setReviewReq] = useState(null);    // request under review-before-approve
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [activeNow, setActiveNow] = useState(null);
+  const [coverage, setCoverage] = useState(null);
+  const load = useCallback(async () => {
+    try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); } catch (e) { setMine((p) => (p == null ? [] : p)); }
+    try { setMapJobs(await getMapJobs()); } catch (_) { /* map just shows empty */ }
+    try { setUnread(await getUnreadCounts(session.user.id)); } catch (_) {}
+    try { const s = await getPulseStats(); setActiveNow(s?.active_now ?? null); } catch (_) {}
+  }, [session.user.id]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // unread badge stays fresh even without other realtime events
+    const t = setInterval(async () => { try { setUnread(await getUnreadCounts(session.user.id)); } catch (_) {} }, 10000);
+    return () => clearInterval(t);
+  }, [session.user.id]);
+  useEffect(() => { (async () => { try { const p = await getPosition(); setMyLoc({ lat: p.lat, lng: p.lng }); } catch (_) {} })(); }, []);
+  useEffect(() => {
+    if (!myLoc) return;
+    let alive = true;
+    (async () => { try { const c = await getOperatorCoverage(myLoc.lat, myLoc.lng, 25); if (alive) setCoverage(c); } catch (_) {} })();
+    return () => { alive = false; };
+  }, [myLoc]);
+  // REAL demand heat — where active jobs actually are right now (anonymised coords).
+  const [demand, setDemand] = useState(null);
+  useEffect(() => {
+    if (!myLoc) return;
+    let alive = true;
+    (async () => { try { const d = await getDemandHeat(myLoc.lat, myLoc.lng, 40); if (alive) setDemand(d); } catch (_) {} })();
+    return () => { alive = false; };
+  }, [myLoc, mapJobs]);
+  useRealtime(['assignments', 'requests'], load);
+  const active = (mine || []).filter((r) => !['complete', 'cancelled'].includes(r.status));
+  // split: jobs that NEED the client (ready to approve) vs jobs just progressing
+  const needsYou = active.filter((r) => statusMeta(r).bucket === 'ready');
+  const progressing = active.filter((r) => statusMeta(r).bucket !== 'ready');
+  // THE MATCH — the most relevant job with workers on it (one card per JOB, not
+  // per worker). Gather the whole crew so a multi-spot job reads as one thing.
+  let match = null;
+  for (const r of active) {
+    const crew = [];
+    let needed = 0;
+    let primaryItem = null;
+    for (const it of (r.request_items || [])) {
+      needed += (it.qty || 1);
+      for (const a of (it.assignments || [])) {
+        // include completed/approved too — otherwise a finished worker VANISHES from the crew
+        // roster and the count regresses ("2 of 3" drops back to "1 of 3"). The whole crew stays visible.
+        if (['committed', 'accepted', 'en_route', 'on_site', 'complete', 'approved'].includes(a.status) && a.operator) {
+          crew.push({ a, it });
+          if (!primaryItem) primaryItem = it;
+        }
+      }
+    }
+    if (crew.length > 0) { match = { r, crew, needed, it: primaryItem }; break; }
+  }
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // hub list for the full-screen command centre — track & act without leaving
+  const STATUS_WORDS = { getting_ready: 'Getting ready', on_the_way: 'On the way', on_site: 'On site', done: 'Complete', waiting: 'Finding workers' };
+  const DOT = { getting_ready: C.mute, on_the_way: C.indigo, on_site: C.green, done: C.green, waiting: C.red };
+  const hubJobs = (mapJobs || []).map((j) => {
+    const isReady = j.status === 'done' || (j.assignedStatus === 'complete');
+    return {
+      id: j.requestId,
+      title: j.label || 'Your job',
+      sub: `${j.sub || 'Job'} · ${STATUS_WORDS[j.status] || 'Active'}`,
+      dotColor: DOT[j.status] || C.mute,
+      action: j.assignedName ? 'Message' : (j.status === 'done' ? 'Review' : 'View'),
+      _raw: j,
+      // in-centre detail sheet — info + actions, all over the map
+      detail: {
+        rows: [
+          j.crewSize > 1 ? { k: 'Crew', v: j.crewSummary || `Crew of ${j.crewSize}` }
+            : j.assignedName ? { k: 'Worker', v: j.assignedName } : null,
+          { k: 'Status', v: STATUS_WORDS[j.status] || 'Active' },
+          j.sub ? { k: 'Job', v: j.sub } : null,
+        ].filter(Boolean),
+        actions: [
+          isReady ? { label: 'Review & pay', tone: 'green', fn: () => openReview(j.requestId) } : null,
+          j.assignedName ? { label: j.crewSize > 1 ? 'Message crew' : `Message ${j.assignedName.split(' ')[0]}`, tone: 'ready', closesMap: true, fn: () => messageForRaw(j) } : null,
+          j.status !== 'done' ? { label: 'Re-post to pool', tone: 'ghost', fn: () => repost(j.requestId) } : null,
+          j.status !== 'done' ? { label: 'Cancel job', tone: 'danger', fn: () => cancel(j.requestId) } : null,
+        ].filter(Boolean),
+      },
+    };
+  });
+  const messageForRaw = (raw) => {
+    if (raw.assignedName && match && match.r.id === raw.id) {
+      const trav = (match.crew || []).find((x) => x.a.status === 'en_route') || (match.crew || [])[0];
+      if (trav) { setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: `${suburbOf(match.r.address_text)} · ${STATUS_WORDS[raw.status] || ''}`, info: buildJobInfo({ a: trav.a, it: trav.it, r: match.r }) }); return; }
+    }
+    if (onOpenReq) onOpenReq(raw.id);
+  };
+  // approve / cancel / repost live HERE too (ClientHome's map detail sheet uses
+  // them) — same services as ClientRequests, this component's own handlers.
+  // C1: tapping "Approve & pay" now opens the review sheet first, not immediate settlement.
+  function openReview(reqId) {
+    const req = (mine || []).find((r) => r.id === reqId);
+    if (req) setReviewReq(req);
+  }
+  async function approve(reqId, adj) {
+    setBusy(true); setMsg('');
+    try {
+      await approveRequest(reqId, adj);
+      const req = (mine || []).find((r) => r.id === reqId);
+      let assignmentId = null, rateeName = null;
+      for (const it of (req?.request_items || [])) {
+        for (const a of (it.assignments || [])) {
+          if (['complete', 'approved'].includes(a.status) && a.operator_id) { assignmentId = a.id; rateeName = a.operator?.full_name || 'the operator'; break; }
+        }
+        if (assignmentId) break;
+      }
+      setReviewReq(null);
+      await load();
+      if (assignmentId) setRatePrompt({ assignmentId, rateeName });
+    } catch (e) { setMsg('Approve failed: ' + friendly(e)); throw e; } finally { setBusy(false); }
+  }
+  async function cancel(reqId) {
+    setBusy(true); setMsg('');
+    try { await cancelRequest(reqId); await load(); } catch (e) { setMsg('Cancel failed: ' + friendly(e)); } finally { setBusy(false); }
+  }
+  async function repost(reqId) {
+    setBusy(true); setMsg('');
+    try { await repostRequest(reqId); await load(); } catch (e) { setMsg('Re-post failed: ' + friendly(e)); } finally { setBusy(false); }
+  }
+  const onHubAction = (j) => messageForRaw(j._raw);
+  return (
+    <View style={{ flex: 1 }}>
+    <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+      <MapHero
+        height={300} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
+        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); } else { setSheetOpen(true); } }}
+        commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
+        primaryAction={needsYou.length > 0
+          ? { label: 'Review & pay', sub: `${needsYou.length} job${needsYou.length > 1 ? 's' : ''} ready`, tone: 'green', icon: '✓', closesMap: true, fn: () => onOpenReq && onOpenReq(needsYou[0].id) }
+          : { label: 'Post a job', sub: 'Get help on site now', tone: 'ready', icon: '＋', mapPost: true }}
+        chatBubble={match ? { unread: 0, fn: () => { const trav = (match.crew || []).find((x) => x.a.status === 'en_route') || (match.crew || [])[0]; if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: `${suburbOf(match.r.address_text)}`, info: buildJobInfo({ a: trav.a, it: trav.it, r: match.r }) }); } } : null}
+        onWorkerTap={(requestId) => {
+          // Solo job → tapping the worker's badge opens a direct chat with them (makes sense).
+          // CREW job → "tap for details" must open the JOB, not DM one random crew member.
+          const crewSize = (match && match.r.id === requestId) ? (match.crew || []).length : 0;
+          if (match && match.r.id === requestId && crewSize <= 1) {
+            const trav = (match.crew || []).find((x) => x.a.status === 'en_route') || (match.crew || [])[0];
+            if (trav) {
+              setChat({
+                a: trav.a,
+                title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`,
+                sub: `${suburbOf(match.r.address_text)} · on the way`,
+                info: buildJobInfo({ a: trav.a, it: trav.it, r: match.r }),
+              });
+              return;
+            }
+          }
+          if (onOpenReq) onOpenReq(requestId);
+        }}
+      />
+      {/* request bar docked to the map's bottom edge — one connected card */}
+      <TouchableOpacity style={S_.askDock} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
+        <View style={{ flex: 1 }}>
+          <Text style={S_.askDockLabel}>NEED SOMEONE ON SITE?</Text>
+          <Text style={S_.askDockT}>Post a job — get help now</Text>
+        </View>
+        <View style={S_.askDockPlus}><Text style={S_.askDockPlusT}>＋</Text></View>
+      </TouchableOpacity>
+      {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job.
+          Renders BELOW the docked post-bar so it doesn't break the map+dock connected card. */}
+      {(() => {
+        const trackedId = (match && match.r.id) || (active[0] && active[0].id);
+        if (!trackedId) return null;
+        return <TrackerContainer requestId={trackedId} onAction={(action, arg) => {
+          if (action === 'open_review' && onOpenReq) onOpenReq(trackedId);
+          else if (action === 'open_profile' && arg && onOpenProfile) onOpenProfile(arg);
+          else if (action === 'open_chat') {
+            const m = match && match.r.id === trackedId ? match : null;
+            const trav = m ? ((m.crew || []).find((x) => x.a.status === 'en_route') || (m.crew || [])[0]) : null;
+            if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: suburbOf(m.r.address_text), info: buildJobInfo({ a: trav.a, it: trav.it, r: m.r }) });
+            else if (onOpenReq) onOpenReq(trackedId);
+          }
+          else if (action === 'open_help' && onOpenReq) onOpenReq(trackedId);
+        }} />;
+      })()}
+      <View style={{ padding: S.xl, paddingTop: 20 }}>
+
+        {/* THE MATCH — the whole job, filling up, crew inside. The Uber moment. */}
+        {match && (
+          <Entrance key={match.r.id}>
+            <MatchCard
+              r={match.r} crew={match.crew} needed={match.needed}
+              unread={unread}
+              showMessage={false}
+              onOpenProfile={onOpenProfile}
+              onOpen={() => onOpenReq && onOpenReq(match.r.id)}
+              onMessageWorker={(a, it) => setChat({
+                a,
+                title: `${(a.operator?.full_name || 'Worker').split(' ')[0]} · ${it.type}`,
+                sub: `${suburbOf(match.r.address_text)} · ${a.status === 'en_route' ? 'on the way' : a.status === 'on_site' ? 'on site' : 'committed'}`,
+                info: buildJobInfo({ a, it, r: match.r }),
+              })}
+            />
+          </Entrance>
+        )}
+
+        {/* NEEDS YOU — loud, only when something's ready to approve */}
+        {needsYou.length > 0 && (
+          <View style={{ marginBottom: 18 }}>
+            <Text style={[T.eyebrow, { color: C.indigo, marginBottom: 8 }]}>Needs you</Text>
+            {needsYou.map((r) => <NeedsYouCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
+          </View>
+        )}
+
+        {(() => {
+          const isEmpty = mine !== null && progressing.length === 0 && needsYou.length === 0;
+          if (isEmpty) {
+            // EMPTY: don't dominate with a hollow placeholder. One quiet line,
+            // then let the live Pulse rise up and be the hero of the screen.
+            return (
+              <>
+                <View style={S_.rowBetween}>
+                  <Text style={T.eyebrow}>Active now</Text>
+                  <LiveTag />
+                </View>
+                <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 20 }]}>No active jobs yet — post one above and watch it fill in real time.</Text>
+                <Pulse />
+              </>
+            );
+          }
+          return (
+            <>
+              <View style={S_.rowBetween}>
+                <Text style={T.eyebrow}>Active now</Text>
+                <LiveTag />
+              </View>
+              {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
+                : (() => {
+                    // don't repeat the job that's already shown as the MatchCard hero
+                    const rest = progressing.filter((r) => !match || r.id !== match.r.id);
+                    if (rest.length === 0) return match
+                      ? null
+                      : <Text style={[T.small, { marginTop: 8, color: C.mute }]}>All caught up — nothing else in progress.</Text>;
+                    return rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />);
+                  })()}
+              <View style={{ height: 14 }} />
+              <Pulse />
+            </>
+          );
+        })()}
+      </View>
+    </ScrollView>
+    <RequestSheet
+      visible={sheetOpen}
+      onClose={() => setSheetOpen(false)}
+      myLoc={myLoc}
+      onPosted={() => { setSheetOpen(false); load(); }}
+    />
+    <JobChat
+      visible={!!chat}
+      onClose={() => { setChat(null); load(); }}
+      assignmentId={chat?.a?.id}
+      meId={session.user.id}
+      title={chat?.title}
+      subtitle={chat?.sub}
+      jobInfo={chat?.info}
+      peerId={chat?.a?.operator_id}
+      onOpenProfile={onOpenProfile}
+    />
+    <RateJob
+      visible={!!ratePrompt}
+      assignmentId={ratePrompt?.assignmentId}
+      rateeName={ratePrompt?.rateeName}
+      onClose={() => setRatePrompt(null)}
+    />
+    <ReviewApprove
+      visible={!!reviewReq}
+      request={reviewReq}
+      onClose={() => setReviewReq(null)}
+      onConfirm={(adj) => approve(reviewReq.id, adj)}
+    />
+    </View>
+  );
+}
+
+/* A job that needs the client's action — loud, high-contrast, one clear CTA. */
+function NeedsYouCard({ r, onOpen }) {
+  const items = r.request_items || [];
+  const suburb = (r.address_text || 'No location').split(',')[0];
+  const summary = items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ');
+  return (
+    <TouchableOpacity style={S_.needsCard} onPress={onOpen} activeOpacity={0.85}>
+      <View style={{ flex: 1 }}>
+        <Text style={S_.needsSuburb} numberOfLines={1}>{suburb}</Text>
+        <Text style={S_.needsSummary} numberOfLines={1}>{summary}</Text>
+        <Text style={S_.needsStatus}>Work done · ready to approve & pay</Text>
+      </View>
+      <View style={S_.needsCta}><Text style={S_.needsCtaT}>Review ›</Text></View>
+    </TouchableOpacity>
+  );
+}
+
+/* ============================================================ CLIENT · REQUESTS (wizard + list) */
+
+// real 2026 AU award-guided rates: [floor, lo, hi] $/hr (task = $/job)
+const RATES = {
+  'Excavator': [90, 110, 140], 'Line pump': [150, 180, 240], 'Dozer': [130, 160, 200],
+  'Tipper': [95, 120, 160], 'Mobile crane': [200, 250, 340], 'Water cart': [90, 110, 150],
+  'Labourer': [32, 40, 52], 'Traffic controller': [32, 38, 46], 'Machine operator': [42, 55, 72],
+  'Dogman / rigger': [48, 60, 80], 'Spotter': [35, 45, 58], 'Concreter': [45, 58, 78],
+  'Bunnings pickup': [25, 30, 45], 'Parts run': [25, 30, 45], 'Bin / tip run': [40, 50, 70], 'Materials drop': [30, 40, 60],
+};
+
+function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) {
+  const [mode, setMode] = useState('list');       // list | new | searching
+  const [step, setStep] = useState(1);
+  const [searchReq, setSearchReq] = useState(null);   // { id, summary } after a post
+  const [filter, setFilter] = useState('all');
+  const [items, setItems] = useState([]);
+  const [picker, setPicker] = useState(false);   // TradePicker open?
+  const [loc, setLoc] = useState('');
+  const [coords, setCoords] = useState(null); // { lat, lng } from picked address
+  const [when, setWhen] = useState('now');
+  const [busy, setBusy] = useState(false);
+  const [busyId, setBusyId] = useState(null);   // which request's action is running (per-card spinner)
+  const [msg, setMsg] = useState('');
+  const [mine, setMine] = useState(() => cacheGet('client-requests'));   // instant paint from last load, or null → spinner
+  const [ratePrompt, setRatePrompt] = useState(null);   // { assignmentId, rateeName } post-approve
+  const [reviewReq, setReviewReq] = useState(null);     // request under review-before-approve
+  const [sheetOpen, setSheetOpen] = useState(false);   // unified request sheet (same as home)
+
+  const load = useCallback(async () => {
+    try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); }
+    catch (e) { setMine((prev) => (prev == null ? [] : prev)); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useRealtime(['assignments', 'requests'], load);
+
+  function startNew() { setItems([]); setLoc(''); setWhen('now'); setStep(1); setMode('new'); }
+
+  // jumped here from the home "Need something on site?" button — open the flow directly
+  useEffect(() => {
+    if (openNew) { setSheetOpen(true); onOpenedNew && onOpenedNew(); }
+  }, [openNew]);
+
+  // jumped here by tapping an "Active now" card — show the list, filter to that
+  // job's bucket (so it's isolated + its action is in view), and expand it.
+  useEffect(() => {
+    if (focusReq) {
+      setMode('list');
+      const target = (mine || []).find((r) => r.id === focusReq);
+      if (target) setFilter(statusMeta(target).bucket);
+      const t = setTimeout(() => onFocused && onFocused(), 1500);
+      return () => clearTimeout(t);
+    }
+  }, [focusReq, mine]);
+  function addTrade(trade) {
+    // map a picked taxonomy trade -> a wizard item.
+    // keep `type` = trade name so existing display logic keeps working;
+    // carry trade_id so we can save the real taxonomy link.
+    const legacyKind = trade.kind === 'plant' ? 'gear' : trade.kind; // 'gear' keeps old gear behaviour (no qty bump, wet hire)
+    const ex = items.find((i) => i.trade_id === trade.id);
+    if (ex) {
+      if (legacyKind !== 'gear') setItems(items.map((i) => i.trade_id === trade.id ? { ...i, qty: i.qty + 1 } : i));
+    } else {
+      const presetRate = RATES[trade.name] ? RATES[trade.name][1] : (legacyKind === 'task' ? 40 : 55);
+      setItems([...items, {
+        trade_id: trade.id,
+        kind: legacyKind,
+        type: trade.name,
+        qty: 1,
+        rate: presetRate,
+        priceMode: legacyKind === 'task' ? 'job' : 'hour',   // task = fixed $/job, else $/hr
+        tickets: legacyKind === 'crew' ? ['White Card'] : [],
+      }]);
+    }
+    setPicker(false);
+  }
+  const removeItem = (tid) => setItems(items.filter((i) => i.trade_id !== tid));
+  const bump = (tid, d) => setItems(items.map((i) => i.trade_id === tid ? { ...i, qty: Math.max(1, i.qty + d) } : i));
+  const setRate = (tid, v) => setItems(items.map((i) => i.trade_id === tid ? { ...i, rate: v } : i));
+
+  async function post() {
+    setBusy(true); setMsg('');
+    try {
+      const id = await createRequest({ when_type: when, address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items });
+      const summary = items.map((i) => i.qty > 1 ? `${i.type} ×${i.qty}` : i.type).join(' · ') + (loc ? `  ·  ${loc}` : '');
+      setSearchReq({ id, summary });
+      setItems([]); setLoc(''); setCoords(null); setStep(1);
+      setMode('searching');
+      load();
+    } catch (e) { setMsg('Send failed: ' + friendly(e)); setMode('new'); } finally { setBusy(false); }
+  }
+  function openReview(reqId) {
+    const req = (mine || []).find((r) => r.id === reqId);
+    if (req) setReviewReq(req);
+  }
+  async function approve(reqId, adj) {
+    setBusy(true); setBusyId(reqId); setMsg('');
+    try {
+      await approveRequest(reqId, adj);
+      // find the operator on this job so we can offer an honest rating
+      const req = (mine || []).find((r) => r.id === reqId);
+      let assignmentId = null, rateeName = null;
+      for (const it of (req?.request_items || [])) {
+        for (const a of (it.assignments || [])) {
+          if (['complete', 'approved'].includes(a.status) && a.operator_id) { assignmentId = a.id; rateeName = a.operator?.full_name || 'the operator'; break; }
+        }
+        if (assignmentId) break;
+      }
+      setReviewReq(null);
+      await load();
+      if (assignmentId) setRatePrompt({ assignmentId, rateeName });
+      // no inline message — the green "Payment cleared · $X" toast carries the moment
+    }
+    catch (e) { setMsg('Approve failed: ' + friendly(e)); throw e; } finally { setBusy(false); setBusyId(null); }
+  }
+  async function cancel(reqId) {
+    setBusy(true); setBusyId(reqId); setMsg('');
+    try { await cancelRequest(reqId); await load(); setMsg('Job cancelled.'); }
+    catch (e) { setMsg('Cancel failed: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
+  }
+  async function repost(reqId) {
+    setBusy(true); setBusyId(reqId); setMsg('');
+    try { await repostRequest(reqId); await load(); setMsg('✓ Re-posted to the pool — workers notified.'); }
+    catch (e) { setMsg('Re-post failed: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
+  }
+
+  if (mode === 'searching' && searchReq) {
+    return (
+      <SearchingScreen
+        requestId={searchReq.id}
+        summary={searchReq.summary}
+        onViewJob={() => { setSearchReq(null); setMode('list'); load(); }}
+        onClose={() => { setSearchReq(null); setMode('list'); load(); }}
+      />
+    );
+  }
+
+  if (mode === 'new' && picker) {
+    return (
+      <View style={[S_.fill, { padding: S.xl, paddingTop: 48 }]}>
+        <Text style={[T.eyebrow, { marginBottom: 14 }]}>Add an item</Text>
+        <TradePicker onPick={addTrade} onCancel={() => setPicker(false)} />
+      </View>
+    );
+  }
+
+  if (mode === 'new') {
+    const canSend = items.length > 0 && loc.trim();
+    return (
+      <KeyboardAvoidingView style={S_.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <TouchableOpacity onPress={() => setMode('list')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={S_.back}>‹ Cancel</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={[T.dataBig, { fontSize: 26, marginBottom: 2 }]}>What do you need on site?</Text>
+          <Text style={[T.small, { color: C.mute, marginBottom: 20 }]}>Add what you need, tell us where. We'll find it.</Text>
+
+          {/* ITEMS — the focus of the screen. Rate lives inline as an editable chip. */}
+          {items.map((it) => (
+            <View key={it.trade_id} style={S_.composeItem}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+                <View style={S_.composeIcon}><Icon name={iconForType(it.type, it.kind)} size={20} color={C.indigo} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={T.bodyStrong}>{it.type}{it.qty > 1 ? `  ×${it.qty}` : ''}</Text>
+                  <Text style={[T.label, { fontSize: 10, marginTop: 1, color: C.mute }]}>{it.kind === 'task' ? 'Community runner' : it.kind === 'crew' ? it.tickets.join(' · ') : 'Wet · with driver'}</Text>
+                </View>
+                {it.kind !== 'gear' && (
+                  <View style={S_.qty}>
+                    <TouchableOpacity onPress={() => bump(it.trade_id, -1)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={S_.qtyBtn}>−</Text></TouchableOpacity>
+                    <Text style={S_.qtyVal}>{it.qty}</Text>
+                    <TouchableOpacity onPress={() => bump(it.trade_id, 1)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={S_.qtyBtn}>＋</Text></TouchableOpacity>
+                  </View>
+                )}
+                <TouchableOpacity onPress={() => removeItem(it.trade_id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={S_.rm}>✕</Text></TouchableOpacity>
+              </View>
+              {/* inline rate — pre-filled to the going rate, tweakable, never a gate */}
+              <View style={S_.rateInline}>
+                <TouchableOpacity onPress={() => setRate(it.trade_id, Math.max(5, (it.rate || 0) - 5))} style={S_.rateStep}><Text style={S_.rateStepT}>−</Text></TouchableOpacity>
+                <Text style={S_.rateInlineVal}>${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text>
+                <TouchableOpacity onPress={() => setRate(it.trade_id, (it.rate || 0) + 5)} style={S_.rateStep}><Text style={S_.rateStepT}>＋</Text></TouchableOpacity>
+                <Text style={[T.label, { fontSize: 9, color: C.mute, marginLeft: 8 }]}>going rate — tweak if you like</Text>
+              </View>
+            </View>
+          ))}
+
+          <TouchableOpacity style={S_.composeAdd} onPress={() => setPicker(true)} activeOpacity={0.8}>
+            <Text style={S_.composeAddT}>＋  Add {items.length ? 'another' : 'what you need'}</Text>
+          </TouchableOpacity>
+
+          {/* LOCATION + WHEN — quiet, defaulted, only as loud as they need to be */}
+          <View style={{ height: 22 }} />
+          <Text style={[T.label, { marginBottom: 8 }]}>Where</Text>
+          <AddressField
+            value={loc}
+            onChangeText={(t) => { setLoc(t); setCoords(null); }}
+            onPick={(r) => { setLoc(r.label); setCoords({ lat: r.lat, lng: r.lng }); }}
+            picked={!!coords}
+            disabled={busy}
+          />
+          <View style={{ height: 14 }} />
+          <Text style={[T.label, { marginBottom: 8 }]}>When</Text>
+          <View style={S_.seg}>
+            <SegBtn label="Now — urgent" on={when === 'now'} onPress={() => setWhen('now')} />
+            <SegBtn label="Book ahead" on={when === 'scheduled'} onPress={() => setWhen('scheduled')} />
+          </View>
+
+          {/* live estimate — quiet reassurance, not a decision */}
+          {items.length > 0 && (
+            <View style={S_.composeEst}>
+              <Text style={[T.small, { color: C.mute }]}>Estimated total · 4h</Text>
+              <Text style={T.money}>~${estTotal(items).toLocaleString()}</Text>
+            </View>
+          )}
+          {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
+        </ScrollView>
+
+        {/* ONE primary action, pinned in the thumb zone */}
+        <View style={S_.composeFooter}>
+          <PrimaryBtn
+            label={busy ? 'Sending…' : !items.length ? 'Add what you need' : !loc.trim() ? 'Add a location' : 'Send request →'}
+            onPress={post} busy={busy} disabled={!canSend}
+          />
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  // LIST mode
+  const FILTERS = [['all','All'],['open','Open'],['filling','Filling'],['filled','Filled'],['ready','Ready'],['complete','Complete'],['cancelled','Cancelled']];
+  const counts = {};
+  (mine || []).forEach((r) => { const b = statusMeta(r).bucket; counts[b] = (counts[b] || 0) + 1; });
+  const shown = (mine || []).filter((r) => filter === 'all' ? true : statusMeta(r).bucket === filter);
+
+  return (
+    <View style={{ flex: 1 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <View style={S_.rowBetween}>
+        <Text style={T.eyebrow}>My requests</Text>
+        <LiveTag />
+      </View>
+      <TouchableOpacity style={S_.newBtn} onPress={() => setSheetOpen(true)} activeOpacity={0.9}>
+        <Text style={S_.newBtnText}>＋ New request</Text>
+      </TouchableOpacity>
+
+      {/* filter bar */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+        {FILTERS.map(([key, label]) => {
+          const n = key === 'all' ? (mine || []).length : (counts[key] || 0);
+          const on = filter === key;
+          return (
+            <TouchableOpacity key={key} style={[S_.filterChip, on && S_.filterChipOn]} onPress={() => setFilter(key)} activeOpacity={0.8}>
+              <Text style={[S_.filterT, on && S_.filterTOn]}>{label}</Text>
+              <Text style={[S_.filterN, on && S_.filterNOn]}>{n}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      {!!msg && (
+        <View style={msg.startsWith('✓') ? S_.successBanner : null}>
+          <Text style={msg.startsWith('✓') ? S_.successText : S_.msg}>{msg}</Text>
+        </View>
+      )}
+      {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
+        : shown.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>{filter === 'all' ? 'No requests yet.' : `Nothing ${filter}.`}</Text>
+        : shown.map((r) => <FullReqCard key={r.id} r={r} busy={busyId === r.id} defaultOpen={focusReq === r.id} onApprove={() => openReview(r.id)} onCancel={() => cancel(r.id)} onRepost={() => repost(r.id)} />)}
+    </ScrollView>
+    <RequestSheet
+      visible={sheetOpen}
+      onClose={() => setSheetOpen(false)}
+      myLoc={null}
+      onPosted={() => { setSheetOpen(false); load(); }}
+    />
+    <RateJob
+      visible={!!ratePrompt}
+      assignmentId={ratePrompt?.assignmentId}
+      rateeName={ratePrompt?.rateeName}
+      onClose={() => setRatePrompt(null)}
+    />
+    <ReviewApprove
+      visible={!!reviewReq}
+      request={reviewReq}
+      onClose={() => setReviewReq(null)}
+      onConfirm={(adj) => approve(reviewReq.id, adj)}
+    />
+    </View>
+  );
+}
+
+/* ============================================================ CLIENT · ACTIVITY */
+function ClientActivity({ session }) {
+  const [mine, setMine] = useState(() => cacheGet('client-requests'));   // shares Requests' cache → instant
+  useEffect(() => { (async () => {
+    try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); }
+    catch { setMine((p) => (p == null ? [] : p)); }
+  })(); }, []);
+  const done = (mine || []).filter((r) => r.status === 'complete');
+  const spent = done.reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
+  return (
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <Text style={T.eyebrow}>Activity</Text>
+      <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 24 }]}>
+        <Text style={T.label}>Total spent · completed jobs</Text>
+        <Text style={[T.dataBig, { fontSize: 34, color: C.ink, marginTop: 6 }]}>${spent.toLocaleString()}</Text>
+        <Text style={[T.small, { marginTop: 2 }]}>{done.length} job{done.length !== 1 ? 's' : ''} completed</Text>
+      </View>
+      <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
+      {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
+        : done.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No completed jobs yet.</Text>
+        : done.map((r) => <ActivityCard key={r.id} r={r} />)}
+    </ScrollView>
+  );
+}
+
+function ActivityCard({ r }) {
+  const [open, setOpen] = useState(false);
+  const items = r.request_items || [];
+  const total = Number(r.settle_total || 0);
+  const fee = Number(r.settle_fee || 0);
+  const net = Number(r.settle_net || 0);
+  const d = new Date(r.created_at);
+  const summary = items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ');
+  return (
+    <TouchableOpacity style={S_.card} activeOpacity={0.75} onPress={() => setOpen((o) => !o)}>
+      <View style={S_.rowBetween}>
+        <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{suburbOf(r.address_text)}</Text>
+        <View style={[S_.pill, { backgroundColor: C.greenSoft }]}><Text style={[S_.pillT, { color: C.green }]}>Settled</Text></View>
+      </View>
+      <Text style={[T.small, { marginTop: 4, color: C.mute }]} numberOfLines={1}>{summary}</Text>
+      <View style={[S_.rowBetween, { marginTop: 10, alignItems: 'flex-end' }]}>
+        <Text style={T.money}>${net.toLocaleString()}</Text>
+        <Text style={[T.tiny, { color: C.mute2 }]}>{open ? 'Hide detail ▲' : 'View detail ▾'}</Text>
+      </View>
+
+      {open && (
+        <View style={S_.actDetail}>
+          <View style={S_.actRow}><Text style={S_.actLabel}>Job total</Text><Text style={S_.actVal}>${total.toLocaleString()}</Text></View>
+          <View style={S_.actRow}><Text style={S_.actLabel}>Platform fee</Text><Text style={[S_.actVal, { color: C.mute }]}>−${fee.toLocaleString()}</Text></View>
+          <View style={[S_.actRow, S_.actTotal]}><Text style={[S_.actLabel, { color: C.ink, fontWeight: '700' }]}>Paid to worker</Text><Text style={[S_.actVal, { color: C.green, fontWeight: '800' }]}>${net.toLocaleString()}</Text></View>
+          <View style={[S_.actRow, { marginTop: 8 }]}><Text style={S_.actLabel}>Completed</Text><Text style={S_.actVal}>{d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} · {d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}</Text></View>
+          {r.address_text ? <View style={S_.actRow}><Text style={S_.actLabel}>Site</Text><Text style={[S_.actVal, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>{r.address_text}</Text></View> : null}
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+/* ============================================================ OPERATOR · HOME */
+function statusWords(s) {
+  return s === 'en_route' ? 'On the way' : s === 'on_site' ? 'On site'
+    : s === 'complete' ? 'Complete' : s === 'approved' ? 'Approved' : 'Committed';
+}
+function suburbOf(addr) { return (addr || 'No location').split(',')[0].trim(); }
+function buildJobInfo({ a, it, r, workerName }) {
+  const rows = [];
+  const who = workerName || a?.operator?.full_name;
+  if (who) rows.push({ label: 'Worker', value: who.split(' ')[0] });
+  if (it?.type) rows.push({ label: 'Job', value: it.type });
+  if (r?.address_text) rows.push({ label: 'Site', value: r.address_text });
+  // who to ask for on arrival (falls back to nothing if the client is the unnamed contact)
+  if (r?.site_contact_name) {
+    const c = r.site_contact_phone ? `${r.site_contact_name} · ${r.site_contact_phone}` : r.site_contact_name;
+    rows.push({ label: 'Ask for', value: c });
+  }
+  const rate = it?.rate_amount ?? it?.rate ?? a?.gross_amount;
+  if (rate != null) rows.push({ label: 'Rate', value: `$${rate}${it?.rate_unit ? '/' + it.rate_unit : ''}` });
+  if (a?.status) rows.push({ label: 'Status', value: statusWords(a.status) });
+  return rows.length ? rows : null;
+}
+
+// RateJob — post-completion rating prompt. Stars + optional comment, submitted
+// through the validated RPC. Honest: skippable, one rating per side per job.
+// C1: review-before-approve. Before money moves, the client sees what they're approving —
+// the job, who did it, hours, the amount breakdown, and the worker's VERIFIED tickets.
+// Confirm calls the real approve; "Not yet" backs out. Self-contained like RateJob.

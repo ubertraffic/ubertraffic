@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "*",
+    "@supabase/supabase-js": "*",
+    "expo-haptics": "*",
+    "lucide-react-native": "*",
+    "react-native-svg": "*",
+    "react-native-webview": "*",
+    "react-native-url-polyfill": "*"
+  }
+}

@@ -1,0 +1,325 @@
+// PublicProfile.js — the canonical reputation profile. Trust made visible.
+// Renders get_public_profile() honestly: verified badges only when real, ratings with their
+// count, experienced-but-unrated handled gracefully, trades capped so a profile reads focused.
+// This is the app's trust backbone — every "who is this person" tap-through lands here.
+
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, ActivityIndicator, Image, TextInput } from 'react-native';
+import { C, R, shadowSm } from './theme';
+import Icon from './Icon';
+import { getPublicProfile, updateMyProfileBio } from './accountService';
+
+const TRADE_CAP = 6;   // show a focused set; a legit tradie has a handful, not fifty
+
+function monthYear(iso) {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+  } catch (_) { return null; }
+}
+
+export default function PublicProfile({ visible, userId, onClose, meId }) {
+  const [p, setP] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState(false);
+  const [showAllTrades, setShowAllTrades] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftHead, setDraftHead] = useState('');
+  const [draftBio, setDraftBio] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const isOwner = !!meId && meId === userId;
+
+  const load = React.useCallback(() => {
+    if (!userId) return;
+    setLoading(true); setLoadErr(false); setP(null); setShowAllTrades(false); setEditing(false);
+    let settled = false;
+    // hard timeout — a profile must never hang on an endless spinner (some payloads are large /
+    // the network can stall). If nothing comes back in 10s, show an honest error + retry.
+    const timer = setTimeout(() => {
+      if (!settled) { settled = true; setLoadErr(true); setLoading(false); }
+    }, 10000);
+    getPublicProfile(userId)
+      .then((d) => { if (!settled) { settled = true; clearTimeout(timer); setP(d || null); setLoading(false); } })
+      .catch(() => { if (!settled) { settled = true; clearTimeout(timer); setLoadErr(true); setLoading(false); } });
+  }, [userId]);
+
+  useEffect(() => {
+    if (!visible || !userId) return;
+    load();
+  }, [visible, userId, load]);
+
+  function startEdit() {
+    setDraftHead(p?.headline || '');
+    setDraftBio(p?.bio || '');
+    setEditing(true);
+  }
+  async function saveEdit() {
+    setSaving(true);
+    try {
+      await updateMyProfileBio(draftHead, draftBio);
+      setP((prev) => ({ ...prev, headline: draftHead.trim() || null, bio: draftBio.trim() || null }));
+      setEditing(false);
+    } catch (_) {} finally { setSaving(false); }
+  }
+
+  const first = (p?.name || 'This user').split(' ')[0];
+  const initial = (p?.name || '?').charAt(0).toUpperCase();
+  const trades = p?.trades || [];
+  const shownTrades = showAllTrades ? trades : trades.slice(0, TRADE_CAP);
+  const creds = p?.verified_credentials || [];
+  const since = monthYear(p?.member_since);
+
+  // honest reputation line: distinguishes "new" from "experienced but unrated"
+  const hasRating = p?.rating != null && p?.rating_count > 0;
+  // which faces to show — driven by REAL data, not a role flag (many users do both)
+  const hasWorkerSide = (p?.jobs_done > 0) || (p?.trades?.length > 0) || (p?.verified_credentials?.length > 0) || hasRating;
+  const hasClientSide = p?.jobs_posted > 0;
+  const clientHasRating = p?.client_rating != null && p?.client_rating_count > 0;
+  const hasCompletion = p?.completion_rate != null;
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onClose} style={styles.close} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Text style={styles.closeT}>✕</Text>
+          </TouchableOpacity>
+          <Text style={styles.headerT}>Profile</Text>
+          <View style={{ width: 30 }} />
+        </View>
+
+        {loading ? (
+          <View style={styles.center}><ActivityIndicator color={C.indigo} size="large" /></View>
+        ) : loadErr ? (
+          <View style={styles.center}>
+            <Text style={styles.muted}>Couldn't load this profile.</Text>
+            <TouchableOpacity onPress={load} style={styles.retryBtn} activeOpacity={0.85}>
+              <Text style={styles.retryBtnT}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : !p || !p.exists ? (
+          <View style={styles.center}><Text style={styles.muted}>Profile unavailable.</Text></View>
+        ) : (
+          <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+            {/* identity */}
+            <View style={styles.top}>
+              {p.avatar_url ? (
+                <Image source={{ uri: p.avatar_url }} style={styles.avatarImg} />
+              ) : (
+                <View style={styles.avatar}><Text style={styles.avatarT}>{initial}</Text></View>
+              )}
+              <Text style={styles.name}>{p.name || 'SiteCall user'}</Text>
+              {p.headline ? <Text style={styles.headline}>{p.headline}</Text> : null}
+              {p.company ? <Text style={styles.company}>{p.company}</Text> : null}
+              {/* verify + role line */}
+              <View style={styles.badgeRow}>
+                {p.worker_verified && (
+                  <View style={styles.verifyPill}><Icon name="verified" size={13} color={C.green} /><Text style={styles.verifyT}>Verified worker</Text></View>
+                )}
+                {p.company_verified && (
+                  <View style={styles.verifyPill}><Icon name="verified" size={13} color={C.green} /><Text style={styles.verifyT}>Verified business</Text></View>
+                )}
+              </View>
+              {since ? <Text style={styles.since}>On SiteCall since {since}</Text> : null}
+              {isOwner && !editing ? (
+                <TouchableOpacity style={styles.editBtn} onPress={startEdit} activeOpacity={0.8}>
+                  <Text style={styles.editBtnT}>{p.headline || p.bio ? 'Edit profile' : 'Add a headline & bio'}</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* owner edit panel */}
+            {isOwner && editing ? (
+              <View style={styles.editPanel}>
+                <Text style={styles.editLabel}>Headline</Text>
+                <TextInput style={styles.editInput} value={draftHead} onChangeText={setDraftHead}
+                  placeholder="e.g. Traffic controller · 6 yrs on Sydney sites" placeholderTextColor={C.mute2}
+                  maxLength={60} />
+                <Text style={styles.editLabel}>About</Text>
+                <TextInput style={[styles.editInput, styles.editInputMulti]} value={draftBio} onChangeText={setDraftBio}
+                  placeholder="How you work, what you're good at…" placeholderTextColor={C.mute2}
+                  multiline maxLength={300} />
+                <View style={styles.editActions}>
+                  <TouchableOpacity onPress={() => setEditing(false)} style={styles.editCancel} disabled={saving}><Text style={styles.editCancelT}>Cancel</Text></TouchableOpacity>
+                  <TouchableOpacity onPress={saveEdit} style={[styles.editSave, saving && { opacity: 0.6 }]} disabled={saving}><Text style={styles.editSaveT}>{saving ? 'Saving…' : 'Save'}</Text></TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
+
+            {/* bio */}
+            {!editing && p.bio ? (
+              <View style={styles.bioBox}><Text style={styles.bioT}>{p.bio}</Text></View>
+            ) : null}
+
+            {/* reputation stats (worker side) — honest about new / unrated */}
+            {hasWorkerSide && (
+            <View style={styles.stats}>
+              <View style={styles.stat}>
+                {hasRating ? (
+                  <>
+                    <View style={styles.statRow}><Icon name="star" size={16} color={C.amber} /><Text style={styles.statNum}>{Number(p.rating).toFixed(1)}</Text></View>
+                    <Text style={styles.statLabel}>{p.rating_count} rating{p.rating_count === 1 ? '' : 's'}</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.statNumMuted}>—</Text>
+                    <Text style={styles.statLabel}>No ratings yet</Text>
+                  </>
+                )}
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.stat}>
+                <Text style={styles.statNum}>{p.jobs_done}</Text>
+                <Text style={styles.statLabel}>job{p.jobs_done === 1 ? '' : 's'} done</Text>
+              </View>
+              {p.vehicle ? (
+                <>
+                  <View style={styles.statDivider} />
+                  <View style={styles.stat}>
+                    <Text style={styles.statNumSm}>{p.vehicle}</Text>
+                    <Text style={styles.statLabel}>vehicle</Text>
+                  </View>
+                </>
+              ) : null}
+            </View>
+            )}
+
+            {/* derived reliability — computed from real resolved-job history, threshold-gated */}
+            {hasCompletion && (
+              <View style={styles.reliaBox}>
+                <View style={styles.reliaLeft}>
+                  <Text style={styles.reliaNum}>{p.completion_rate}%</Text>
+                  <Text style={styles.reliaLabel}>completion rate</Text>
+                </View>
+                <Text style={styles.reliaSub}>Finished {p.completion_rate}% of {p.resolved_jobs} resolved jobs</Text>
+              </View>
+            )}
+
+            {/* client-side reputation — jobs posted + rating from workers (honest: null today) */}
+            {hasClientSide && (
+              <View style={[styles.stats, hasWorkerSide && { marginTop: 12 }]}>
+                <View style={styles.stat}>
+                  <Text style={styles.statNum}>{p.jobs_posted}</Text>
+                  <Text style={styles.statLabel}>job{p.jobs_posted === 1 ? '' : 's'} posted</Text>
+                </View>
+                <View style={styles.statDivider} />
+                <View style={styles.stat}>
+                  {clientHasRating ? (
+                    <>
+                      <View style={styles.statRow}><Icon name="star" size={16} color={C.amber} /><Text style={styles.statNum}>{Number(p.client_rating).toFixed(1)}</Text></View>
+                      <Text style={styles.statLabel}>{p.client_rating_count} from workers</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.statNumMuted}>—</Text>
+                      <Text style={styles.statLabel}>as a client</Text>
+                    </>
+                  )}
+                </View>
+              </View>
+            )}
+
+            {/* new-to-SiteCall honest note */}
+            {p.is_new && (
+              <View style={styles.newNote}>
+                <Text style={styles.newNoteT}>New to SiteCall — building their track record.</Text>
+              </View>
+            )}
+
+            {/* verified credentials — the trust anchor, only real ones */}
+            {creds.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionLabel}>Verified credentials</Text>
+                {creds.map((c, i) => (
+                  <View key={`${c.id}-${i}`} style={styles.credRow}>
+                    <Icon name="verified" size={16} color={C.green} />
+                    <Text style={styles.credT}>{c.label}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* trades — capped so it reads focused, not spammy */}
+            {trades.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionLabel}>Trades</Text>
+                <View style={styles.chipWrap}>
+                  {shownTrades.map((tname, i) => (
+                    <View key={`${tname}-${i}`} style={styles.chip}><Text style={styles.chipT}>{tname}</Text></View>
+                  ))}
+                  {trades.length > TRADE_CAP && !showAllTrades && (
+                    <TouchableOpacity style={styles.chipMore} onPress={() => setShowAllTrades(true)} activeOpacity={0.8}>
+                      <Text style={styles.chipMoreT}>+{trades.length - TRADE_CAP} more</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            )}
+          </ScrollView>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { flex: 1, backgroundColor: C.canvas, paddingTop: 56 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 8 },
+  close: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
+  closeT: { fontSize: 20, color: C.mute, fontWeight: '600' },
+  headerT: { fontSize: 15, fontWeight: '800', color: C.ink, letterSpacing: 0.2 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  muted: { color: C.mute, fontSize: 15 },
+  retryBtn: { marginTop: 16, backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, paddingHorizontal: 28 },
+  retryBtnT: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  top: { alignItems: 'center', marginTop: 20, paddingHorizontal: 24 },
+  avatar: { width: 84, height: 84, borderRadius: 42, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', ...shadowSm },
+  avatarImg: { width: 84, height: 84, borderRadius: 42, backgroundColor: C.line },
+  avatarT: { color: '#fff', fontSize: 34, fontWeight: '800' },
+  name: { fontSize: 24, fontWeight: '900', color: C.ink, marginTop: 14, letterSpacing: -0.5 },
+  headline: { fontSize: 15, color: C.ink, fontWeight: '700', marginTop: 6, textAlign: 'center', paddingHorizontal: 20 },
+  company: { fontSize: 15, color: C.mute, fontWeight: '600', marginTop: 3 },
+  editBtn: { marginTop: 16, borderWidth: 1.5, borderColor: C.line, borderRadius: 999, paddingHorizontal: 18, paddingVertical: 9 },
+  editBtnT: { fontSize: 13.5, fontWeight: '800', color: C.indigo },
+  editPanel: { marginHorizontal: 20, marginTop: 8, backgroundColor: C.panel, borderRadius: R.xl, padding: 16, ...shadowSm },
+  editLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 7, marginTop: 6 },
+  editInput: { backgroundColor: C.canvas, borderRadius: R.md, paddingHorizontal: 13, paddingVertical: 11, fontSize: 15, color: C.ink },
+  editInputMulti: { minHeight: 90, textAlignVertical: 'top' },
+  editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 14 },
+  editCancel: { paddingHorizontal: 16, paddingVertical: 10 },
+  editCancelT: { fontSize: 14, fontWeight: '700', color: C.mute },
+  editSave: { backgroundColor: C.indigo, borderRadius: R.md, paddingHorizontal: 20, paddingVertical: 10 },
+  editSaveT: { fontSize: 14, fontWeight: '800', color: '#fff' },
+  bioBox: { marginHorizontal: 20, marginTop: 20, backgroundColor: C.panel, borderRadius: R.xl, padding: 16, ...shadowSm },
+  bioT: { fontSize: 14.5, color: C.ink, lineHeight: 21, fontWeight: '500' },
+  badgeRow: { flexDirection: 'row', gap: 8, marginTop: 12, flexWrap: 'wrap', justifyContent: 'center' },
+  verifyPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(14,122,82,0.10)', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6 },
+  verifyT: { color: C.green, fontSize: 12.5, fontWeight: '800' },
+  since: { fontSize: 13, color: C.mute2, fontWeight: '600', marginTop: 12 },
+  stats: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.panel, marginHorizontal: 20, marginTop: 24, paddingVertical: 18, borderRadius: R.xl, ...shadowSm },
+  stat: { flex: 1, alignItems: 'center' },
+  statRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  statNum: { fontSize: 22, fontWeight: '900', color: C.ink },
+  statNumSm: { fontSize: 15, fontWeight: '800', color: C.ink, textTransform: 'capitalize' },
+  statNumMuted: { fontSize: 22, fontWeight: '900', color: C.line },
+  statLabel: { fontSize: 12, color: C.mute, fontWeight: '600', marginTop: 3, textAlign: 'center' },
+  statDivider: { width: 1, height: 34, backgroundColor: C.line },
+  reliaBox: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, marginHorizontal: 20, marginTop: 12, padding: 16, borderRadius: R.xl, ...shadowSm },
+  reliaLeft: { alignItems: 'center' },
+  reliaNum: { fontSize: 24, fontWeight: '900', color: C.green, letterSpacing: -0.5 },
+  reliaLabel: { fontSize: 11, color: C.mute, fontWeight: '700', marginTop: 2 },
+  reliaSub: { flex: 1, fontSize: 13, color: C.mute, fontWeight: '600', lineHeight: 18 },
+  newNote: { marginHorizontal: 20, marginTop: 14, backgroundColor: 'rgba(70,54,232,0.06)', borderRadius: R.lg, paddingVertical: 12, paddingHorizontal: 14 },
+  newNoteT: { fontSize: 13.5, color: C.indigo, fontWeight: '700', textAlign: 'center' },
+  section: { marginHorizontal: 20, marginTop: 26 },
+  sectionLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 12 },
+  credRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.panel, borderRadius: R.md, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8, ...shadowSm },
+  credT: { fontSize: 14.5, fontWeight: '700', color: C.ink },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { backgroundColor: C.panel, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 8, ...shadowSm },
+  chipT: { fontSize: 13, fontWeight: '700', color: C.ink },
+  chipMore: { backgroundColor: 'rgba(70,54,232,0.08)', borderRadius: 999, paddingHorizontal: 13, paddingVertical: 8 },
+  chipMoreT: { fontSize: 13, fontWeight: '800', color: C.indigo },
+});
