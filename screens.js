@@ -15,6 +15,8 @@ import CredentialsScreen from './CredentialsScreen';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
 import CloseOutCard from './CloseOutCard';
+import PrestartCard from './PrestartCard';
+import { complianceReady } from './complianceService';
 
 // local copy (App.js has its own) — small pure helper, avoids a circular screens<->App import
 function buildJobInfo({ a, it, r, workerName }) {
@@ -120,6 +122,81 @@ function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
   );
 }
 
+// usePrestartStatus — tracks, per on-site assignment, whether a safety prestart is
+// still REQUIRED-AND-MISSING. Read-only: it asks the existing compliance_ready gate
+// (which already reflects the trade's needs_prestart flag) and records whether
+// 'prestart' is in its missing list. Errand-tier trades never list it, so they're
+// simply never gated. `needs[id] === true` means "must do the prestart first".
+function usePrestartStatus(assigns) {
+  const [needs, setNeeds] = useState({});   // { [assignmentId]: true|false }
+  // Ask the server for one assignment; returns true if prestart is required-and-missing.
+  const check = useCallback(async (id) => {
+    try {
+      const g = await complianceReady(id);
+      const req = (((g && g.missing) || []).includes('prestart'));
+      setNeeds((p) => ({ ...p, [id]: req }));
+      return req;
+    } catch (_) { return null; }   // unknown → leave ungated (server still backstops completion)
+  }, []);
+  // Optimistic: once a prestart is submitted we know it's no longer required.
+  const markDone = useCallback((id) => setNeeds((p) => ({ ...p, [id]: false })), []);
+  // Keep the map fresh for whatever jobs are currently on-site (covers app restart
+  // mid-shift). Keyed on the on-site id set so it only re-runs when that changes.
+  const onSiteKey = (assigns || []).filter((a) => a.status === 'on_site').map((a) => a.id).join(',');
+  useEffect(() => { (onSiteKey ? onSiteKey.split(',') : []).forEach(check); }, [onSiteKey, check]);
+  return { needs, check, markDone };
+}
+
+// PrestartSheet — the arrival safety prestart in the same bottom-sheet host as
+// CloseOutSheet (safe-area + smooth native slide). Deliberately mirrors CloseOutSheet
+// rather than refactoring it (kept separate to avoid touching the close-out path;
+// the two can be unified into one sheet host later).
+function PrestartSheet({ assignmentId, onDone, onCancel }) {
+  const [mounted, setMounted] = useState(!!assignmentId);
+  const [content, setContent] = useState(assignmentId);   // held through exit
+  const [sheetH, setSheetH] = useState(700);              // measured height = slide travel
+  const a = useRef(new Animated.Value(0)).current;         // 0 = hidden, 1 = shown
+  useEffect(() => {
+    if (assignmentId) {
+      setContent(assignmentId);
+      setMounted(true);
+      Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start();
+    } else if (mounted) {
+      Animated.timing(a, { toValue: 0, duration: M.fast, easing: Easing.in(Easing.quad), useNativeDriver: true })
+        .start(({ finished }) => { if (finished) setMounted(false); });
+    }
+    // reacts to assignmentId open/close only
+  }, [assignmentId, a]);
+  if (!mounted) return null;
+  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [sheetH, 0] });
+  const sheetOpacity = a.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 1, 1] });
+  const backdrop = a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onCancel}>
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: backdrop }} />
+        <Animated.View
+          pointerEvents={assignmentId ? 'auto' : 'none'}
+          onLayout={(e) => { const nh = e.nativeEvent.layout.height; if (nh && Math.abs(nh - sheetH) > 1) setSheetH(nh); }}
+          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: sheetOpacity, transform: [{ translateY }] }}
+        >
+          <SafeAreaView>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ padding: S.md }}
+              showsVerticalScrollIndicator={false}
+            >
+              {content ? (
+                <PrestartCard assignmentId={content} onDone={onDone} onCancel={onCancel} />
+              ) : null}
+            </ScrollView>
+          </SafeAreaView>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
 // MapReveal — smooths the map's size change between missions (300 <-> 150) WITHOUT
 // animating the WebView's pixel height every frame (which forces the live map to
 // repaint its canvas on each frame — janky on device). Instead: fade a plain cover
@@ -163,6 +240,8 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [chat, setChat] = useState(null);              // { a, title, sub, info } — job room over the map
   const [arrivePrompt, setArrivePrompt] = useState(null);  // assignmentId awaiting on-site confirm (GPS override)
   const [closeOut, setCloseOut] = useState(null);           // assignmentId in the close-out gate (compliance)
+  const [prestart, setPrestart] = useState(null);           // assignmentId in the arrival safety-prestart gate
+  const { needs: prestartNeeds, check: checkPrestart, markDone: markPrestartDone } = usePrestartStatus(myAssigns);
   const [opMapExpanded, setOpMapExpanded] = useState(false);
   // Live location — follow the worker as they move (real GPS on Expo Go via
   // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
@@ -265,6 +344,9 @@ export function OperatorHome({ session, onOpenProfile }) {
       const pos = await getPosition();
       await checkIn(id, pos.lat, pos.lng, override, override ? 'gps_override' : null);
       await refresh();
+      // Arrival safety gate: if this trade requires a prestart, open it now — before
+      // the job is workable. Errand-tier trades return false and go straight through.
+      if (await checkPrestart(id)) setPrestart(id);
     } catch (e) {
       const m = (e && e.message) || '';
       // GPS says you're too far — offer to confirm you're actually on site
@@ -292,7 +374,11 @@ export function OperatorHome({ session, onOpenProfile }) {
   function nextAction(a) {
     if (a.status === 'committed' || a.status === 'accepted') return { label: 'Start journey', fn: () => mapBeginJourney(a.id) };
     if (a.status === 'en_route') return { label: 'Arrived on site', fn: () => mapArrive(a.id) };
-    if (a.status === 'on_site') return { label: 'Complete job', fn: () => setCloseOut(a.id) };
+    // On site: if a prestart is still required-and-missing, that's the next action;
+    // only once it's done does "Complete job" (the close-out gate) become available.
+    if (a.status === 'on_site') return prestartNeeds[a.id] === true
+      ? { label: 'Safety prestart', fn: () => setPrestart(a.id) }
+      : { label: 'Complete job', fn: () => setCloseOut(a.id) };
     return null;
   }
   async function addCapFromTrade(trade) {
@@ -464,7 +550,7 @@ export function OperatorHome({ session, onOpenProfile }) {
           if (action === 'open_chat') setChat({ a: act, title: `${act.request_item?.type || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
           else if (action === 'start_journey' && aid) mapBeginJourney(aid);
           else if (action === 'arrive' && aid) mapArrive(aid);
-          else if (action === 'complete' && aid) setCloseOut(aid);
+          else if (action === 'complete' && aid) { if (prestartNeeds[aid] === true) setPrestart(aid); else setCloseOut(aid); }
         }} />;
       })()}
       {/* dock bar — mirrors Hire's "Post a job" bar, but holds the online toggle. When a live
@@ -549,6 +635,11 @@ export function OperatorHome({ session, onOpenProfile }) {
       onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
       onCancel={() => setCloseOut(null)}
     />
+    <PrestartSheet
+      assignmentId={prestart}
+      onDone={() => { const id = prestart; setPrestart(null); markPrestartDone(id); }}
+      onCancel={() => setPrestart(null)}
+    />
     <Modal visible={!!arrivePrompt} transparent animationType="fade" onRequestClose={() => setArrivePrompt(null)}>
       <View style={S_.arriveScrim}>
         <View style={S_.arriveCard}>
@@ -580,6 +671,8 @@ export function OperatorJobs({ session, onOpenProfile }) {
   const [matClaim, setMatClaim] = useState(null);   // assignment for the materials claim sheet
   const [expandedBios, setExpandedBios] = useState({});   // which job cards have duties/brief expanded
   const [closeOut, setCloseOut] = useState(null);   // assignmentId in the close-out gate (compliance) — same gate as OperatorHome
+  const [prestart, setPrestart] = useState(null);   // assignmentId in the arrival safety-prestart gate — same gate as OperatorHome
+  const { needs: prestartNeeds, check: checkPrestart, markDone: markPrestartDone } = usePrestartStatus(assigns);
   const refresh = useCallback(async () => {
     try { const d = await listMyAssignments(); setAssigns(d); cacheSet('operator-assignments', d); }
     catch { setAssigns((p) => (p == null ? [] : p)); }
@@ -639,6 +732,9 @@ export function OperatorJobs({ session, onOpenProfile }) {
       await checkIn(id, pos.lat, pos.lng, override, override ? 'gps_override' : null);
       if (pos.source === 'fallback') setMsg('Checked in (using approximate location — enable GPS for precise proof).');
       await refresh();
+      // Arrival safety gate: open the prestart now if this trade requires one.
+      // Errand-tier trades return false and go straight through.
+      if (await checkPrestart(id)) setPrestart(id);
     } catch (e) {
       const raw = e?.message || '';
       if (raw.startsWith('too_far_from_site')) {
@@ -791,7 +887,9 @@ export function OperatorJobs({ session, onOpenProfile }) {
                               })()}
                             </View>
                           : <>
-                              <PrimaryBtn label="Mark complete" onPress={() => setCloseOut(a.id)} busy={busyId === a.id} />
+                              {prestartNeeds[a.id] === true
+                                ? <PrimaryBtn label="Safety prestart" onPress={() => setPrestart(a.id)} busy={busyId === a.id} />
+                                : <PrimaryBtn label="Mark complete" onPress={() => setCloseOut(a.id)} busy={busyId === a.id} />}
                               <TouchableOpacity onPress={() => missedCheckout(a.id)} disabled={busy} style={{ marginTop: 10, alignItems: 'center' }}>
                                 <Text style={[T.small, { color: C.mute, textDecorationLine: 'underline' }]}>Can't check out? Phone died or no signal</Text>
                               </TouchableOpacity>
@@ -872,6 +970,11 @@ export function OperatorJobs({ session, onOpenProfile }) {
       assignmentId={closeOut}
       onComplete={async () => { const id = closeOut; setCloseOut(null); await complete(id); }}
       onCancel={() => setCloseOut(null)}
+    />
+    <PrestartSheet
+      assignmentId={prestart}
+      onDone={() => { const id = prestart; setPrestart(null); markPrestartDone(id); }}
+      onCancel={() => setPrestart(null)}
     />
     </View>
   );
