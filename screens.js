@@ -65,6 +65,84 @@ function TrackerContainer({ requestId, onAction, perspective = 'client' }) {
   return <LiveTrackerCard state={state} onAction={onAction} />;
 }
 
+// CloseOutSheet — the compliance gate as a bottom sheet with ONE clean motion.
+// The card slides up on a native-driver translateY (M.spring "sheet-rise") and
+// slides back down on close, with the backdrop fading in step. We drive the
+// animation ourselves (Modal animationType="none") instead of layering our
+// layout inside the Modal's built-in slide, which competed with it and stuttered.
+// We keep the sheet mounted through the exit so the slide-down actually plays,
+// holding the last assignmentId so CloseOutCard stays rendered while it leaves.
+function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
+  const [mounted, setMounted] = useState(!!assignmentId);
+  const [content, setContent] = useState(assignmentId);   // held through exit
+  const [sheetH, setSheetH] = useState(700);              // measured height = slide travel
+  const a = useRef(new Animated.Value(0)).current;         // 0 = hidden, 1 = shown
+  useEffect(() => {
+    if (assignmentId) {
+      setContent(assignmentId);
+      setMounted(true);
+      Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start();
+    } else if (mounted) {
+      Animated.timing(a, { toValue: 0, duration: M.fast, easing: Easing.in(Easing.quad), useNativeDriver: true })
+        .start(({ finished }) => { if (finished) setMounted(false); });
+    }
+    // `mounted` intentionally omitted: this reacts to assignmentId open/close only.
+  }, [assignmentId, a]);
+  if (!mounted) return null;
+  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [sheetH, 0] });
+  // Kept invisible for the first sliver of the slide so a pre-measure frame can
+  // never flash on screen; opaque for the whole visible part of the motion.
+  const sheetOpacity = a.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 1, 1] });
+  const backdrop = a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onCancel}>
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: backdrop }} />
+        <Animated.View
+          pointerEvents={assignmentId ? 'auto' : 'none'}
+          onLayout={(e) => { const nh = e.nativeEvent.layout.height; if (nh && Math.abs(nh - sheetH) > 1) setSheetH(nh); }}
+          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: sheetOpacity, transform: [{ translateY }] }}
+        >
+          <SafeAreaView>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ padding: S.md }}
+              showsVerticalScrollIndicator={false}
+            >
+              {content ? (
+                <CloseOutCard assignmentId={content} onComplete={onComplete} onCancel={onCancel} />
+              ) : null}
+            </ScrollView>
+          </SafeAreaView>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+// MapReveal — smooths the map's size change between missions (300 <-> 150) WITHOUT
+// animating the WebView's pixel height every frame (which forces the live map to
+// repaint its canvas on each frame — janky on device). Instead: fade a plain cover
+// INSIDE the map frame up to fully opaque, commit the new height in a single step
+// behind it (one repaint, hidden), then fade the cover back out. We never animate
+// the WebView's own opacity — that blinks on Android. Same visual result, no flicker.
+function MapReveal({ height, children }) {
+  const [h, setH] = useState(height);          // committed height applied to layout
+  const mask = useRef(new Animated.Value(0)).current;   // 0 = map clear, 1 = fully covered
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    if (height === h) return;
+    Animated.timing(mask, { toValue: 1, duration: M.fast, easing: Easing.out(Easing.quad), useNativeDriver: true })
+      .start(({ finished }) => {
+        if (!finished) return;
+        setH(height);   // single-step resize, hidden behind the cover
+        Animated.timing(mask, { toValue: 0, duration: M.base, easing: Easing.in(Easing.quad), useNativeDriver: true }).start();
+      });
+  }, [height, h, mask]);
+  return React.cloneElement(React.Children.only(children), { height: h, maskOpacity: mask });
+}
+
 export function OperatorHome({ session, onOpenProfile }) {
   const [profile, setProfile] = useState(() => cacheGet('operator-profile'));   // instant paint, skips gate spinner
   const [loadFailed, setLoadFailed] = useState(false);  // profile load errored — show retry, not an endless spinner
@@ -299,7 +377,8 @@ export function OperatorHome({ session, onOpenProfile }) {
         // mission is finding work or actively working (Laws 1+2 — don't let the map compete then).
         const mapHeight = (mission === 'find' || mission === 'working') ? 150 : 300;
         return (
-      <MapHero height={mapHeight} me={myLoc} markers={profile.is_online ? opMapJobs : []} mode="work" offline={!profile.is_online} dockedBottom demand={demandHeat}
+      <MapReveal height={mapHeight}>
+      <MapHero me={myLoc} markers={profile.is_online ? opMapJobs : []} mode="work" offline={!profile.is_online} dockedBottom demand={demandHeat}
         hubJobs={profile.is_online ? [
           // MY active jobs — with the next lifecycle step, done right on the map
           ...(myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status)).map((a) => {
@@ -371,6 +450,7 @@ export function OperatorHome({ session, onOpenProfile }) {
           return { unread: 0, fn: () => setChat({ a, title: `${a.request_item?.type || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) };
         })()}
       />
+      </MapReveal>
         );
       })()}
       {/* Operator's live tracker — the SAME confidence experience, worker's lens. Closes the
@@ -464,25 +544,11 @@ export function OperatorHome({ session, onOpenProfile }) {
       peerId={chat?.a?.request_item?.request?.client_id}
       onOpenProfile={onOpenProfile}
     />
-    <Modal visible={!!closeOut} transparent animationType="slide" onRequestClose={() => setCloseOut(null)}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
-        <SafeAreaView style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0 }}>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ padding: S.md }}
-            showsVerticalScrollIndicator={false}
-          >
-            {closeOut ? (
-              <CloseOutCard
-                assignmentId={closeOut}
-                onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
-                onCancel={() => setCloseOut(null)}
-              />
-            ) : null}
-          </ScrollView>
-        </SafeAreaView>
-      </View>
-    </Modal>
+    <CloseOutSheet
+      assignmentId={closeOut}
+      onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
+      onCancel={() => setCloseOut(null)}
+    />
     <Modal visible={!!arrivePrompt} transparent animationType="fade" onRequestClose={() => setArrivePrompt(null)}>
       <View style={S_.arriveScrim}>
         <View style={S_.arriveCard}>
