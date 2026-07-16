@@ -1,4 +1,0 @@
-# Files kept in the repo for the record but NOT needed in the Expo Snack runtime.
-# Snack tries to upload non-code files as assets; the SQL migrations break that.
-migrations/
-*.sql
