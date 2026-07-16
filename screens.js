@@ -75,8 +75,8 @@ function TrackerContainer({ requestId, onAction, perspective = 'client' }) {
 function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
   const [mounted, setMounted] = useState(!!assignmentId);
   const [content, setContent] = useState(assignmentId);   // held through exit
+  const [sheetH, setSheetH] = useState(700);              // measured height = slide travel
   const a = useRef(new Animated.Value(0)).current;         // 0 = hidden, 1 = shown
-  const sheetH = useRef(600);                              // measured for offscreen travel
   useEffect(() => {
     if (assignmentId) {
       setContent(assignmentId);
@@ -89,7 +89,10 @@ function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
     // `mounted` intentionally omitted: this reacts to assignmentId open/close only.
   }, [assignmentId, a]);
   if (!mounted) return null;
-  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [sheetH.current, 0] });
+  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [sheetH, 0] });
+  // Kept invisible for the first sliver of the slide so a pre-measure frame can
+  // never flash on screen; opaque for the whole visible part of the motion.
+  const sheetOpacity = a.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 1, 1] });
   const backdrop = a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
   return (
     <Modal visible transparent animationType="none" onRequestClose={onCancel}>
@@ -97,8 +100,8 @@ function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: backdrop }} />
         <Animated.View
           pointerEvents={assignmentId ? 'auto' : 'none'}
-          onLayout={(e) => { const h = e.nativeEvent.layout.height; if (h) sheetH.current = h; }}
-          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, transform: [{ translateY }] }}
+          onLayout={(e) => { const nh = e.nativeEvent.layout.height; if (nh && Math.abs(nh - sheetH) > 1) setSheetH(nh); }}
+          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: sheetOpacity, transform: [{ translateY }] }}
         >
           <SafeAreaView>
             <ScrollView
@@ -119,28 +122,25 @@ function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
 
 // MapReveal — smooths the map's size change between missions (300 <-> 150) WITHOUT
 // animating the WebView's pixel height every frame (which forces the live map to
-// repaint its canvas on each frame — janky on device). Instead we cross-fade: dim
-// the map, commit the new height in a single step behind the dim (one repaint,
-// unseen), then brighten back. Same visual result, smooth transition.
+// repaint its canvas on each frame — janky on device). Instead: fade a plain cover
+// INSIDE the map frame up to fully opaque, commit the new height in a single step
+// behind it (one repaint, hidden), then fade the cover back out. We never animate
+// the WebView's own opacity — that blinks on Android. Same visual result, no flicker.
 function MapReveal({ height, children }) {
   const [h, setH] = useState(height);          // committed height applied to layout
-  const dim = useRef(new Animated.Value(1)).current;   // 1 = visible, 0.15 = dimmed during the swap
+  const mask = useRef(new Animated.Value(0)).current;   // 0 = map clear, 1 = fully covered
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
     if (height === h) return;
-    Animated.timing(dim, { toValue: 0.15, duration: M.fast, easing: Easing.out(Easing.quad), useNativeDriver: true })
+    Animated.timing(mask, { toValue: 1, duration: M.fast, easing: Easing.out(Easing.quad), useNativeDriver: true })
       .start(({ finished }) => {
         if (!finished) return;
-        setH(height);   // single-step resize, hidden behind the dim
-        Animated.timing(dim, { toValue: 1, duration: M.base, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+        setH(height);   // single-step resize, hidden behind the cover
+        Animated.timing(mask, { toValue: 0, duration: M.base, easing: Easing.in(Easing.quad), useNativeDriver: true }).start();
       });
-  }, [height, h, dim]);
-  return (
-    <Animated.View style={{ opacity: dim }}>
-      {React.cloneElement(React.Children.only(children), { height: h })}
-    </Animated.View>
-  );
+  }, [height, h, mask]);
+  return React.cloneElement(React.Children.only(children), { height: h, maskOpacity: mask });
 }
 
 export function OperatorHome({ session, onOpenProfile }) {

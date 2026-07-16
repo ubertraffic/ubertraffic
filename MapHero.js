@@ -12,7 +12,7 @@
 //   height, markers[{lat,lng,label,status,sub,workerLat,workerLng,workerName,assignedName,assignedStatus,requestId}]
 //   me{lat,lng}, coverage{n,points[]}, demand[{lat,lng}], onWorkerTap(requestId)
 import React, { useRef, useMemo, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, ActivityIndicator, Animated } from 'react-native';
 import { WebView } from 'react-native-webview';
 import MapPostSheet from './MapPostSheet';
 import { C, E } from './theme';
@@ -255,7 +255,7 @@ function viewFor(markers, me) {
   return { center: { lat: (Math.min.apply(null, lats) + Math.max.apply(null, lats)) / 2, lng: (Math.min.apply(null, lngs) + Math.max.apply(null, lngs)) / 2 }, zoom: 12 };
 }
 
-export default function MapHero({ height = 300, markers = [], me = null, framed = true, onWorkerTap = null, dockedBottom = false, activeNow = null, coverage = null, demand = null, mode = 'hire', offline = false, hubJobs = null, onHubAction = null, onPostFromMap = null, commandSummary = null, primaryAction = null, chatBubble = null }) {
+export default function MapHero({ height = 300, markers = [], me = null, framed = true, onWorkerTap = null, dockedBottom = false, activeNow = null, coverage = null, demand = null, mode = 'hire', offline = false, hubJobs = null, onHubAction = null, onPostFromMap = null, commandSummary = null, primaryAction = null, chatBubble = null, maskOpacity = null }) {
   const hasJobs = markers && markers.length > 0;
   const missingKey = MAPTILER_KEY === 'YOUR_MAPTILER_KEY';
   const [full, setFull] = React.useState(false);
@@ -392,6 +392,13 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
           </View>
         )}
         {overlays(false)}
+        {/* Size-change cover — a plain layer INSIDE the frame (clipped by wrap's
+            overflow:hidden). MapReveal fades this to fully hide the one-off map
+            repaint when the height changes. We never fade the WebView itself
+            (that flickers on Android), only this cover. */}
+        {maskOpacity != null && (
+          <Animated.View pointerEvents="none" style={[styles.resizeCover, { opacity: maskOpacity }]} />
+        )}
       </View>
 
       <Modal visible={full} animationType="slide" onRequestClose={() => setFull(false)}>
@@ -505,6 +512,7 @@ const styles = StyleSheet.create({
   dockedBottom: { marginTop: 12, marginHorizontal: 20, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, marginBottom: 0, ...E.sm },
   web: { flex: 1, backgroundColor: '#0B0B12' },
   loadSurface: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#0B0B12', alignItems: 'center', justifyContent: 'center' },
+  resizeCover: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#0B0B12' },
   emptyOverlay: { position: 'absolute', top: 46, left: 0, right: 0, alignItems: 'center' },
   emptyOverlayFull: { top: 114 },   // in fullscreen, sit clear below the command bar (top:64) + notch
   emptyT: { color: '#fff', fontSize: 11, backgroundColor: 'rgba(11,11,18,0.85)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, overflow: 'hidden' },
