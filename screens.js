@@ -96,6 +96,25 @@ export function OperatorHome({ session, onOpenProfile }) {
   useEffect(() => { (async () => { try { setOpMapJobs(await getOperatorMapJobs()); } catch (_) {} })(); }, [jobs]);
   useEffect(() => { (async () => { try { setMyAssigns(await listMyAssignments()); } catch (_) {} })(); }, [jobs]);
 
+  // Demand heat ("where the work is") — the worker's money map. Fetched ONLY while finding work
+  // (online, no active/on-site job) on a SLOW 90s timer: demand shifts over minutes not seconds, so
+  // a lazy refresh gives the same value at a fraction of the DB cost. Stops entirely once working or
+  // offline. NOTE: this hook lives ABOVE the early returns so it runs on every render (Rules of Hooks);
+  // it guards on raw state (is_online + no active assignment) rather than the mission var, which is
+  // computed lower down. myLoc is the live-tracked position.
+  const _finding = !!(profile && profile.is_online) && !(myAssigns || []).some((a) => ['committed','accepted','en_route','on_site'].includes(a.status));
+  useEffect(() => {
+    if (!_finding || !myLoc) { setDemandHeat([]); return; }
+    let alive = true;
+    const pull = async () => {
+      try { const d = await getDemandHeat(myLoc.lat, myLoc.lng, 40); if (alive) setDemandHeat(d || []); }
+      catch (_) { /* heat is ambient — a miss just means no update this tick */ }
+    };
+    pull();
+    const t = setInterval(pull, 90000); // 90s — demand trend, not live tracking
+    return () => { alive = false; clearInterval(t); };
+  }, [_finding, myLoc]);
+
   async function removeCap(id) {
     setBusy(true); setMsg('');
     try { await removeCapability(id); await refresh(); }
@@ -269,22 +288,6 @@ export function OperatorHome({ session, onOpenProfile }) {
     : doneAssign ? 'done'
     : profile.is_online ? 'find'
     : 'offline';
-
-  // Demand heat ("where the work is") — the worker's money map. Fetched ONLY when actively
-  // finding work (online, no active job) and on a SLOW 90s timer: demand shifts over minutes,
-  // not seconds, so a lazy refresh gives the same value at a fraction of the DB cost. The moment
-  // a worker has a job (or goes offline), this stops entirely — no ongoing load for working users.
-  useEffect(() => {
-    if (mission !== 'find' || !myLoc) { setDemandHeat([]); return; }
-    let alive = true;
-    const pull = async () => {
-      try { const d = await getDemandHeat(myLoc.lat, myLoc.lng, 40); if (alive) setDemandHeat(d || []); }
-      catch (_) { /* heat is ambient — a miss just means no update this tick */ }
-    };
-    pull();
-    const t = setInterval(pull, 90000); // 90s — demand trend, not live tracking
-    return () => { alive = false; clearInterval(t); };
-  }, [mission, myLoc]);
 
   return (
     <>
