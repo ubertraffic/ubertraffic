@@ -579,6 +579,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
   const [chat, setChat] = useState(null);   // { a, title, sub } — the open job room
   const [matClaim, setMatClaim] = useState(null);   // assignment for the materials claim sheet
   const [expandedBios, setExpandedBios] = useState({});   // which job cards have duties/brief expanded
+  const [closeOut, setCloseOut] = useState(null);   // assignmentId in the close-out gate (compliance) — same gate as OperatorHome
   const refresh = useCallback(async () => {
     try { const d = await listMyAssignments(); setAssigns(d); cacheSet('operator-assignments', d); }
     catch { setAssigns((p) => (p == null ? [] : p)); }
@@ -790,7 +791,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
                               })()}
                             </View>
                           : <>
-                              <PrimaryBtn label="Mark complete" onPress={() => complete(a.id)} busy={busyId === a.id} />
+                              <PrimaryBtn label="Mark complete" onPress={() => setCloseOut(a.id)} busy={busyId === a.id} />
                               <TouchableOpacity onPress={() => missedCheckout(a.id)} disabled={busy} style={{ marginTop: 10, alignItems: 'center' }}>
                                 <Text style={[T.small, { color: C.mute, textDecorationLine: 'underline' }]}>Can't check out? Phone died or no signal</Text>
                               </TouchableOpacity>
@@ -866,6 +867,11 @@ export function OperatorJobs({ session, onOpenProfile }) {
       assignment={matClaim}
       onClose={() => setMatClaim(null)}
       onDone={() => { setMsg('Materials claim submitted.'); refresh(); }}
+    />
+    <CloseOutSheet
+      assignmentId={closeOut}
+      onComplete={async () => { const id = closeOut; setCloseOut(null); await complete(id); }}
+      onCancel={() => setCloseOut(null)}
     />
     </View>
   );
