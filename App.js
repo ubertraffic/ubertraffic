@@ -96,13 +96,25 @@ export default function App() {
 /* ============================================================ LOGIN */
 function Login() {
   const [mode, setMode] = useState('signin');   // 'signin' | 'signup' — explicit, never guessed
+  const [step, setStep] = useState(1);           // signup PACING only (presentation): 1 = email, 2 = password
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');    // signup only
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [msgTone, setMsgTone] = useState('error');   // 'error' | 'info' — so colour signals meaning
+
+  const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  function switchMode(m) { setMode(m); setStep(1); setMsg(''); }
+  // signup pacing: validate the email locally, then reveal the password step. No auth here.
+  function next() {
+    const e = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(e)) { setMsg('Enter a valid email address.'); setMsgTone('error'); return; }
+    setMsg(''); setStep(2);
+  }
 
   async function submit() {
+    setMsgTone('error');
     const e = email.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { setMsg('Enter a valid email address.'); return; }
     if (password.length < 6) { setMsg('Password must be at least 6 characters.'); return; }
@@ -117,7 +129,7 @@ function Login() {
           if (/invalid login credentials/i.test(error.message)) {
             setMsg('Wrong email or password. New here? Tap "Create account".');
           } else if (/email not confirmed/i.test(error.message)) {
-            setMsg('Check your email to confirm your account, then sign in.');
+            setMsg('Check your email to confirm your account, then sign in.'); setMsgTone('info');
           } else {
             setMsg(friendly(error));
           }
@@ -138,48 +150,87 @@ function Login() {
         }
         if (!data.session) {
           // Email confirmation is on — no session yet. Tell them honestly.
-          setMsg('Account created. Check your email to confirm, then sign in.');
-          setMode('signin'); setBusy(false); return;
+          setMsg('Account created. Check your email to confirm, then sign in.'); setMsgTone('info');
+          setMode('signin'); setStep(1); setBusy(false); return;
         }
         // success with immediate session → auth listener takes over
       }
     } catch (err) { setMsg(friendly(err)); } finally { setBusy(false); }
   }
 
+  const isSignup = mode === 'signup';
+  const heroTitle = !isSignup ? 'Welcome back' : step === 1 ? "Let's get you set up" : 'Create a password';
+  const heroHelp  = !isSignup ? 'Sign in to your account' : step === 1 ? 'Start with your email' : 'At least 6 characters';
+  const showEmail = !isSignup || step === 1;
+  const showPass  = !isSignup || step === 2;
+
   return (
     <KeyboardAvoidingView style={S_.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <StatusBar barStyle="dark-content" />
       <View style={S_.loginWrap}>
-        <View style={S_.mark} />
-        <Text style={T.display}>SiteCall</Text>
-        <Text style={[T.small, { marginTop: 4, marginBottom: 24 }]}>{mode === 'signin' ? 'Welcome back — sign in' : 'Create your account'}</Text>
-
-        {/* explicit mode toggle — the user says whether they're signing in or up. No guessing. */}
-        <View style={S_.authToggle}>
-          <TouchableOpacity style={[S_.authTab, mode === 'signin' && S_.authTabOn]} onPress={() => { setMode('signin'); setMsg(''); }} activeOpacity={0.8}>
-            <Text style={[S_.authTabT, mode === 'signin' && S_.authTabTOn]}>Sign in</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[S_.authTab, mode === 'signup' && S_.authTabOn]} onPress={() => { setMode('signup'); setMsg(''); }} activeOpacity={0.8}>
-            <Text style={[S_.authTabT, mode === 'signup' && S_.authTabTOn]}>Create account</Text>
-          </TouchableOpacity>
+        {/* quiet brand marker — recedes so the step headline is the hero */}
+        <View style={S_.brandRow}>
+          <View style={S_.markSm} />
+          <Text style={S_.brandWord}>SiteCall</Text>
         </View>
 
-        <Text style={[T.label, { marginBottom: 8 }]}>Email</Text>
-        <TextInput style={S_.input} placeholder="you@example.com" placeholderTextColor={C.mute2}
-          autoCapitalize="none" keyboardType="email-address" autoCorrect={false}
-          value={email} onChangeText={setEmail} editable={!busy} />
-        <Text style={[T.label, { marginBottom: 8, marginTop: 4 }]}>Password</Text>
-        <TextInput style={S_.input} placeholder="at least 6 characters" placeholderTextColor={C.mute2}
-          secureTextEntry autoCapitalize="none" value={password} onChangeText={setPassword} editable={!busy} />
-        {mode === 'signup' && (
-          <>
-            <Text style={[T.label, { marginBottom: 8, marginTop: 4 }]}>Confirm password</Text>
-            <TextInput style={S_.input} placeholder="re-enter your password" placeholderTextColor={C.mute2}
-              secureTextEntry autoCapitalize="none" value={confirm} onChangeText={setConfirm} editable={!busy} />
-          </>
-        )}
-        <PrimaryBtn label={mode === 'signin' ? 'Sign in' : 'Create account'} onPress={submit} busy={busy} />
-        {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
+        <StepFade phase={`${mode}-${step}`}>
+          {isSignup && step === 2 && (
+            <TouchableOpacity onPress={() => { setStep(1); setMsg(''); }} style={S_.loginBack}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+              <Text style={S_.loginBackT}>‹ Back</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* HERO — one dominant element per step */}
+          <Text style={S_.loginHero}>{heroTitle}</Text>
+          <Text style={S_.loginHelp}>{heroHelp}</Text>
+
+          <View style={S_.loginFields}>
+            {showEmail && (
+              <>
+                <Text style={[T.label, S_.loginLabel]}>Email</Text>
+                <TextInput style={S_.loginInput} placeholder="you@example.com" placeholderTextColor={C.mute2}
+                  autoCapitalize="none" keyboardType="email-address" autoCorrect={false}
+                  value={email} onChangeText={setEmail} editable={!busy}
+                  autoFocus={isSignup && step === 1}
+                  returnKeyType={isSignup ? 'next' : 'done'} onSubmitEditing={isSignup ? next : undefined} />
+              </>
+            )}
+            {showPass && (
+              <>
+                <Text style={[T.label, S_.loginLabel, !isSignup && { marginTop: 16 }]}>Password</Text>
+                <TextInput style={S_.loginInput} placeholder="at least 6 characters" placeholderTextColor={C.mute2}
+                  secureTextEntry autoCapitalize="none" value={password} onChangeText={setPassword} editable={!busy}
+                  autoFocus={isSignup && step === 2} />
+              </>
+            )}
+            {isSignup && step === 2 && (
+              <>
+                <Text style={[T.label, S_.loginLabel, { marginTop: 16 }]}>Confirm password</Text>
+                <TextInput style={S_.loginInput} placeholder="re-enter your password" placeholderTextColor={C.mute2}
+                  secureTextEntry autoCapitalize="none" value={confirm} onChangeText={setConfirm} editable={!busy} />
+              </>
+            )}
+          </View>
+
+          <View style={S_.loginAction}>
+            {isSignup && step === 1
+              ? <PrimaryBtn label="Continue" onPress={next} />
+              : <PrimaryBtn label={isSignup ? 'Create account' : 'Sign in'} onPress={submit} busy={busy} />}
+          </View>
+
+          {!!msg && <Text style={msgTone === 'error' ? S_.loginMsgErr : S_.loginMsgInfo}>{msg}</Text>}
+        </StepFade>
+
+        {/* quiet mode switch — a single line, never competing with the primary action */}
+        <TouchableOpacity onPress={() => switchMode(isSignup ? 'signin' : 'signup')} style={S_.loginSwitch}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+          <Text style={S_.loginSwitchT}>
+            {isSignup ? 'Already have an account? ' : 'New to SiteCall? '}
+            <Text style={S_.loginSwitchLink}>{isSignup ? 'Sign in' : 'Create account'}</Text>
+          </Text>
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
