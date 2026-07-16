@@ -361,7 +361,10 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
           ) : activeNow != null && activeNow > 0 ? (
             <View style={styles.ambientChip}><View style={styles.ambientDot} /><Text style={styles.ambientT}>{activeNow} jobs live on SiteCall right now</Text></View>
           ) : (!coverage || coverage.n === 0) ? (
-            <Text style={styles.emptyT}>Post a job and watch it come alive here</Text>
+            <Text style={styles.emptyT}>{mode === 'hire'
+              ? 'Post a job and watch it come alive here'
+              : offline ? 'Go online — jobs near you appear here'
+              : 'New work near you appears here as it’s posted'}</Text>
           ) : null}
         </View>
       )}

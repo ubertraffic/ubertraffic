@@ -1035,7 +1035,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
                 <Text style={S_.homeEmptyHero}>Who do you need on site?</Text>
                 <Text style={S_.homeEmptySub}>Post a job above — the nearest crews see it in seconds.</Text>
                 <View style={[S_.rowBetween, { marginTop: 32 }]}>
-                  <Text style={T.eyebrow}>Live on SiteCall</Text>
+                  <Text style={T.eyebrow}>Happening now</Text>
                   <LiveTag />
                 </View>
                 <View style={{ height: 16 }} />
