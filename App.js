@@ -8,7 +8,7 @@ import { supabase } from './supabaseClient';
 import { createRequest, listMyRequests } from './requestsService';
 import { submitRating, myRatingForAssignment } from './ratingsService';
 import { searchAddress, reverseGeocode } from './geocodeService';
-import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor } from './taxonomyService';
+import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor, clientPickerGroups } from './taxonomyService';
 import {
   setRole, setOnline, setVehicle, getMyProfile, updateMyName,
   setMyOperatorLocation, getOperatorCoverage, getDemandHeat,
@@ -473,33 +473,11 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
   // door's accent colour. Lets the client pick their trade in ONE screen instead of door→trade
   // (the door step was just a filter; the trade screen was already category-grouped). Research-backed
   // friction reduction — one genuinely redundant tap removed.
-  // One clean list: every client-visible trade grouped by its category ONCE (no more
-  // per-door duplicate headers), with the community task/errand categories FIRST under a
-  // "Tasks & runs" banner (anyone with a vehicle), then the ticketed "Skilled trades &
-  // plant". Replaces the door→category loop that duplicated categories and buried tasks.
-  const allTradeGroups = (() => {
-    if (!tax) return [];
-    const catById = Object.fromEntries((tax.categories || []).map((c) => [c.id, c]));
-    const byCat = {};
-    (tax.trades || []).forEach((t) => {
-      if (t.client_visible === false) return;
-      const cat = catById[t.category_id];
-      if (!cat) return;
-      if (!byCat[cat.id]) byCat[cat.id] = { category: cat, trades: [], allTask: true };
-      byCat[cat.id].trades.push(t);
-      if (t.kind !== 'task') byCat[cat.id].allTask = false;
-    });
-    const groups = Object.values(byCat);
-    const bySort = (a, b) => (a.category.sort || 0) - (b.category.sort || 0);
-    const taskCats = groups.filter((g) => g.allTask).sort(bySort);
-    const skilledCats = groups.filter((g) => !g.allTask).sort(bySort);
-    const out = [];
-    if (taskCats.length) out.push({ section: 'Tasks & runs · anyone with a vehicle', color: C.amber });
-    taskCats.forEach((g) => out.push({ ...g, doorColor: C.amber }));
-    if (skilledCats.length) out.push({ section: 'Skilled trades & plant', color: C.indigo });
-    skilledCats.forEach((g) => out.push({ ...g, doorColor: C.indigo }));
-    return out;
-  })();
+  // One clean list, shared with every other client posting surface (see
+  // taxonomyService.clientPickerGroups) so the pickers can't drift: community
+  // task/errand categories first under "Tasks & runs", then "Skilled trades & plant",
+  // each category once.
+  const allTradeGroups = clientPickerGroups(tax, { task: C.amber, skilled: C.indigo });
   const canSend = items.length > 0 && loc.trim();
 
   return (
