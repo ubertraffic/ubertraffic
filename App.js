@@ -89,7 +89,9 @@ export default function App() {
   }, []);
 
   if (booting) return <Center><ActivityIndicator color={C.indigo} size="large" /></Center>;
+    return <ProofPhotoTest />;
   return session ? <Shell session={session} pushDeepLink={pushDeepLink} /> : <Login />;
+
 }
 
 /* ============================================================ LOGIN */
