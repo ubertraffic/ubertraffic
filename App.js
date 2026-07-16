@@ -447,6 +447,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
   const [phase, setPhase] = useState('door');
   const [door, setDoor] = useState(null);
   const [cat, setCat] = useState(null);
+  const [openCats, setOpenCats] = useState({});   // picker accordion: which trade categories are expanded
   const [items, setItems] = useState([]);
   const [loc, setLoc] = useState('');
   const [coords, setCoords] = useState(null);
@@ -618,18 +619,32 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
                       >
                         {g.section}
                       </Text>
-                    ) : (
-                    <View key={g.category.id} style={{ marginBottom: 18 }}>
-                      <Text style={[SH.groupHead, { color: g.doorColor }]}>{g.category.name}</Text>
-                      <View style={SH.wrapChips}>
-                        {g.trades.map((t) => (
-                          <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: g.doorColor }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
-                            <Text style={SH.pickT}>{t.name}</Text>
-                          </TouchableOpacity>
-                        ))}
+                    ) : (() => {
+                      // Accordion: the common Tasks & runs categories (amber) open by default; the
+                      // long tail of skilled trades & plant (indigo) folds away — tap to expand.
+                      const isOpen = openCats[g.category.id] ?? (g.doorColor === C.amber);
+                      return (
+                      <View key={g.category.id} style={{ marginBottom: 4 }}>
+                        <TouchableOpacity onPress={() => setOpenCats((p) => ({ ...p, [g.category.id]: !isOpen }))} activeOpacity={0.7}
+                          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={[SH.groupHead, { color: g.doorColor, marginBottom: 0 }]}>{g.category.name}</Text>
+                            <Text style={{ fontSize: 12, color: C.mute2, fontWeight: '700' }}>{g.trades.length}</Text>
+                          </View>
+                          <Text style={{ fontSize: 20, color: C.mute2, fontWeight: '300', transform: [{ rotate: isOpen ? '90deg' : '0deg' }] }}>›</Text>
+                        </TouchableOpacity>
+                        {isOpen && (
+                          <View style={[SH.wrapChips, { marginBottom: 12 }]}>
+                            {g.trades.map((t) => (
+                              <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: g.doorColor }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
+                                <Text style={SH.pickT}>{t.name}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
                       </View>
-                    </View>
-                    )
+                      );
+                    })()
                   ))}
               </>
             )}
