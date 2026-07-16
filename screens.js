@@ -1,6 +1,6 @@
 // screens.js — Operator screens extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard } from 'react-native';
 import { C, R, S, E, M, T, Z } from './theme';
 import { SH, S_ } from './styles';
 import Icon, { iconForType } from './Icon';
@@ -77,33 +77,53 @@ function TrackerContainer({ requestId, onAction, perspective = 'client' }) {
 function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
   const [mounted, setMounted] = useState(!!assignmentId);
   const [content, setContent] = useState(assignmentId);   // held through exit
-  const [sheetH, setSheetH] = useState(700);              // measured height = slide travel
+  const [h, setH] = useState(0);          // measured card height; 0 = not measured yet
+  const [kb, setKb] = useState(0);        // keyboard height, so the sheet lifts above it
   const a = useRef(new Animated.Value(0)).current;         // 0 = hidden, 1 = shown
+  const waiting = useRef(false);          // open requested, holding until first measure
   useEffect(() => {
     if (assignmentId) {
+      // Measure BEFORE we slide: stay hidden (h=0) until onLayout reports the real
+      // height, then spring in from exactly that distance — no mid-slide re-adjust
+      // (which caused the flash + stutter). Reset h so each open re-measures fresh.
       setContent(assignmentId);
       setMounted(true);
-      Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start();
+      a.setValue(0);
+      setH(0);
+      waiting.current = true;
     } else if (mounted) {
       Animated.timing(a, { toValue: 0, duration: M.fast, easing: Easing.in(Easing.quad), useNativeDriver: true })
         .start(({ finished }) => { if (finished) setMounted(false); });
     }
     // `mounted` intentionally omitted: this reacts to assignmentId open/close only.
   }, [assignmentId, a]);
+  // Track the keyboard so the sheet can rise above it (the sign-off name field).
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s = Keyboard.addListener(showEvt, (e) => setKb(e.endCoordinates?.height || 0));
+    const hd = Keyboard.addListener(hideEvt, () => setKb(0));
+    return () => { s.remove(); hd.remove(); };
+  }, []);
   if (!mounted) return null;
-  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [sheetH, 0] });
-  // Kept invisible for the first sliver of the slide so a pre-measure frame can
-  // never flash on screen; opaque for the whole visible part of the motion.
-  const sheetOpacity = a.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 1, 1] });
+  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [h || 1000, 0] });
   const backdrop = a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
+  // On the first real measurement, start the slide once (uses the fresh height, not
+  // stale render state). The sheet stays opacity:0 until measured, so no pre-slide flash.
+  const onMeasured = (e) => {
+    const nh = e.nativeEvent.layout.height;
+    if (!nh) return;
+    if (Math.abs(nh - h) > 1) setH(nh);
+    if (waiting.current) { waiting.current = false; Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start(); }
+  };
   return (
     <Modal visible transparent animationType="none" onRequestClose={onCancel}>
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: kb }}>
         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: backdrop }} />
         <Animated.View
           pointerEvents={assignmentId ? 'auto' : 'none'}
-          onLayout={(e) => { const nh = e.nativeEvent.layout.height; if (nh && Math.abs(nh - sheetH) > 1) setSheetH(nh); }}
-          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: sheetOpacity, transform: [{ translateY }] }}
+          onLayout={onMeasured}
+          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: h > 0 ? 1 : 0, transform: [{ translateY }] }}
         >
           <SafeAreaView>
             <ScrollView
@@ -154,31 +174,49 @@ function usePrestartStatus(assigns) {
 function PrestartSheet({ assignmentId, onDone, onCancel }) {
   const [mounted, setMounted] = useState(!!assignmentId);
   const [content, setContent] = useState(assignmentId);   // held through exit
-  const [sheetH, setSheetH] = useState(700);              // measured height = slide travel
+  const [h, setH] = useState(0);          // measured card height; 0 = not measured yet
+  const [kb, setKb] = useState(0);        // keyboard height, so the sheet lifts above it
   const a = useRef(new Animated.Value(0)).current;         // 0 = hidden, 1 = shown
+  const waiting = useRef(false);          // open requested, holding until first measure
   useEffect(() => {
     if (assignmentId) {
+      // Measure BEFORE we slide (see CloseOutSheet): hidden until the real height is
+      // known, then spring in from exactly that distance — no mid-slide re-adjust.
       setContent(assignmentId);
       setMounted(true);
-      Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start();
+      a.setValue(0);
+      setH(0);
+      waiting.current = true;
     } else if (mounted) {
       Animated.timing(a, { toValue: 0, duration: M.fast, easing: Easing.in(Easing.quad), useNativeDriver: true })
         .start(({ finished }) => { if (finished) setMounted(false); });
     }
     // reacts to assignmentId open/close only
   }, [assignmentId, a]);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s = Keyboard.addListener(showEvt, (e) => setKb(e.endCoordinates?.height || 0));
+    const hd = Keyboard.addListener(hideEvt, () => setKb(0));
+    return () => { s.remove(); hd.remove(); };
+  }, []);
   if (!mounted) return null;
-  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [sheetH, 0] });
-  const sheetOpacity = a.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 1, 1] });
+  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [h || 1000, 0] });
   const backdrop = a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
+  const onMeasured = (e) => {
+    const nh = e.nativeEvent.layout.height;
+    if (!nh) return;
+    if (Math.abs(nh - h) > 1) setH(nh);
+    if (waiting.current) { waiting.current = false; Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start(); }
+  };
   return (
     <Modal visible transparent animationType="none" onRequestClose={onCancel}>
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: kb }}>
         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: backdrop }} />
         <Animated.View
           pointerEvents={assignmentId ? 'auto' : 'none'}
-          onLayout={(e) => { const nh = e.nativeEvent.layout.height; if (nh && Math.abs(nh - sheetH) > 1) setSheetH(nh); }}
-          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: sheetOpacity, transform: [{ translateY }] }}
+          onLayout={onMeasured}
+          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: h > 0 ? 1 : 0, transform: [{ translateY }] }}
         >
           <SafeAreaView>
             <ScrollView
