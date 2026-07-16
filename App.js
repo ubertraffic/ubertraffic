@@ -28,6 +28,7 @@ import PublicProfile from './PublicProfile';
 import { registerForPush, unregisterPush, addPushTapListener } from './pushService';
 import MapHero from './MapHero';
 import SearchingScreen from './SearchingScreen';
+import ProofPhotoTest from './ProofPhotoTest';
 import TradePicker from './TradePicker';
 import CredentialsScreen from './CredentialsScreen';
 import { readinessForTrades, verifiedCredentialsFor } from './credentialsService';
