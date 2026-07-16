@@ -866,6 +866,9 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
     if (crew.length > 0) { match = { r, crew, needed, it: primaryItem }; break; }
   }
   const [sheetOpen, setSheetOpen] = useState(false);
+  // When a job is waiting to be paid, THAT is the hero — so the post CTA recedes to a quiet
+  // bar (only one loud element at a time). Otherwise "Post a job" is the loud hero.
+  const payMode = needsYou.length > 0;
   // hub list for the full-screen command centre — track & act without leaving
   const STATUS_WORDS = { getting_ready: 'Getting ready', on_the_way: 'On the way', on_site: 'On site', done: 'Complete', waiting: 'Finding workers' };
   const DOT = { getting_ready: C.mute, on_the_way: C.indigo, on_site: C.green, done: C.green, waiting: C.red };
@@ -939,7 +942,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
     <View style={{ flex: 1 }}>
     <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
       <MapHero
-        height={300} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
+        height={240} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
         hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); } else { setSheetOpen(true); } }}
         commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
         primaryAction={needsYou.length > 0
@@ -965,13 +968,16 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           if (onOpenReq) onOpenReq(requestId);
         }}
       />
-      {/* request bar docked to the map's bottom edge — one connected card */}
-      <TouchableOpacity style={S_.askDock} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
+      {/* request bar docked to the map's bottom edge — one connected card. It's the loud hero
+          when idle; when a job needs paying it recedes to a quiet bar so the pay card can lead. */}
+      <TouchableOpacity style={[S_.askDock, payMode && S_.askDockQuiet]} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
         <View style={{ flex: 1 }}>
-          <Text style={S_.askDockLabel}>NEED SOMEONE ON SITE?</Text>
-          <Text style={S_.askDockT}>Post a job — get help now</Text>
+          <Text style={[S_.askDockLabel, payMode && S_.askDockLabelQuiet]}>NEED SOMEONE ON SITE?</Text>
+          <Text style={[S_.askDockT, payMode ? S_.askDockTQuiet : S_.askDockTLg]}>Post a job — get help now</Text>
         </View>
-        <View style={S_.askDockPlus}><Text style={S_.askDockPlusT}>＋</Text></View>
+        <View style={[S_.askDockPlus, payMode && S_.askDockPlusQuiet]}>
+          <Text style={[S_.askDockPlusT, payMode && S_.askDockPlusTQuiet]}>＋</Text>
+        </View>
       </TouchableOpacity>
       {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job.
           Renders BELOW the docked post-bar so it doesn't break the map+dock connected card. */}
@@ -990,7 +996,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           else if (action === 'open_help' && onOpenReq) onOpenReq(trackedId);
         }} />;
       })()}
-      <View style={{ padding: S.xl, paddingTop: 20 }}>
+      <View style={{ padding: 24, paddingTop: 24 }}>
 
         {/* THE MATCH — the whole job, filling up, crew inside. The Uber moment. */}
         {match && (
@@ -1011,10 +1017,10 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           </Entrance>
         )}
 
-        {/* NEEDS YOU — loud, only when something's ready to approve */}
+        {/* NEEDS YOU — the hero when present. Accent lives on the CARD, not the label. */}
         {needsYou.length > 0 && (
-          <View style={{ marginBottom: 18 }}>
-            <Text style={[T.eyebrow, { color: C.indigo, marginBottom: 8 }]}>Needs you</Text>
+          <View style={{ marginBottom: 24 }}>
+            <Text style={[T.eyebrow, { marginBottom: 8 }]}>Needs you</Text>
             {needsYou.map((r) => <NeedsYouCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
           </View>
         )}
@@ -1022,15 +1028,17 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
         {(() => {
           const isEmpty = mine !== null && progressing.length === 0 && needsYou.length === 0;
           if (isEmpty) {
-            // EMPTY: don't dominate with a hollow placeholder. One quiet line,
-            // then let the live Pulse rise up and be the hero of the screen.
+            // EMPTY (new client — first impression): a warm display headline, one line, the
+            // single obvious action is the post bar above; then the live Pulse as proof.
             return (
               <>
-                <View style={S_.rowBetween}>
-                  <Text style={T.eyebrow}>Active now</Text>
+                <Text style={S_.homeEmptyHero}>Who do you need on site?</Text>
+                <Text style={S_.homeEmptySub}>Post a job above — the nearest crews see it in seconds.</Text>
+                <View style={[S_.rowBetween, { marginTop: 32 }]}>
+                  <Text style={T.eyebrow}>Live on SiteCall</Text>
                   <LiveTag />
                 </View>
-                <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 20 }]}>No active jobs yet — post one above and watch it fill in real time.</Text>
+                <View style={{ height: 16 }} />
                 <Pulse />
               </>
             );
@@ -1050,7 +1058,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
                       : <Text style={[T.small, { marginTop: 8, color: C.mute }]}>All caught up — nothing else in progress.</Text>;
                     return rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />);
                   })()}
-              <View style={{ height: 14 }} />
+              <View style={{ height: 16 }} />
               <Pulse />
             </>
           );

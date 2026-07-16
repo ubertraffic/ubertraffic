@@ -272,6 +272,16 @@ export const S_ = StyleSheet.create({
   askDockT: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
   askDockPlus: { width: 40, height: 40, borderRadius: 20, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', ...E.sm },
   askDockPlusT: { color: '#fff', fontSize: 22, fontWeight: '600', lineHeight: 26, marginTop: -1 },
+  // client home: the post CTA is the hero when idle (enlarged), and recedes to a quiet
+  // neutral bar when a job is waiting to be paid — so only ONE loud element shows at a time.
+  askDockTLg: { fontSize: 21, letterSpacing: -0.4 },
+  askDockQuiet: { backgroundColor: C.panel, borderWidth: 1, borderColor: C.line },
+  askDockLabelQuiet: { color: C.mute2 },
+  askDockTQuiet: { color: C.ink, fontSize: 16, fontWeight: '700' },
+  askDockPlusQuiet: { backgroundColor: C.indigoSoft },
+  askDockPlusTQuiet: { color: C.indigo },
+  homeEmptyHero: { fontSize: 30, fontWeight: '800', letterSpacing: -0.7, color: C.ink, marginTop: 8 },
+  homeEmptySub: { fontSize: 15, color: C.mute, lineHeight: 22, marginTop: 8 },
   needsCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.indigo, borderRadius: R.lg, padding: 16, marginBottom: 10, ...E.indigo },
   needsSuburb: { color: '#fff', fontSize: 17, fontWeight: '800', letterSpacing: 0.2 },
   needsSummary: { color: 'rgba(255,255,255,0.82)', fontSize: 12.5, marginTop: 2 },
