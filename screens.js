@@ -1,6 +1,6 @@
 // screens.js — Operator screens extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar } from 'react-native';
 import { C, R, S, E, M, T, Z } from './theme';
 import { SH, S_ } from './styles';
 import Icon, { iconForType } from './Icon';
@@ -466,15 +466,21 @@ export function OperatorHome({ session, onOpenProfile }) {
     />
     <Modal visible={!!closeOut} transparent animationType="slide" onRequestClose={() => setCloseOut(null)}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.md }}>
-          {closeOut ? (
-            <CloseOutCard
-              assignmentId={closeOut}
-              onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
-              onCancel={() => setCloseOut(null)}
-            />
-          ) : null}
-        </ScrollView>
+        <SafeAreaView style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0 }}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: S.md }}
+            showsVerticalScrollIndicator={false}
+          >
+            {closeOut ? (
+              <CloseOutCard
+                assignmentId={closeOut}
+                onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
+                onCancel={() => setCloseOut(null)}
+              />
+            ) : null}
+          </ScrollView>
+        </SafeAreaView>
       </View>
     </Modal>
     <Modal visible={!!arrivePrompt} transparent animationType="fade" onRequestClose={() => setArrivePrompt(null)}>
