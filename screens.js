@@ -665,10 +665,10 @@ export function OperatorHome({ session, onOpenProfile }) {
       {(() => {
         const hasTracker = !!(myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status))?.request_item?.request?.id;
         return (
-      <TouchableOpacity style={[S_.askDock, hasTracker && S_.askDockStandalone]} onPress={toggleOnline} activeOpacity={0.92} disabled={busy}>
+      <TouchableOpacity style={[S_.askDock, hasTracker && S_.askDockStandalone, profile.is_online && S_.askDockQuiet]} onPress={toggleOnline} activeOpacity={0.92} disabled={busy}>
         <View style={{ flex: 1 }}>
-          <Text style={S_.askDockLabel}>{profile.is_online ? 'YOU\'RE ONLINE' : 'YOU\'RE OFFLINE'}</Text>
-          <Text style={S_.askDockT}>{profile.is_online ? 'Receiving jobs near you' : 'Go online to get work'}</Text>
+          <Text style={[S_.askDockLabel, profile.is_online && S_.askDockLabelQuiet]}>{profile.is_online ? 'YOU\'RE ONLINE' : 'YOU\'RE OFFLINE'}</Text>
+          <Text style={[S_.askDockT, profile.is_online ? S_.askDockTQuiet : S_.askDockTLg]}>{profile.is_online ? 'Receiving jobs near you' : 'Go online to get work'}</Text>
         </View>
         <View style={[S_.sw, profile.is_online && S_.swOn]}>
           <View style={[S_.swKnob, profile.is_online && S_.swKnobOn]} />
@@ -676,7 +676,16 @@ export function OperatorHome({ session, onOpenProfile }) {
       </TouchableOpacity>
         );
       })()}
-      <View style={{ padding: S.xl, paddingTop: 20 }}>
+      <View style={{ padding: 24, paddingTop: 24 }}>
+
+        {/* offline first-impression — the display hero this screen was missing, pointing at the
+            loud "Go online" toggle above. WorkFeed still shows its quiet "jobs near you" note below. */}
+        {mission === 'offline' && (
+          <View style={{ marginBottom: 8 }}>
+            <Text style={S_.homeEmptyHero}>Ready to earn?</Text>
+            <Text style={S_.homeEmptySub}>Flip the switch above — jobs near you show up the moment you're online.</Text>
+          </View>
+        )}
 
         <WorkFeed
           mission={mission}
@@ -701,7 +710,7 @@ export function OperatorHome({ session, onOpenProfile }) {
           // Collapsed by default so the home stays calm; tap to open the full add/remove editor.
           const readyCaps = caps.filter((c) => c.trade_id && readiness[c.trade_id]?.ready);
           return (<>
-          <Text style={[T.eyebrow, { marginTop: 26 }]}>What I supply</Text>
+          <Text style={[T.eyebrow, { marginTop: 24 }]}>What I supply</Text>
           {!capsOpen ? (
             <TouchableOpacity style={S_.capSummary} onPress={() => setCapsOpen(true)} activeOpacity={0.85}>
               <View style={{ flex: 1 }}>
@@ -755,7 +764,7 @@ export function OperatorHome({ session, onOpenProfile }) {
           </View>
           </>)}
 
-          <View style={{ marginTop: 22 }}><Pulse /></View>
+          <View style={{ marginTop: 24 }}><Pulse /></View>
           </>);
         })()}
       </View>
