@@ -81,6 +81,17 @@ export async function getPublicProfile(userId) {
   return data;
 }
 
+// Reputation extras — the parts of a worker's reputation that ride ON TOP of the star
+// rating already in get_public_profile: how many clients would re-hire them, and the tally
+// of "good unit" tags. Read via its own RPC and MERGED into the profile client-side, so the
+// (unseen) get_public_profile function stays untouched. Returns { rehire_count, tag_counts }.
+export async function getReputationExtras(userId) {
+  const { data, error } = await supabase.rpc('get_reputation_extras', { p_user_id: userId });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return row || { rehire_count: 0, tag_counts: {} };
+}
+
 // Stage 2: owner edits their own headline + bio (length-capped server-side).
 export async function updateMyProfileBio(headline, bio) {
   const { error } = await supabase.rpc('update_my_profile_bio', { p_headline: headline, p_bio: bio });

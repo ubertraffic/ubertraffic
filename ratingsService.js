@@ -21,6 +21,22 @@ export async function submitRating(assignmentId, score, comment = null) {
 }
 
 /**
+ * Attach "good unit" tags + the "I'd have them back" (re-hire) flag to the rating the
+ * caller JUST submitted for this assignment. Kept separate from submit_rating so the
+ * money-sensitive rating RPC is untouched — this only updates the caller's own row
+ * (server enforces rater_id = auth.uid()). Best-effort: a failure here must never lose
+ * the star rating that already saved, so callers swallow its error.
+ */
+export async function setRatingExtras(assignmentId, tags = [], wouldRehire = null) {
+  const { error } = await supabase.rpc('set_rating_extras', {
+    p_assignment_id: assignmentId,
+    p_tags: tags,
+    p_would_rehire: wouldRehire,
+  });
+  if (error) throw error;
+}
+
+/**
  * Has the current user already rated this assignment (in their direction)?
  * Used to hide the prompt once they've rated. Relies on RLS: the select policy
  * only returns rows the caller wrote or is the subject of.

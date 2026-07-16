@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, ActivityIndicator, Image, TextInput } from 'react-native';
 import { C, R, shadowSm } from './theme';
 import Icon from './Icon';
-import { getPublicProfile, updateMyProfileBio } from './accountService';
+import { getPublicProfile, updateMyProfileBio, getReputationExtras } from './accountService';
 import { workersWithSkill } from './communityService';
 
 const TRADE_CAP = 6;   // show a focused set; a legit tradie has a handful, not fifty
@@ -36,6 +36,7 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   // Skill discovery — tap a skill tag to see other verified workers who do it.
   const [disc, setDisc] = useState(null);          // { skill } while the sheet is open
   const [discList, setDiscList] = useState(null);  // null = loading, [] = none found
+  const [rep, setRep] = useState(null);            // { rehire_count, tag_counts } reputation extras
 
   const isOwner = !!meId && meId === viewUserId;
 
@@ -63,6 +64,15 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
     if (!visible || !viewUserId) return;
     load();
   }, [visible, viewUserId, load]);
+
+  // Reputation extras (re-hire count + good-unit tag tallies) — fetched alongside the
+  // profile and merged in. Best-effort: a miss just hides the block, never blocks the profile.
+  useEffect(() => {
+    if (!visible || !viewUserId) { setRep(null); return; }
+    let alive = true; setRep(null);
+    getReputationExtras(viewUserId).then((r) => { if (alive) setRep(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [visible, viewUserId]);
 
   function openSkill(skill) {
     setDisc({ skill }); setDiscList(null);
@@ -102,6 +112,10 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   const shownTrades = showAllTrades ? trades : trades.slice(0, TRADE_CAP);
   const creds = p?.verified_credentials || [];
   const since = monthYear(p?.member_since);
+  // reputation extras — top "good unit" tags, most-vouched first (scannable badges)
+  const tagCounts = rep?.tag_counts || {};
+  const topTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const rehireCount = rep?.rehire_count || 0;
 
   // honest reputation line: distinguishes "new" from "experienced but unrated"
   const hasRating = p?.rating != null && p?.rating_count > 0;
@@ -226,6 +240,30 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
                   <Text style={styles.reliaLabel}>completion rate</Text>
                 </View>
                 <Text style={styles.reliaSub}>Finished {p.completion_rate}% of {p.resolved_jobs} resolved jobs</Text>
+              </View>
+            )}
+
+            {/* reputation extras — re-hire signal + scannable "good unit" badges (client + peer) */}
+            {(rehireCount > 0 || topTags.length > 0) && (
+              <View style={styles.repBox}>
+                {rehireCount > 0 && (
+                  <View style={styles.repRehire}>
+                    <Icon name="verified" size={16} color={C.green} />
+                    <Text style={styles.repRehireT}>
+                      <Text style={styles.repRehireNum}>{rehireCount}</Text> client{rehireCount === 1 ? '' : 's'} would have {first} back
+                    </Text>
+                  </View>
+                )}
+                {topTags.length > 0 && (
+                  <View style={styles.repTagWrap}>
+                    {topTags.map(([tag, n]) => (
+                      <View key={tag} style={styles.repTag}>
+                        <Text style={styles.repTagT}>{tag}</Text>
+                        <Text style={styles.repTagN}>{n}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </View>
             )}
 
@@ -386,6 +424,14 @@ const styles = StyleSheet.create({
   reliaNum: { fontSize: 24, fontWeight: '900', color: C.green, letterSpacing: -0.5 },
   reliaLabel: { fontSize: 11, color: C.mute, fontWeight: '700', marginTop: 2 },
   reliaSub: { flex: 1, fontSize: 13, color: C.mute, fontWeight: '600', lineHeight: 18 },
+  repBox: { marginHorizontal: 20, marginTop: 12, backgroundColor: C.panel, borderRadius: R.xl, padding: 16, ...shadowSm },
+  repRehire: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  repRehireT: { fontSize: 14, color: C.ink, fontWeight: '600', flex: 1 },
+  repRehireNum: { fontWeight: '900', color: C.green },
+  repTagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  repTag: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(16,163,90,0.10)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
+  repTagT: { fontSize: 12.5, fontWeight: '700', color: C.green },
+  repTagN: { fontSize: 11.5, fontWeight: '800', color: C.green, opacity: 0.7 },
   newNote: { marginHorizontal: 20, marginTop: 14, backgroundColor: 'rgba(70,54,232,0.06)', borderRadius: R.lg, paddingVertical: 12, paddingHorizontal: 14 },
   newNoteT: { fontSize: 13.5, color: C.indigo, fontWeight: '700', textAlign: 'center' },
   section: { marginHorizontal: 20, marginTop: 26 },

@@ -6,7 +6,8 @@ import { C, R, S, E } from './theme';
 import { S_ } from './styles';
 import Icon from './Icon';
 import { supabase } from './supabaseClient';
-import { submitRating } from './ratingsService';
+import { submitRating, setRatingExtras } from './ratingsService';
+import { GOOD_UNIT_TAGS } from './reputation';
 import { logError } from './errorService';
 import { listMaterialClaims, resolveMaterialClaim, submitMaterialClaim } from './completionService';
 import { verifiedCredentialsFor } from './credentialsService';
@@ -277,17 +278,28 @@ export function MaterialsClaim({ visible, assignment, onClose, onDone }) {
   );
 }
 
-export function RateJob({ visible, assignmentId, rateeName, onClose }) {
+export function RateJob({ visible, assignmentId, rateeName, onClose, rateeIsWorker = true }) {
   const [score, setScore] = useState(0);
   const [comment, setComment] = useState('');
+  const [tags, setTags] = useState([]);          // tapped "good unit" tags
+  const [rehire, setRehire] = useState(false);   // "I'd have them back"
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
-  useEffect(() => { if (visible) { setScore(0); setComment(''); setErr(''); setDone(false); } }, [visible, assignmentId]);
+  useEffect(() => { if (visible) { setScore(0); setComment(''); setTags([]); setRehire(false); setErr(''); setDone(false); } }, [visible, assignmentId]);
+  function toggleTag(t) { setTags((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]); }
   async function submit() {
     if (score < 1) { setErr('Tap a star to rate.'); return; }
     setBusy(true); setErr('');
-    try { await submitRating(assignmentId, score, comment.trim() || null); setDone(true); setTimeout(() => onClose && onClose(true), 900); }
+    try {
+      await submitRating(assignmentId, score, comment.trim() || null);
+      // Extras ride ON TOP of the rating. If they fail, the star rating already saved —
+      // don't surface an error or lose the moment; just proceed.
+      if (rateeIsWorker && (tags.length || rehire)) {
+        try { await setRatingExtras(assignmentId, tags, rehire); } catch (_) {}
+      }
+      setDone(true); setTimeout(() => onClose && onClose(true), 900);
+    }
     catch (e) { setErr(friendly(e)); } finally { setBusy(false); }
   }
   const who = (rateeName || 'them').split(' ')[0];
@@ -310,6 +322,27 @@ export function RateJob({ visible, assignmentId, rateeName, onClose }) {
                   </TouchableOpacity>
                 ))}
               </View>
+              {rateeIsWorker && (
+                <>
+                  <View style={S_.rateTagWrap}>
+                    {GOOD_UNIT_TAGS.map((t) => {
+                      const on = tags.includes(t);
+                      return (
+                        <TouchableOpacity key={t} onPress={() => toggleTag(t)} activeOpacity={0.8}
+                          style={[S_.rateTag, on && S_.rateTagOn]}>
+                          <Text style={[S_.rateTagT, on && S_.rateTagTOn]}>{t}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <TouchableOpacity style={S_.rehireRow} onPress={() => setRehire((v) => !v)} activeOpacity={0.8}>
+                    <View style={[S_.rehireBox, rehire && S_.rehireBoxOn]}>
+                      {rehire && <Text style={S_.rehireTick}>✓</Text>}
+                    </View>
+                    <Text style={S_.rehireT}>I'd have {who} back</Text>
+                  </TouchableOpacity>
+                </>
+              )}
               <TextInput
                 style={S_.rateInput}
                 placeholder="Add a comment (optional)"
