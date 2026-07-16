@@ -14,6 +14,7 @@ import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, request
 import CredentialsScreen from './CredentialsScreen';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
+import CloseOutCard from './CloseOutCard';
 
 // local copy (App.js has its own) — small pure helper, avoids a circular screens<->App import
 function buildJobInfo({ a, it, r, workerName }) {
@@ -83,6 +84,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [dismissedDone, setDismissedDone] = useState([]);  // assignment ids whose "job done" moment the worker has dismissed → back to feed
   const [chat, setChat] = useState(null);              // { a, title, sub, info } — job room over the map
   const [arrivePrompt, setArrivePrompt] = useState(null);  // assignmentId awaiting on-site confirm (GPS override)
+  const [closeOut, setCloseOut] = useState(null);           // assignmentId in the close-out gate (compliance)
   const [opMapExpanded, setOpMapExpanded] = useState(false);
   // Live location — follow the worker as they move (real GPS on Expo Go via
   // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
@@ -212,7 +214,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   function nextAction(a) {
     if (a.status === 'committed' || a.status === 'accepted') return { label: 'Start journey', fn: () => mapBeginJourney(a.id) };
     if (a.status === 'en_route') return { label: 'Arrived on site', fn: () => mapArrive(a.id) };
-    if (a.status === 'on_site') return { label: 'Complete job', fn: () => mapComplete(a.id) };
+    if (a.status === 'on_site') return { label: 'Complete job', fn: () => setCloseOut(a.id) };
     return null;
   }
   async function addCapFromTrade(trade) {
@@ -382,7 +384,7 @@ export function OperatorHome({ session, onOpenProfile }) {
           if (action === 'open_chat') setChat({ a: act, title: `${act.request_item?.type || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
           else if (action === 'start_journey' && aid) mapBeginJourney(aid);
           else if (action === 'arrive' && aid) mapArrive(aid);
-          else if (action === 'complete' && aid) mapComplete(aid);
+          else if (action === 'complete' && aid) setCloseOut(aid);
         }} />;
       })()}
       {/* dock bar — mirrors Hire's "Post a job" bar, but holds the online toggle. When a live
@@ -462,6 +464,19 @@ export function OperatorHome({ session, onOpenProfile }) {
       peerId={chat?.a?.request_item?.request?.client_id}
       onOpenProfile={onOpenProfile}
     />
+    <Modal visible={!!closeOut} transparent animationType="slide" onRequestClose={() => setCloseOut(null)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.md }}>
+          {closeOut ? (
+            <CloseOutCard
+              assignmentId={closeOut}
+              onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
+              onCancel={() => setCloseOut(null)}
+            />
+          ) : null}
+        </ScrollView>
+      </View>
+    </Modal>
     <Modal visible={!!arrivePrompt} transparent animationType="fade" onRequestClose={() => setArrivePrompt(null)}>
       <View style={S_.arriveScrim}>
         <View style={S_.arriveCard}>
