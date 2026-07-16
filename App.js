@@ -473,9 +473,33 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
   // door's accent colour. Lets the client pick their trade in ONE screen instead of door→trade
   // (the door step was just a filter; the trade screen was already category-grouped). Research-backed
   // friction reduction — one genuinely redundant tap removed.
-  const allTradeGroups = tax ? FRONT_DOORS.flatMap((dr) =>
-    groupedTradesForDoor(tax, dr.key).map((g) => ({ ...g, doorColor: dr.color, doorKey: dr.key }))
-  ) : [];
+  // One clean list: every client-visible trade grouped by its category ONCE (no more
+  // per-door duplicate headers), with the community task/errand categories FIRST under a
+  // "Tasks & runs" banner (anyone with a vehicle), then the ticketed "Skilled trades &
+  // plant". Replaces the door→category loop that duplicated categories and buried tasks.
+  const allTradeGroups = (() => {
+    if (!tax) return [];
+    const catById = Object.fromEntries((tax.categories || []).map((c) => [c.id, c]));
+    const byCat = {};
+    (tax.trades || []).forEach((t) => {
+      if (t.client_visible === false) return;
+      const cat = catById[t.category_id];
+      if (!cat) return;
+      if (!byCat[cat.id]) byCat[cat.id] = { category: cat, trades: [], allTask: true };
+      byCat[cat.id].trades.push(t);
+      if (t.kind !== 'task') byCat[cat.id].allTask = false;
+    });
+    const groups = Object.values(byCat);
+    const bySort = (a, b) => (a.category.sort || 0) - (b.category.sort || 0);
+    const taskCats = groups.filter((g) => g.allTask).sort(bySort);
+    const skilledCats = groups.filter((g) => !g.allTask).sort(bySort);
+    const out = [];
+    if (taskCats.length) out.push({ section: 'Tasks & runs · anyone with a vehicle', color: C.amber });
+    taskCats.forEach((g) => out.push({ ...g, doorColor: C.amber }));
+    if (skilledCats.length) out.push({ section: 'Skilled trades & plant', color: C.indigo });
+    skilledCats.forEach((g) => out.push({ ...g, doorColor: C.indigo }));
+    return out;
+  })();
   const canSend = items.length > 0 && loc.trim();
 
   return (
@@ -557,8 +581,16 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
                 {!tax ? <ActivityIndicator color={C.indigo} style={{ marginTop: 16 }} />
                   : allTradeGroups.length === 0
                   ? <Text style={[SH.hint, { marginTop: 4 }]}>Nothing here yet.</Text>
-                  : allTradeGroups.map((g) => (
-                    <View key={g.doorKey + '-' + g.category.id} style={{ marginBottom: 18 }}>
+                  : allTradeGroups.map((g, gi) => (
+                    g.section ? (
+                      <Text
+                        key={'sec-' + gi}
+                        style={{ fontSize: 12.5, fontWeight: '800', letterSpacing: 0.6, color: g.color, textTransform: 'uppercase', marginTop: gi === 0 ? 4 : 22, marginBottom: 12 }}
+                      >
+                        {g.section}
+                      </Text>
+                    ) : (
+                    <View key={g.category.id} style={{ marginBottom: 18 }}>
                       <Text style={[SH.groupHead, { color: g.doorColor }]}>{g.category.name}</Text>
                       <View style={SH.wrapChips}>
                         {g.trades.map((t) => (
@@ -568,6 +600,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
                         ))}
                       </View>
                     </View>
+                    )
                   ))}
               </>
             )}
