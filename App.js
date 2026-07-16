@@ -458,6 +458,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
   const [contactPhone, setContactPhone] = useState(''); // optional site contact phone
   const [materialsCap, setMaterialsCap] = useState(''); // optional materials budget
   const [jobDetails, setJobDetails] = useState('');     // duties — what the worker will do (shown before accepting)
+  const [pickupText, setPickupText] = useState('');     // runs only: where to buy (plain text, e.g. "Bunnings Alexandria")
   const [busy, setBusy] = useState(false);
   const [locBusy, setLocBusy] = useState(false);   // reverse-geocoding "use my location"
   const [err, setErr] = useState('');
@@ -483,7 +484,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       Animated.parallel([
         Animated.timing(y, { toValue: SHEET_SCREEN_H, duration: 240, useNativeDriver: true }),
         Animated.timing(dim, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setJobDetails(''); setSchedDay(0); setSchedHour(9); });
+      ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); });
     }
   }, [visible]);
 
@@ -492,7 +493,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
     const kind = t.kind === 'plant' ? 'gear' : t.kind;
     const ex = items.find((i) => i.trade_id === t.id);
     if (ex) setItems(items.map((i) => i.trade_id === t.id ? { ...i, qty: i.qty + 1 } : i));
-    else setItems([...items, { trade_id: t.id, kind, type: t.name, qty: 1, rate: sheetRateFor(t.name, kind), priceMode: kind === 'task' ? 'job' : 'hour', tickets: kind === 'crew' ? ['White Card'] : [] }]);
+    else setItems([...items, { trade_id: t.id, kind, type: t.name, qty: 1, rate: sheetRateFor(t.name, kind), priceMode: kind === 'task' ? 'job' : 'hour', tickets: kind === 'crew' ? ['White Card'] : [], run: t.run_style === 'open' }]);
     setPhase('rate');
   }
   const setRateS = (tid, v) => setItems(items.map((i) => i.trade_id === tid ? { ...i, rate: Math.max(5, v) } : i));
@@ -514,7 +515,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       const isBooked = when === 'scheduled';
       const sched = isBooked ? scheduledISO() : null;
       if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
-      await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails });
+      await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText });
       setPhase('sent');
       setTimeout(() => { onPosted && onPosted(); }, 1100);   // let the "sent" beat land, then drop home
     } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
@@ -764,6 +765,12 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
                 <Text style={SH.optionalLabel}>Site contact <Text style={SH.optionalHint}>(optional — who to ask for)</Text></Text>
                 <TextInput style={SH.optionalInput} value={contactName} onChangeText={setContactName} placeholder="Name on site" placeholderTextColor={C.mute2} />
                 <TextInput style={SH.optionalInput} value={contactPhone} onChangeText={setContactPhone} placeholder="Their phone" placeholderTextColor={C.mute2} keyboardType="phone-pad" />
+                {items.some((i) => i.run) && (
+                  <>
+                    <Text style={SH.optionalLabel}>Where to buy? <Text style={SH.optionalHint}>(which shop — so they know where to go)</Text></Text>
+                    <TextInput style={SH.optionalInput} value={pickupText} onChangeText={(t) => setPickupText(t.slice(0, 120))} placeholder="e.g. Bunnings Alexandria" placeholderTextColor={C.mute2} />
+                  </>
+                )}
                 <Text style={SH.optionalLabel}>Materials budget <Text style={SH.optionalHint}>(optional — if they'll buy parts)</Text></Text>
                 <TextInput style={SH.optionalInput} value={materialsCap} onChangeText={setMaterialsCap} placeholder="$0 cap you'll cover" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
                 <TouchableOpacity style={[SH.send, !canSend && { opacity: 0.4 }]} disabled={!canSend || busy} onPress={send}><Text style={SH.sendT}>{busy ? 'Sending…' : 'Send request →'}</Text></TouchableOpacity>
