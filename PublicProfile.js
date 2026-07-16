@@ -116,6 +116,8 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   const tagCounts = rep?.tag_counts || {};
   const topTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const rehireCount = rep?.rehire_count || 0;
+  const vouchCount = rep?.vouch_count || 0;
+  const vouchers = rep?.vouchers || [];
 
   // honest reputation line: distinguishes "new" from "experienced but unrated"
   const hasRating = p?.rating != null && p?.rating_count > 0;
@@ -243,14 +245,23 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
               </View>
             )}
 
-            {/* reputation extras — re-hire signal + scannable "good unit" badges (client + peer) */}
-            {(rehireCount > 0 || topTags.length > 0) && (
+            {/* reputation extras — re-hire signal, peer vouches + scannable "good unit" badges */}
+            {(rehireCount > 0 || vouchCount > 0 || topTags.length > 0) && (
               <View style={styles.repBox}>
                 {rehireCount > 0 && (
                   <View style={styles.repRehire}>
                     <Icon name="verified" size={16} color={C.green} />
                     <Text style={styles.repRehireT}>
                       <Text style={styles.repRehireNum}>{rehireCount}</Text> client{rehireCount === 1 ? '' : 's'} would have {first} back
+                    </Text>
+                  </View>
+                )}
+                {vouchCount > 0 && (
+                  <View style={[styles.repRehire, rehireCount > 0 && { marginTop: 10 }]}>
+                    <Icon name="crew" size={16} color={C.indigo} />
+                    <Text style={styles.repRehireT}>
+                      Vouched by <Text style={styles.repVouchNum}>{vouchCount}</Text> workmate{vouchCount === 1 ? '' : 's'}
+                      {vouchers.length ? ` · ${vouchers.slice(0, 3).join(', ')}` : ''}
                     </Text>
                   </View>
                 )}
@@ -428,6 +439,7 @@ const styles = StyleSheet.create({
   repRehire: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   repRehireT: { fontSize: 14, color: C.ink, fontWeight: '600', flex: 1 },
   repRehireNum: { fontWeight: '900', color: C.green },
+  repVouchNum: { fontWeight: '900', color: C.indigo },
   repTagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   repTag: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(16,163,90,0.10)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
   repTagT: { fontSize: 12.5, fontWeight: '700', color: C.green },

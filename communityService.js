@@ -26,3 +26,34 @@ export async function workersWithSkill(skill, excludeUserId = null) {
     return [];
   }
 }
+
+/**
+ * Workmates who were on the same job as me (by request), so I can vouch for them.
+ * Server-verified: only returns people if I was genuinely on that job too (no leaking a
+ * job's roster to someone who wasn't there). Excludes me. Degrades to [] if not deployed.
+ */
+export async function coworkersOnJob(requestId) {
+  if (!requestId) return [];
+  try {
+    const { data, error } = await supabase.rpc('coworkers_on_job', { p_request_id: requestId });
+    if (error) throw error;
+    return data || [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Vouch for a workmate on a shared job, optionally with "good unit" tags. The server
+ * checks BOTH of us actually worked that job before recording it — that's the un-gameable
+ * rule (you can only vouch for someone you were really on site with). Re-vouching updates
+ * the tags. Throws on a real failure so the caller can show a message.
+ */
+export async function vouchForPeer(requestId, peerId, tags = []) {
+  const { error } = await supabase.rpc('vouch_for_peer', {
+    p_request_id: requestId,
+    p_peer_id: peerId,
+    p_tags: tags,
+  });
+  if (error) throw error;
+}

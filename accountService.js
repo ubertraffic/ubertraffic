@@ -89,7 +89,7 @@ export async function getReputationExtras(userId) {
   const { data, error } = await supabase.rpc('get_reputation_extras', { p_user_id: userId });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
-  return row || { rehire_count: 0, tag_counts: {} };
+  return row || { rehire_count: 0, tag_counts: {}, vouch_count: 0, vouchers: [] };
 }
 
 // Stage 2: owner edits their own headline + bio (length-capped server-side).

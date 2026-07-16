@@ -10,7 +10,7 @@ import LiveTrackerCard from './LiveTrackerCard';
 import Pulse from './Pulse';
 import JobChat from './JobChat';
 import { jobTitle, jobSubtitle, estTotal, RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, PrimaryBtn, tap, Center } from './components2';
-import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim } from './components';
+import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard } from './components';
 import CredentialsScreen from './CredentialsScreen';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
@@ -690,6 +690,11 @@ export function OperatorHome({ session, onOpenProfile }) {
           onDismissDone={() => { if (doneAssign) setDismissedDone((prev) => [...prev, doneAssign.id]); }}
         />
         {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
+
+        {/* just finished a job with others on it? offer to vouch for the crew (self-hides if solo) */}
+        {mission === 'done' && doneAssign?.request_item?.request?.id && (
+          <VouchCrewCard requestId={doneAssign.request_item.request.id} />
+        )}
 
         {mission !== 'working' && (() => {
           // A capability is a "skill" once it's actually dispatchable (credential gate passed).
