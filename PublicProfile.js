@@ -8,6 +8,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, ActivityIn
 import { C, R, shadowSm } from './theme';
 import Icon from './Icon';
 import { getPublicProfile, updateMyProfileBio } from './accountService';
+import { workersWithSkill } from './communityService';
 
 const TRADE_CAP = 6;   // show a focused set; a legit tradie has a handful, not fifty
 
@@ -20,6 +21,10 @@ function monthYear(iso) {
 }
 
 export default function PublicProfile({ visible, userId, onClose, meId }) {
+  // viewUserId lets you BROWSE from one profile into a peer's (via skill discovery) without
+  // unmounting — `stack` is the back-trail so the header ‹ returns you the way you came.
+  const [viewUserId, setViewUserId] = useState(userId);
+  const [stack, setStack] = useState([]);
   const [p, setP] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState(false);
@@ -28,11 +33,14 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   const [draftHead, setDraftHead] = useState('');
   const [draftBio, setDraftBio] = useState('');
   const [saving, setSaving] = useState(false);
+  // Skill discovery — tap a skill tag to see other verified workers who do it.
+  const [disc, setDisc] = useState(null);          // { skill } while the sheet is open
+  const [discList, setDiscList] = useState(null);  // null = loading, [] = none found
 
-  const isOwner = !!meId && meId === userId;
+  const isOwner = !!meId && meId === viewUserId;
 
   const load = React.useCallback(() => {
-    if (!userId) return;
+    if (!viewUserId) return;
     setLoading(true); setLoadErr(false); setP(null); setShowAllTrades(false); setEditing(false);
     let settled = false;
     // hard timeout — a profile must never hang on an endless spinner (some payloads are large /
@@ -40,15 +48,39 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
     const timer = setTimeout(() => {
       if (!settled) { settled = true; setLoadErr(true); setLoading(false); }
     }, 10000);
-    getPublicProfile(userId)
+    getPublicProfile(viewUserId)
       .then((d) => { if (!settled) { settled = true; clearTimeout(timer); setP(d || null); setLoading(false); } })
       .catch(() => { if (!settled) { settled = true; clearTimeout(timer); setLoadErr(true); setLoading(false); } });
-  }, [userId]);
+  }, [viewUserId]);
 
+  // Host pointed us at a (new) user, or the modal (re)opened — start a fresh browse session.
   useEffect(() => {
     if (!visible || !userId) return;
+    setViewUserId(userId); setStack([]); setDisc(null); setDiscList(null);
+  }, [visible, userId]);
+
+  useEffect(() => {
+    if (!visible || !viewUserId) return;
     load();
-  }, [visible, userId, load]);
+  }, [visible, viewUserId, load]);
+
+  function openSkill(skill) {
+    setDisc({ skill }); setDiscList(null);
+    workersWithSkill(skill, viewUserId).then((rows) => setDiscList(rows)).catch(() => setDiscList([]));
+  }
+  function navigateTo(id) {
+    if (!id || id === viewUserId) return;
+    setStack((s) => [...s, viewUserId]);
+    setDisc(null); setDiscList(null);
+    setViewUserId(id);
+  }
+  function goBack() {
+    setStack((s) => {
+      if (!s.length) return s;
+      setViewUserId(s[s.length - 1]);
+      return s.slice(0, -1);
+    });
+  }
 
   function startEdit() {
     setDraftHead(p?.headline || '');
@@ -83,8 +115,8 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
       <View style={styles.wrap}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.close} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Text style={styles.closeT}>✕</Text>
+          <TouchableOpacity onPress={stack.length ? goBack : onClose} style={styles.close} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Text style={styles.closeT}>{stack.length ? '‹' : '✕'}</Text>
           </TouchableOpacity>
           <Text style={styles.headerT}>Profile</Text>
           <View style={{ width: 30 }} />
@@ -241,13 +273,18 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
               </View>
             )}
 
-            {/* trades — capped so it reads focused, not spammy */}
+            {/* skills — the tappable social layer. A skill sits WITH the verified credentials
+                above it (trust), and tapping one finds other verified workers who do it. */}
             {trades.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionLabel}>Trades</Text>
+                <Text style={styles.sectionLabel}>Skills</Text>
+                <Text style={styles.sectionHint}>Tap a skill to see others who do it</Text>
                 <View style={styles.chipWrap}>
                   {shownTrades.map((tname, i) => (
-                    <View key={`${tname}-${i}`} style={styles.chip}><Text style={styles.chipT}>{tname}</Text></View>
+                    <TouchableOpacity key={`${tname}-${i}`} style={styles.chip} activeOpacity={0.8} onPress={() => openSkill(tname)}>
+                      <Text style={styles.chipT}>{tname}</Text>
+                      <Text style={styles.chipTap}> ›</Text>
+                    </TouchableOpacity>
                   ))}
                   {trades.length > TRADE_CAP && !showAllTrades && (
                     <TouchableOpacity style={styles.chipMore} onPress={() => setShowAllTrades(true)} activeOpacity={0.8}>
@@ -259,6 +296,44 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
             )}
           </ScrollView>
         )}
+
+        {/* skill discovery sheet — verified workers who share this skill */}
+        <Modal visible={!!disc} animationType="slide" transparent onRequestClose={() => setDisc(null)}>
+          <View style={styles.discBackdrop}>
+            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setDisc(null)} />
+            <View style={styles.discSheet}>
+              <View style={styles.discHeader}>
+                <Text style={styles.discTitle}>{disc?.skill}</Text>
+                <TouchableOpacity onPress={() => setDisc(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Text style={styles.closeT}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.discSub}>Verified workers who do this</Text>
+              {discList == null ? (
+                <View style={{ paddingVertical: 30 }}><ActivityIndicator color={C.indigo} /></View>
+              ) : discList.length === 0 ? (
+                <Text style={styles.discEmpty}>No one else listed yet.</Text>
+              ) : (
+                <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+                  {discList.map((w) => (
+                    <TouchableOpacity key={w.user_id} style={styles.discRow} activeOpacity={0.85} onPress={() => navigateTo(w.user_id)}>
+                      <View style={styles.discAv}><Text style={styles.discAvT}>{(w.name || '?').charAt(0).toUpperCase()}</Text></View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.discName}>{w.name || 'SiteCall worker'}</Text>
+                        {w.rating != null && w.rating_count > 0 ? (
+                          <Text style={styles.discMeta}>★ {Number(w.rating).toFixed(1)} · {w.rating_count} rating{w.rating_count === 1 ? '' : 's'}</Text>
+                        ) : (
+                          <Text style={styles.discMeta}>New — no ratings yet</Text>
+                        )}
+                      </View>
+                      <Text style={styles.discChev}>›</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </Modal>
       </View>
     </Modal>
   );
@@ -315,11 +390,25 @@ const styles = StyleSheet.create({
   newNoteT: { fontSize: 13.5, color: C.indigo, fontWeight: '700', textAlign: 'center' },
   section: { marginHorizontal: 20, marginTop: 26 },
   sectionLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 12 },
+  sectionHint: { fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: -6, marginBottom: 12 },
   credRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.panel, borderRadius: R.md, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8, ...shadowSm },
   credT: { fontSize: 14.5, fontWeight: '700', color: C.ink },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { backgroundColor: C.panel, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 8, ...shadowSm },
+  chip: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.panel, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 8, ...shadowSm },
   chipT: { fontSize: 13, fontWeight: '700', color: C.ink },
+  chipTap: { fontSize: 13, fontWeight: '800', color: C.indigo },
   chipMore: { backgroundColor: 'rgba(70,54,232,0.08)', borderRadius: 999, paddingHorizontal: 13, paddingVertical: 8 },
   chipMoreT: { fontSize: 13, fontWeight: '800', color: C.indigo },
+  discBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  discSheet: { backgroundColor: C.canvas, borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 34 },
+  discHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  discTitle: { fontSize: 18, fontWeight: '900', color: C.ink, letterSpacing: -0.3, flex: 1 },
+  discSub: { fontSize: 13, color: C.mute, fontWeight: '600', marginTop: 2, marginBottom: 14 },
+  discEmpty: { fontSize: 14, color: C.mute, fontWeight: '600', paddingVertical: 24, textAlign: 'center' },
+  discRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.panel, borderRadius: R.md, paddingVertical: 11, paddingHorizontal: 13, marginBottom: 8, ...shadowSm },
+  discAv: { width: 40, height: 40, borderRadius: 20, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center' },
+  discAvT: { color: '#fff', fontSize: 17, fontWeight: '800' },
+  discName: { fontSize: 15, fontWeight: '800', color: C.ink },
+  discMeta: { fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 2 },
+  discChev: { fontSize: 22, color: C.mute2, fontWeight: '300' },
 });

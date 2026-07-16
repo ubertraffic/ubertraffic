@@ -396,6 +396,14 @@ export const S_ = StyleSheet.create({
   notReadyText: { color: C.amber, fontSize: 10.5, fontWeight: '700', fontFamily: MONO, letterSpacing: 0.3 },
   capAddRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   miniBtn: { backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, borderRadius: R.sm, paddingVertical: 8, paddingHorizontal: 12 },
+  // Collapsed "What I supply" — a calm one-line summary that opens the full editor.
+  capSummary: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.panel, borderRadius: R.lg, paddingHorizontal: 14, paddingVertical: 13, marginTop: 10, ...E.sm },
+  capTagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  capTag: { backgroundColor: 'rgba(16,163,90,0.12)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  capTagT: { color: C.green, fontSize: 11.5, fontWeight: '700' },
+  capTagMuted: { backgroundColor: C.panel2, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  capTagMutedT: { color: C.mute, fontSize: 11.5, fontWeight: '700' },
+  capChevron: { fontSize: 26, color: C.mute2, fontWeight: '300', marginTop: -2 },
 
   jobCard: { backgroundColor: C.panel, borderRadius: R.xl, padding: 18, paddingLeft: 20, marginTop: 11, borderLeftWidth: 3, borderLeftColor: C.indigo, ...E.md },
   bioBox: { marginTop: 10, backgroundColor: C.panel2, borderRadius: R.md, padding: 11 },
