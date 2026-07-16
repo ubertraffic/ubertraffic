@@ -10,7 +10,7 @@ import LiveTrackerCard from './LiveTrackerCard';
 import Pulse from './Pulse';
 import JobChat from './JobChat';
 import { jobTitle, jobSubtitle, estTotal, RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, PrimaryBtn, tap, Center } from './components2';
-import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim } from './components';
+import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard } from './components';
 import CredentialsScreen from './CredentialsScreen';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
@@ -333,6 +333,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [msg, setMsg] = useState('');
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
+  const [capsOpen, setCapsOpen] = useState(false);     // "What I supply" expanded to the full editor (collapsed by default — the home stays calm)
   const [readiness, setReadiness] = useState({});      // trade_id -> { ready, missing[] }
   const [myLoc, setMyLoc] = useState(null);            // operator's own location for the map
   const [opMapJobs, setOpMapJobs] = useState([]);      // operator's assigned job sites
@@ -664,10 +665,10 @@ export function OperatorHome({ session, onOpenProfile }) {
       {(() => {
         const hasTracker = !!(myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status))?.request_item?.request?.id;
         return (
-      <TouchableOpacity style={[S_.askDock, hasTracker && S_.askDockStandalone]} onPress={toggleOnline} activeOpacity={0.92} disabled={busy}>
+      <TouchableOpacity style={[S_.askDock, hasTracker && S_.askDockStandalone, profile.is_online && S_.askDockQuiet]} onPress={toggleOnline} activeOpacity={0.92} disabled={busy}>
         <View style={{ flex: 1 }}>
-          <Text style={S_.askDockLabel}>{profile.is_online ? 'YOU\'RE ONLINE' : 'YOU\'RE OFFLINE'}</Text>
-          <Text style={S_.askDockT}>{profile.is_online ? 'Receiving jobs near you' : 'Go online to get work'}</Text>
+          <Text style={[S_.askDockLabel, profile.is_online && S_.askDockLabelQuiet]}>{profile.is_online ? 'YOU\'RE ONLINE' : 'YOU\'RE OFFLINE'}</Text>
+          <Text style={[S_.askDockT, profile.is_online ? S_.askDockTQuiet : S_.askDockTLg]}>{profile.is_online ? 'Receiving jobs near you' : 'Go online to get work'}</Text>
         </View>
         <View style={[S_.sw, profile.is_online && S_.swOn]}>
           <View style={[S_.swKnob, profile.is_online && S_.swKnobOn]} />
@@ -675,7 +676,16 @@ export function OperatorHome({ session, onOpenProfile }) {
       </TouchableOpacity>
         );
       })()}
-      <View style={{ padding: S.xl, paddingTop: 20 }}>
+      <View style={{ padding: 24, paddingTop: 24 }}>
+
+        {/* offline first-impression — the display hero this screen was missing, pointing at the
+            loud "Go online" toggle above. WorkFeed still shows its quiet "jobs near you" note below. */}
+        {mission === 'offline' && (
+          <View style={{ marginBottom: 8 }}>
+            <Text style={S_.homeEmptyHero}>Ready to earn?</Text>
+            <Text style={S_.homeEmptySub}>Flip the switch above — jobs near you show up the moment you're online.</Text>
+          </View>
+        )}
 
         <WorkFeed
           mission={mission}
@@ -690,38 +700,73 @@ export function OperatorHome({ session, onOpenProfile }) {
         />
         {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
 
-        {mission !== 'working' && (<>
-        <Text style={[T.eyebrow, { marginTop: 26 }]}>What I supply</Text>
-        <View style={{ marginTop: 10 }}>
-          {caps.map((c) => {
-            const r = c.trade_id ? readiness[c.trade_id] : null;
-            return (
-              <View key={c.id} style={S_.capRow}>
-                <Icon name={c.kind === 'gear' ? 'gear' : c.kind === 'task' ? 'task' : 'crew'} size={17} color={C.ink} strokeWidth={1.9} />
-                <View style={{ flex: 1 }}>
-                  <Text style={T.bodyStrong}>{c.type}</Text>
-                  {r && !r.ready && (
-                    <Text style={[T.small, { color: C.amber, marginTop: 2 }]}>Needs: {r.missing.join(', ')}</Text>
-                  )}
-                </View>
-                {r && (r.ready
-                  ? <View style={S_.readyPill}><Text style={S_.readyText}>Ready ✓</Text></View>
-                  : <View style={S_.notReadyPill}><Text style={S_.notReadyText}>Tickets needed</Text></View>
-                )}
-                <TouchableOpacity onPress={() => removeCap(c.id)} disabled={busy}>
-                  <Text style={S_.rm}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            );
-          })}
-          {caps.length === 0 && <Text style={[T.small, { color: C.mute, marginBottom: 4 }]}>Add what you supply to start getting matched to work nearby.</Text>}
-        </View>
-        <View style={S_.capAddRow}>
-          <MiniBtn label="+ Add capability" onPress={() => setCapPicker(true)} />
-        </View>
+        {/* just finished a job with others on it? offer to vouch for the crew (self-hides if solo) */}
+        {mission === 'done' && doneAssign?.request_item?.request?.id && (
+          <VouchCrewCard requestId={doneAssign.request_item.request.id} />
+        )}
 
-        <View style={{ marginTop: 22 }}><Pulse /></View>
-        </>)}
+        {mission !== 'working' && (() => {
+          // A capability is a "skill" once it's actually dispatchable (credential gate passed).
+          // Collapsed by default so the home stays calm; tap to open the full add/remove editor.
+          const readyCaps = caps.filter((c) => c.trade_id && readiness[c.trade_id]?.ready);
+          return (<>
+          <Text style={[T.eyebrow, { marginTop: 24 }]}>What I supply</Text>
+          {!capsOpen ? (
+            <TouchableOpacity style={S_.capSummary} onPress={() => setCapsOpen(true)} activeOpacity={0.85}>
+              <View style={{ flex: 1 }}>
+                <Text style={T.bodyStrong}>
+                  {caps.length === 0 ? 'Nothing yet' : `${caps.length} skill${caps.length === 1 ? '' : 's'}`}
+                  {readyCaps.length > 0 ? ` · ${readyCaps.length} ready` : ''}
+                </Text>
+                {caps.length === 0 ? (
+                  <Text style={[T.small, { color: C.mute, marginTop: 4 }]}>Add what you supply to start getting matched to work nearby.</Text>
+                ) : (
+                  <View style={S_.capTagWrap}>
+                    {readyCaps.slice(0, 4).map((c) => (
+                      <View key={c.id} style={S_.capTag}><Text style={S_.capTagT}>{c.type}</Text></View>
+                    ))}
+                    {caps.length - Math.min(readyCaps.length, 4) > 0 && (
+                      <View style={S_.capTagMuted}><Text style={S_.capTagMutedT}>+{caps.length - Math.min(readyCaps.length, 4)} more</Text></View>
+                    )}
+                  </View>
+                )}
+              </View>
+              <Text style={S_.capChevron}>›</Text>
+            </TouchableOpacity>
+          ) : (<>
+          <View style={{ marginTop: 10 }}>
+            {caps.map((c) => {
+              const r = c.trade_id ? readiness[c.trade_id] : null;
+              return (
+                <View key={c.id} style={S_.capRow}>
+                  <Icon name={c.kind === 'gear' ? 'gear' : c.kind === 'task' ? 'task' : 'crew'} size={17} color={C.ink} strokeWidth={1.9} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={T.bodyStrong}>{c.type}</Text>
+                    {r && !r.ready && (
+                      <Text style={[T.small, { color: C.amber, marginTop: 2 }]}>Needs: {r.missing.join(', ')}</Text>
+                    )}
+                  </View>
+                  {r && (r.ready
+                    ? <View style={S_.readyPill}><Text style={S_.readyText}>Ready ✓</Text></View>
+                    : <View style={S_.notReadyPill}><Text style={S_.notReadyText}>Tickets needed</Text></View>
+                  )}
+                  <TouchableOpacity onPress={() => removeCap(c.id)} disabled={busy}>
+                    <Text style={S_.rm}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+            {caps.length === 0 && <Text style={[T.small, { color: C.mute, marginBottom: 4 }]}>Add what you supply to start getting matched to work nearby.</Text>}
+          </View>
+          <View style={S_.capAddRow}>
+            <MiniBtn label="+ Add capability" onPress={() => setCapPicker(true)} />
+            <MiniBtn label="Done" onPress={() => setCapsOpen(false)} />
+          </View>
+          </>)}
+
+          <View style={{ marginTop: 24 }}><Pulse /></View>
+          </>);
+        })()}
       </View>
     </ScrollView>
     <JobChat

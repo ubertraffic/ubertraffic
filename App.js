@@ -96,13 +96,25 @@ export default function App() {
 /* ============================================================ LOGIN */
 function Login() {
   const [mode, setMode] = useState('signin');   // 'signin' | 'signup' — explicit, never guessed
+  const [step, setStep] = useState(1);           // signup PACING only (presentation): 1 = email, 2 = password
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');    // signup only
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [msgTone, setMsgTone] = useState('error');   // 'error' | 'info' — so colour signals meaning
+
+  const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  function switchMode(m) { setMode(m); setStep(1); setMsg(''); }
+  // signup pacing: validate the email locally, then reveal the password step. No auth here.
+  function next() {
+    const e = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(e)) { setMsg('Enter a valid email address.'); setMsgTone('error'); return; }
+    setMsg(''); setStep(2);
+  }
 
   async function submit() {
+    setMsgTone('error');
     const e = email.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { setMsg('Enter a valid email address.'); return; }
     if (password.length < 6) { setMsg('Password must be at least 6 characters.'); return; }
@@ -117,7 +129,7 @@ function Login() {
           if (/invalid login credentials/i.test(error.message)) {
             setMsg('Wrong email or password. New here? Tap "Create account".');
           } else if (/email not confirmed/i.test(error.message)) {
-            setMsg('Check your email to confirm your account, then sign in.');
+            setMsg('Check your email to confirm your account, then sign in.'); setMsgTone('info');
           } else {
             setMsg(friendly(error));
           }
@@ -138,48 +150,87 @@ function Login() {
         }
         if (!data.session) {
           // Email confirmation is on — no session yet. Tell them honestly.
-          setMsg('Account created. Check your email to confirm, then sign in.');
-          setMode('signin'); setBusy(false); return;
+          setMsg('Account created. Check your email to confirm, then sign in.'); setMsgTone('info');
+          setMode('signin'); setStep(1); setBusy(false); return;
         }
         // success with immediate session → auth listener takes over
       }
     } catch (err) { setMsg(friendly(err)); } finally { setBusy(false); }
   }
 
+  const isSignup = mode === 'signup';
+  const heroTitle = !isSignup ? 'Welcome back' : step === 1 ? "Let's get you set up" : 'Create a password';
+  const heroHelp  = !isSignup ? 'Sign in to your account' : step === 1 ? 'Start with your email' : 'At least 6 characters';
+  const showEmail = !isSignup || step === 1;
+  const showPass  = !isSignup || step === 2;
+
   return (
     <KeyboardAvoidingView style={S_.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <StatusBar barStyle="dark-content" />
       <View style={S_.loginWrap}>
-        <View style={S_.mark} />
-        <Text style={T.display}>SiteCall</Text>
-        <Text style={[T.small, { marginTop: 4, marginBottom: 24 }]}>{mode === 'signin' ? 'Welcome back — sign in' : 'Create your account'}</Text>
-
-        {/* explicit mode toggle — the user says whether they're signing in or up. No guessing. */}
-        <View style={S_.authToggle}>
-          <TouchableOpacity style={[S_.authTab, mode === 'signin' && S_.authTabOn]} onPress={() => { setMode('signin'); setMsg(''); }} activeOpacity={0.8}>
-            <Text style={[S_.authTabT, mode === 'signin' && S_.authTabTOn]}>Sign in</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[S_.authTab, mode === 'signup' && S_.authTabOn]} onPress={() => { setMode('signup'); setMsg(''); }} activeOpacity={0.8}>
-            <Text style={[S_.authTabT, mode === 'signup' && S_.authTabTOn]}>Create account</Text>
-          </TouchableOpacity>
+        {/* quiet brand marker — recedes so the step headline is the hero */}
+        <View style={S_.brandRow}>
+          <View style={S_.markSm} />
+          <Text style={S_.brandWord}>SiteCall</Text>
         </View>
 
-        <Text style={[T.label, { marginBottom: 8 }]}>Email</Text>
-        <TextInput style={S_.input} placeholder="you@example.com" placeholderTextColor={C.mute2}
-          autoCapitalize="none" keyboardType="email-address" autoCorrect={false}
-          value={email} onChangeText={setEmail} editable={!busy} />
-        <Text style={[T.label, { marginBottom: 8, marginTop: 4 }]}>Password</Text>
-        <TextInput style={S_.input} placeholder="at least 6 characters" placeholderTextColor={C.mute2}
-          secureTextEntry autoCapitalize="none" value={password} onChangeText={setPassword} editable={!busy} />
-        {mode === 'signup' && (
-          <>
-            <Text style={[T.label, { marginBottom: 8, marginTop: 4 }]}>Confirm password</Text>
-            <TextInput style={S_.input} placeholder="re-enter your password" placeholderTextColor={C.mute2}
-              secureTextEntry autoCapitalize="none" value={confirm} onChangeText={setConfirm} editable={!busy} />
-          </>
-        )}
-        <PrimaryBtn label={mode === 'signin' ? 'Sign in' : 'Create account'} onPress={submit} busy={busy} />
-        {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
+        <StepFade phase={`${mode}-${step}`}>
+          {isSignup && step === 2 && (
+            <TouchableOpacity onPress={() => { setStep(1); setMsg(''); }} style={S_.loginBack}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+              <Text style={S_.loginBackT}>‹ Back</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* HERO — one dominant element per step */}
+          <Text style={S_.loginHero}>{heroTitle}</Text>
+          <Text style={S_.loginHelp}>{heroHelp}</Text>
+
+          <View style={S_.loginFields}>
+            {showEmail && (
+              <>
+                <Text style={[T.label, S_.loginLabel]}>Email</Text>
+                <TextInput style={S_.loginInput} placeholder="you@example.com" placeholderTextColor={C.mute2}
+                  autoCapitalize="none" keyboardType="email-address" autoCorrect={false}
+                  value={email} onChangeText={setEmail} editable={!busy}
+                  autoFocus={isSignup && step === 1}
+                  returnKeyType={isSignup ? 'next' : 'done'} onSubmitEditing={isSignup ? next : undefined} />
+              </>
+            )}
+            {showPass && (
+              <>
+                <Text style={[T.label, S_.loginLabel, !isSignup && { marginTop: 16 }]}>Password</Text>
+                <TextInput style={S_.loginInput} placeholder="at least 6 characters" placeholderTextColor={C.mute2}
+                  secureTextEntry autoCapitalize="none" value={password} onChangeText={setPassword} editable={!busy}
+                  autoFocus={isSignup && step === 2} />
+              </>
+            )}
+            {isSignup && step === 2 && (
+              <>
+                <Text style={[T.label, S_.loginLabel, { marginTop: 16 }]}>Confirm password</Text>
+                <TextInput style={S_.loginInput} placeholder="re-enter your password" placeholderTextColor={C.mute2}
+                  secureTextEntry autoCapitalize="none" value={confirm} onChangeText={setConfirm} editable={!busy} />
+              </>
+            )}
+          </View>
+
+          <View style={S_.loginAction}>
+            {isSignup && step === 1
+              ? <PrimaryBtn label="Continue" onPress={next} />
+              : <PrimaryBtn label={isSignup ? 'Create account' : 'Sign in'} onPress={submit} busy={busy} />}
+          </View>
+
+          {!!msg && <Text style={msgTone === 'error' ? S_.loginMsgErr : S_.loginMsgInfo}>{msg}</Text>}
+        </StepFade>
+
+        {/* quiet mode switch — a single line, never competing with the primary action */}
+        <TouchableOpacity onPress={() => switchMode(isSignup ? 'signin' : 'signup')} style={S_.loginSwitch}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+          <Text style={S_.loginSwitchT}>
+            {isSignup ? 'Already have an account? ' : 'New to SiteCall? '}
+            <Text style={S_.loginSwitchLink}>{isSignup ? 'Sign in' : 'Create account'}</Text>
+          </Text>
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
@@ -815,6 +866,9 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
     if (crew.length > 0) { match = { r, crew, needed, it: primaryItem }; break; }
   }
   const [sheetOpen, setSheetOpen] = useState(false);
+  // When a job is waiting to be paid, THAT is the hero — so the post CTA recedes to a quiet
+  // bar (only one loud element at a time). Otherwise "Post a job" is the loud hero.
+  const payMode = needsYou.length > 0;
   // hub list for the full-screen command centre — track & act without leaving
   const STATUS_WORDS = { getting_ready: 'Getting ready', on_the_way: 'On the way', on_site: 'On site', done: 'Complete', waiting: 'Finding workers' };
   const DOT = { getting_ready: C.mute, on_the_way: C.indigo, on_site: C.green, done: C.green, waiting: C.red };
@@ -888,7 +942,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
     <View style={{ flex: 1 }}>
     <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
       <MapHero
-        height={300} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
+        height={240} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
         hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); } else { setSheetOpen(true); } }}
         commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
         primaryAction={needsYou.length > 0
@@ -914,13 +968,16 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           if (onOpenReq) onOpenReq(requestId);
         }}
       />
-      {/* request bar docked to the map's bottom edge — one connected card */}
-      <TouchableOpacity style={S_.askDock} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
+      {/* request bar docked to the map's bottom edge — one connected card. It's the loud hero
+          when idle; when a job needs paying it recedes to a quiet bar so the pay card can lead. */}
+      <TouchableOpacity style={[S_.askDock, payMode && S_.askDockQuiet]} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
         <View style={{ flex: 1 }}>
-          <Text style={S_.askDockLabel}>NEED SOMEONE ON SITE?</Text>
-          <Text style={S_.askDockT}>Post a job — get help now</Text>
+          <Text style={[S_.askDockLabel, payMode && S_.askDockLabelQuiet]}>NEED SOMEONE ON SITE?</Text>
+          <Text style={[S_.askDockT, payMode ? S_.askDockTQuiet : S_.askDockTLg]}>Post a job — get help now</Text>
         </View>
-        <View style={S_.askDockPlus}><Text style={S_.askDockPlusT}>＋</Text></View>
+        <View style={[S_.askDockPlus, payMode && S_.askDockPlusQuiet]}>
+          <Text style={[S_.askDockPlusT, payMode && S_.askDockPlusTQuiet]}>＋</Text>
+        </View>
       </TouchableOpacity>
       {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job.
           Renders BELOW the docked post-bar so it doesn't break the map+dock connected card. */}
@@ -939,7 +996,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           else if (action === 'open_help' && onOpenReq) onOpenReq(trackedId);
         }} />;
       })()}
-      <View style={{ padding: S.xl, paddingTop: 20 }}>
+      <View style={{ padding: 24, paddingTop: 24 }}>
 
         {/* THE MATCH — the whole job, filling up, crew inside. The Uber moment. */}
         {match && (
@@ -960,10 +1017,10 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           </Entrance>
         )}
 
-        {/* NEEDS YOU — loud, only when something's ready to approve */}
+        {/* NEEDS YOU — the hero when present. Accent lives on the CARD, not the label. */}
         {needsYou.length > 0 && (
-          <View style={{ marginBottom: 18 }}>
-            <Text style={[T.eyebrow, { color: C.indigo, marginBottom: 8 }]}>Needs you</Text>
+          <View style={{ marginBottom: 24 }}>
+            <Text style={[T.eyebrow, { marginBottom: 8 }]}>Needs you</Text>
             {needsYou.map((r) => <NeedsYouCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
           </View>
         )}
@@ -971,15 +1028,17 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
         {(() => {
           const isEmpty = mine !== null && progressing.length === 0 && needsYou.length === 0;
           if (isEmpty) {
-            // EMPTY: don't dominate with a hollow placeholder. One quiet line,
-            // then let the live Pulse rise up and be the hero of the screen.
+            // EMPTY (new client — first impression): a warm display headline, one line, the
+            // single obvious action is the post bar above; then the live Pulse as proof.
             return (
               <>
-                <View style={S_.rowBetween}>
-                  <Text style={T.eyebrow}>Active now</Text>
+                <Text style={S_.homeEmptyHero}>Who do you need on site?</Text>
+                <Text style={S_.homeEmptySub}>Post a job above — the nearest crews see it in seconds.</Text>
+                <View style={[S_.rowBetween, { marginTop: 32 }]}>
+                  <Text style={T.eyebrow}>Live on SiteCall</Text>
                   <LiveTag />
                 </View>
-                <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 20 }]}>No active jobs yet — post one above and watch it fill in real time.</Text>
+                <View style={{ height: 16 }} />
                 <Pulse />
               </>
             );
@@ -999,7 +1058,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
                       : <Text style={[T.small, { marginTop: 8, color: C.mute }]}>All caught up — nothing else in progress.</Text>;
                     return rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />);
                   })()}
-              <View style={{ height: 14 }} />
+              <View style={{ height: 16 }} />
               <Pulse />
             </>
           );

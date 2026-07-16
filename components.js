@@ -6,7 +6,9 @@ import { C, R, S, E } from './theme';
 import { S_ } from './styles';
 import Icon from './Icon';
 import { supabase } from './supabaseClient';
-import { submitRating } from './ratingsService';
+import { submitRating, setRatingExtras } from './ratingsService';
+import { GOOD_UNIT_TAGS } from './reputation';
+import { coworkersOnJob, vouchForPeer } from './communityService';
 import { logError } from './errorService';
 import { listMaterialClaims, resolveMaterialClaim, submitMaterialClaim } from './completionService';
 import { verifiedCredentialsFor } from './credentialsService';
@@ -277,17 +279,28 @@ export function MaterialsClaim({ visible, assignment, onClose, onDone }) {
   );
 }
 
-export function RateJob({ visible, assignmentId, rateeName, onClose }) {
+export function RateJob({ visible, assignmentId, rateeName, onClose, rateeIsWorker = true }) {
   const [score, setScore] = useState(0);
   const [comment, setComment] = useState('');
+  const [tags, setTags] = useState([]);          // tapped "good unit" tags
+  const [rehire, setRehire] = useState(false);   // "I'd have them back"
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
-  useEffect(() => { if (visible) { setScore(0); setComment(''); setErr(''); setDone(false); } }, [visible, assignmentId]);
+  useEffect(() => { if (visible) { setScore(0); setComment(''); setTags([]); setRehire(false); setErr(''); setDone(false); } }, [visible, assignmentId]);
+  function toggleTag(t) { setTags((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]); }
   async function submit() {
     if (score < 1) { setErr('Tap a star to rate.'); return; }
     setBusy(true); setErr('');
-    try { await submitRating(assignmentId, score, comment.trim() || null); setDone(true); setTimeout(() => onClose && onClose(true), 900); }
+    try {
+      await submitRating(assignmentId, score, comment.trim() || null);
+      // Extras ride ON TOP of the rating. If they fail, the star rating already saved —
+      // don't surface an error or lose the moment; just proceed.
+      if (rateeIsWorker && (tags.length || rehire)) {
+        try { await setRatingExtras(assignmentId, tags, rehire); } catch (_) {}
+      }
+      setDone(true); setTimeout(() => onClose && onClose(true), 900);
+    }
     catch (e) { setErr(friendly(e)); } finally { setBusy(false); }
   }
   const who = (rateeName || 'them').split(' ')[0];
@@ -310,6 +323,27 @@ export function RateJob({ visible, assignmentId, rateeName, onClose }) {
                   </TouchableOpacity>
                 ))}
               </View>
+              {rateeIsWorker && (
+                <>
+                  <View style={S_.rateTagWrap}>
+                    {GOOD_UNIT_TAGS.map((t) => {
+                      const on = tags.includes(t);
+                      return (
+                        <TouchableOpacity key={t} onPress={() => toggleTag(t)} activeOpacity={0.8}
+                          style={[S_.rateTag, on && S_.rateTagOn]}>
+                          <Text style={[S_.rateTagT, on && S_.rateTagTOn]}>{t}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <TouchableOpacity style={S_.rehireRow} onPress={() => setRehire((v) => !v)} activeOpacity={0.8}>
+                    <View style={[S_.rehireBox, rehire && S_.rehireBoxOn]}>
+                      {rehire && <Text style={S_.rehireTick}>✓</Text>}
+                    </View>
+                    <Text style={S_.rehireT}>I'd have {who} back</Text>
+                  </TouchableOpacity>
+                </>
+              )}
               <TextInput
                 style={S_.rateInput}
                 placeholder="Add a comment (optional)"
@@ -330,6 +364,92 @@ export function RateJob({ visible, assignmentId, rateeName, onClose }) {
         </View>
       </View>
     </Modal>
+  );
+}
+
+// VouchCrewCard — the peer side of reputation. After a shared job, a worker can vouch for
+// the workmates they were on site with. Only renders when the server confirms there WERE
+// co-workers on this job (and that I was one of them) — so solo jobs show nothing. A vouch
+// is un-gameable: vouch_for_peer re-checks both of us worked the job before recording it.
+export function VouchCrewCard({ requestId }) {
+  const [mates, setMates] = useState(null);    // null = loading, [] = none
+  const [open, setOpen] = useState(false);
+  const [sel, setSel] = useState(null);        // the mate currently being vouched
+  const [tags, setTags] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [vouched, setVouched] = useState({});  // user_id -> true once sent
+  useEffect(() => {
+    let alive = true;
+    coworkersOnJob(requestId).then((r) => { if (alive) setMates(r); }).catch(() => { if (alive) setMates([]); });
+    return () => { alive = false; };
+  }, [requestId]);
+  if (!mates || mates.length === 0) return null;
+  function pick(m) { setSel(m); setTags([]); }
+  function toggleTag(t) { setTags((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]); }
+  async function send() {
+    if (!sel) return;
+    setBusy(true);
+    try { await vouchForPeer(requestId, sel.user_id, tags); setVouched((v) => ({ ...v, [sel.user_id]: true })); setSel(null); setTags([]); }
+    catch (_) {} finally { setBusy(false); }
+  }
+  return (
+    <>
+      <TouchableOpacity style={S_.vouchCard} onPress={() => setOpen(true)} activeOpacity={0.9}>
+        <Icon name="crew" size={18} color={C.indigo} strokeWidth={1.9} />
+        <View style={{ flex: 1 }}>
+          <Text style={S_.vouchCardT}>Vouch for who you worked with</Text>
+          <Text style={S_.vouchCardSub}>{mates.length} workmate{mates.length === 1 ? '' : 's'} on this job · builds their reputation</Text>
+        </View>
+        <Text style={S_.vouchChevron}>›</Text>
+      </TouchableOpacity>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <View style={S_.rateScrim}>
+          <View style={S_.rateCard}>
+            {sel ? (
+              <>
+                <Text style={S_.rateTitle}>Vouch for {(sel.name || 'them').split(' ')[0]}</Text>
+                <Text style={S_.rateSub}>What were they like on site? (optional)</Text>
+                <View style={S_.rateTagWrap}>
+                  {GOOD_UNIT_TAGS.map((t) => {
+                    const on = tags.includes(t);
+                    return (
+                      <TouchableOpacity key={t} onPress={() => toggleTag(t)} activeOpacity={0.8} style={[S_.rateTag, on && S_.rateTagOn]}>
+                        <Text style={[S_.rateTagT, on && S_.rateTagTOn]}>{t}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <TouchableOpacity style={[S_.rateSubmit, busy && { opacity: 0.6 }]} onPress={send} disabled={busy} activeOpacity={0.9}>
+                  <Text style={S_.rateSubmitT}>{busy ? 'Sending…' : 'Send vouch'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setSel(null)} style={{ paddingVertical: 10 }} activeOpacity={0.7}>
+                  <Text style={S_.rateSkip}>Back</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={S_.rateTitle}>Your crew on this job</Text>
+                <Text style={S_.rateSub}>Vouch for the mates you worked with — it builds their reputation.</Text>
+                <View style={{ marginTop: 14 }}>
+                  {mates.map((m) => (
+                    <TouchableOpacity key={m.user_id} disabled={!!vouched[m.user_id]} onPress={() => pick(m)} activeOpacity={0.85} style={S_.vouchRow}>
+                      <View style={S_.vouchAv}><Text style={S_.vouchAvT}>{(m.name || '?').charAt(0).toUpperCase()}</Text></View>
+                      <Text style={S_.vouchName}>{m.name || 'Workmate'}</Text>
+                      {vouched[m.user_id]
+                        ? <Text style={S_.vouchDone}>Vouched ✓</Text>
+                        : <Text style={S_.vouchGo}>Vouch ›</Text>}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TouchableOpacity onPress={() => setOpen(false)} style={{ paddingVertical: 12 }} activeOpacity={0.7}>
+                  <Text style={S_.rateSkip}>Done</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
