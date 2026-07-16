@@ -8,7 +8,7 @@ export async function loadTaxonomy() {
   if (_cache) return _cache;
   const [{ data: categories, error: cErr }, { data: trades, error: tErr }] = await Promise.all([
     supabase.from('trade_categories').select('id, name, icon, sort').order('sort'),
-    supabase.from('trades').select('id, category_id, name, kind, aliases, sort, client_visible, match_group').order('sort'),
+    supabase.from('trades').select('id, category_id, name, kind, aliases, sort, client_visible, match_group, run_style').order('sort'),
   ]);
   if (cErr) throw cErr;
   if (tErr) throw tErr;

@@ -16,7 +16,16 @@ import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
 import CloseOutCard from './CloseOutCard';
 import PrestartCard from './PrestartCard';
+import RunCloseOutCard from './RunCloseOutCard';
 import { complianceReady } from './complianceService';
+
+// A run = a task whose trade carries a run_style (set in migration 0045). The open
+// "what to get" list lives in job_details; the spend cap in materials_cap.
+function isRunAssignment(a) { return !!(a && a.request_item && a.request_item.trade && a.request_item.trade.run_style); }
+function runInfoFor(a) {
+  const r = a.request_item?.request;
+  return { id: a.id, list: r?.job_details || '', cap: r?.materials_cap || 0, a };
+}
 
 // local copy (App.js has its own) — small pure helper, avoids a circular screens<->App import
 function buildJobInfo({ a, it, r, workerName }) {
@@ -258,6 +267,61 @@ function MapReveal({ height, children }) {
   return React.cloneElement(React.Children.only(children), { height: h, maskOpacity: mask });
 }
 
+// BottomSheet — generic measure-first slide-up sheet (same motion as CloseOutSheet,
+// extracted so runs don't need a third copy). `activeKey` truthy opens it and is held
+// through the exit so the card stays rendered while it leaves; render(held) draws the
+// card. Lifts above the keyboard. CloseOutSheet/PrestartSheet can migrate onto this
+// later — kept separate now to avoid touching the labour flow.
+function BottomSheet({ activeKey, onRequestClose, render }) {
+  const [mounted, setMounted] = useState(!!activeKey);
+  const [held, setHeld] = useState(activeKey);
+  const [h, setH] = useState(0);
+  const [kb, setKb] = useState(0);
+  const a = useRef(new Animated.Value(0)).current;
+  const waiting = useRef(false);
+  useEffect(() => {
+    if (activeKey) { setHeld(activeKey); setMounted(true); a.setValue(0); setH(0); waiting.current = true; }
+    else if (mounted) {
+      Animated.timing(a, { toValue: 0, duration: M.fast, easing: Easing.in(Easing.quad), useNativeDriver: true })
+        .start(({ finished }) => { if (finished) setMounted(false); });
+    }
+  }, [activeKey, a]);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s = Keyboard.addListener(showEvt, (e) => setKb(e.endCoordinates?.height || 0));
+    const hd = Keyboard.addListener(hideEvt, () => setKb(0));
+    return () => { s.remove(); hd.remove(); };
+  }, []);
+  if (!mounted) return null;
+  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [h || 1000, 0] });
+  const backdrop = a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
+  const onMeasured = (e) => {
+    const nh = e.nativeEvent.layout.height;
+    if (!nh) return;
+    if (Math.abs(nh - h) > 1) setH(nh);
+    if (waiting.current) { waiting.current = false; Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start(); }
+  };
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onRequestClose}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: kb }}>
+        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: backdrop }} />
+        <Animated.View
+          pointerEvents={activeKey ? 'auto' : 'none'}
+          onLayout={onMeasured}
+          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: h > 0 ? 1 : 0, transform: [{ translateY }] }}
+        >
+          <SafeAreaView>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.md }} showsVerticalScrollIndicator={false}>
+              {held ? render(held) : null}
+            </ScrollView>
+          </SafeAreaView>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
 export function OperatorHome({ session, onOpenProfile }) {
   const [profile, setProfile] = useState(() => cacheGet('operator-profile'));   // instant paint, skips gate spinner
   const [loadFailed, setLoadFailed] = useState(false);  // profile load errored — show retry, not an endless spinner
@@ -278,6 +342,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [chat, setChat] = useState(null);              // { a, title, sub, info } — job room over the map
   const [arrivePrompt, setArrivePrompt] = useState(null);  // assignmentId awaiting on-site confirm (GPS override)
   const [closeOut, setCloseOut] = useState(null);           // assignmentId in the close-out gate (compliance)
+  const [runOut, setRunOut] = useState(null);               // { id, list, cap, a } for the run close-out
   const [prestart, setPrestart] = useState(null);           // assignmentId in the arrival safety-prestart gate
   const { needs: prestartNeeds, check: checkPrestart, markDone: markPrestartDone } = usePrestartStatus(myAssigns);
   const [opMapExpanded, setOpMapExpanded] = useState(false);
@@ -416,6 +481,8 @@ export function OperatorHome({ session, onOpenProfile }) {
     // only once it's done does "Complete job" (the close-out gate) become available.
     if (a.status === 'on_site') return prestartNeeds[a.id] === true
       ? { label: 'Safety prestart', fn: () => setPrestart(a.id) }
+      : isRunAssignment(a)
+      ? { label: 'Complete run', fn: () => setRunOut(runInfoFor(a)) }
       : { label: 'Complete job', fn: () => setCloseOut(a.id) };
     return null;
   }
@@ -588,7 +655,7 @@ export function OperatorHome({ session, onOpenProfile }) {
           if (action === 'open_chat') setChat({ a: act, title: `${act.request_item?.type || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
           else if (action === 'start_journey' && aid) mapBeginJourney(aid);
           else if (action === 'arrive' && aid) mapArrive(aid);
-          else if (action === 'complete' && aid) { if (prestartNeeds[aid] === true) setPrestart(aid); else setCloseOut(aid); }
+          else if (action === 'complete' && aid) { if (prestartNeeds[aid] === true) setPrestart(aid); else if (isRunAssignment(act)) setRunOut(runInfoFor(act)); else setCloseOut(aid); }
         }} />;
       })()}
       {/* dock bar — mirrors Hire's "Post a job" bar, but holds the online toggle. When a live
@@ -678,6 +745,20 @@ export function OperatorHome({ session, onOpenProfile }) {
       onDone={() => { const id = prestart; setPrestart(null); markPrestartDone(id); }}
       onCancel={() => setPrestart(null)}
     />
+    <BottomSheet
+      activeKey={runOut}
+      onRequestClose={() => setRunOut(null)}
+      render={(run) => (
+        <RunCloseOutCard
+          assignmentId={run.id}
+          list={run.list}
+          cap={run.cap}
+          onComplete={async () => { const id = run.id; setRunOut(null); await mapComplete(id); }}
+          onCancel={() => setRunOut(null)}
+          onMessage={() => setChat({ a: run.a, title: `${run.a.request_item?.type || 'Run'} · ${suburbOf(run.a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
+        />
+      )}
+    />
     <Modal visible={!!arrivePrompt} transparent animationType="fade" onRequestClose={() => setArrivePrompt(null)}>
       <View style={S_.arriveScrim}>
         <View style={S_.arriveCard}>
@@ -709,6 +790,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
   const [matClaim, setMatClaim] = useState(null);   // assignment for the materials claim sheet
   const [expandedBios, setExpandedBios] = useState({});   // which job cards have duties/brief expanded
   const [closeOut, setCloseOut] = useState(null);   // assignmentId in the close-out gate (compliance) — same gate as OperatorHome
+  const [runOut, setRunOut] = useState(null);       // { id, list, cap, a } for the run close-out
   const [prestart, setPrestart] = useState(null);   // assignmentId in the arrival safety-prestart gate — same gate as OperatorHome
   const { needs: prestartNeeds, check: checkPrestart, markDone: markPrestartDone } = usePrestartStatus(assigns);
   const refresh = useCallback(async () => {
@@ -886,8 +968,24 @@ export function OperatorJobs({ session, onOpenProfile }) {
               })()}
               {committed && <Text style={[T.small, { color: C.mute, marginTop: 6 }]}>You've secured this job. Start your journey when you're ready — the client will see you're on the way.</Text>}
 
+              {/* runs: "check before you buy" is the loudest thing while a run is live —
+                  buying the wrong thing is the #1 failure mode of an open run */}
+              {isRunAssignment(a) && ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status) && (
+                <TouchableOpacity
+                  onPress={() => setChat({ a, title: `Job room · ${a.request_item?.type || 'Run'}`, sub: suburbOf(a.request_item?.request?.address_text), info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) })}
+                  activeOpacity={0.9}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, paddingHorizontal: 14, marginTop: 12 }}
+                >
+                  <Text style={{ fontSize: 16 }}>{'💬'}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14.5 }}>Not sure what's wanted?</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12, marginTop: 1 }}>Message the client before you buy</Text>
+                  </View>
+                  {(unread[a.id] || 0) > 0 && <View style={S_.matchBadge}><Text style={S_.matchBadgeT}>{unread[a.id]}</Text></View>}
+                </TouchableOpacity>
+              )}
               {/* the job room — direct line to the client while the job is live */}
-              {['committed', 'accepted', 'en_route', 'on_site'].includes(a.status) && (
+              {!isRunAssignment(a) && ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status) && (
                 <TouchableOpacity
                   style={S_.opMsgBtn}
                   onPress={() => setChat({
@@ -927,6 +1025,8 @@ export function OperatorJobs({ session, onOpenProfile }) {
                           : <>
                               {prestartNeeds[a.id] === true
                                 ? <PrimaryBtn label="Safety prestart" onPress={() => setPrestart(a.id)} busy={busyId === a.id} />
+                                : isRunAssignment(a)
+                                ? <PrimaryBtn label="Complete run" onPress={() => setRunOut(runInfoFor(a))} busy={busyId === a.id} />
                                 : <PrimaryBtn label="Mark complete" onPress={() => setCloseOut(a.id)} busy={busyId === a.id} />}
                               <TouchableOpacity onPress={() => missedCheckout(a.id)} disabled={busy} style={{ marginTop: 10, alignItems: 'center' }}>
                                 <Text style={[T.small, { color: C.mute, textDecorationLine: 'underline' }]}>Can't check out? Phone died or no signal</Text>
@@ -1013,6 +1113,20 @@ export function OperatorJobs({ session, onOpenProfile }) {
       assignmentId={prestart}
       onDone={() => { const id = prestart; setPrestart(null); markPrestartDone(id); }}
       onCancel={() => setPrestart(null)}
+    />
+    <BottomSheet
+      activeKey={runOut}
+      onRequestClose={() => setRunOut(null)}
+      render={(run) => (
+        <RunCloseOutCard
+          assignmentId={run.id}
+          list={run.list}
+          cap={run.cap}
+          onComplete={async () => { const id = run.id; setRunOut(null); await complete(id); }}
+          onCancel={() => setRunOut(null)}
+          onMessage={() => setChat({ a: run.a, title: `Job room · ${run.a.request_item?.type || 'Run'}`, sub: suburbOf(run.a.request_item?.request?.address_text), info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
+        />
+      )}
     />
     </View>
   );

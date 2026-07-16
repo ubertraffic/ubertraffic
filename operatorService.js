@@ -186,7 +186,8 @@ export async function listMyAssignments() {
       id, status, accepted_at, paid_at, net_amount, gross_amount, fee_amount,
       reconcile_state, reconcile_deadline, claimed_end_at,
       request_item:request_items (
-        type, kind, rate, rate_offered, price_mode,
+        type, kind, rate, rate_offered, price_mode, trade_id,
+        trade:trades ( run_style ),
         request:requests ( id, client_id, address_text, when_type, duration_hours, scheduled_at, job_details, completion_state, review_deadline, settle_net, site_contact_name, site_contact_phone, materials_cap )
       )
     `)
