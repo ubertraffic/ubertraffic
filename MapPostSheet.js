@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { createRequest } from './requestsService';
 import { searchAddress, reverseGeocode } from './geocodeService';
-import { loadTaxonomy, FRONT_DOORS, groupedTradesForDoor } from './taxonomyService';
+import { loadTaxonomy, clientPickerGroups } from './taxonomyService';
 import { getPosition } from './location';
 
 const KINDS = { equipment: 'plant', trades: 'crew', work: 'crew', tasks: 'task' };
@@ -77,7 +77,8 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
     setResults([]);
   }
 
-  const tradeGroups = taxonomy && door ? groupedTradesForDoor(taxonomy, door) : [];
+  // Same two-section list as the main post picker (one source of truth) — no door step.
+  const tradeGroups = clientPickerGroups(taxonomy, { task: '#B87514', skilled: '#5B4BFF' });
 
   // next 5 days as chips: Today, Tomorrow, then weekday names
   const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -108,9 +109,11 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
     if (when === 'booked' && !sched) { setErr('Pick a day and time.'); return; }
     setBusy(true);
     try {
-      const kind = KINDS[door] || 'crew';
+      const kind = trade.kind || 'crew';
       const typeName = trade.name || trade.type || trade.label;
-      const item = { kind, type: typeName, qty, rate: rateFor(typeName, kind), priceMode: kind === 'task' ? 'job' : 'hour', hire: null, tickets: kind === 'crew' ? ['White Card'] : [] };
+      // Carry trade_id so the run/compliance layer can resolve the trade (run_style,
+      // tier). Without it, map-posted runs wouldn't be detected as runs.
+      const item = { kind, type: typeName, trade_id: trade.id || null, qty, rate: rateFor(typeName, kind), priceMode: kind === 'task' ? 'job' : 'hour', hire: null, tickets: kind === 'crew' ? ['White Card'] : [] };
       await createRequest({ when_type: when, address_text: loc, lat: coords.lat, lng: coords.lng, duration_hours: 4, items: [item], scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0 });
       setBusy(false);
       onPosted && onPosted();
@@ -142,22 +145,15 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
             {/* ---- STEP: WHAT ---- */}
             {step === 'what' && (
               <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
-                {!door ? (
-                  <View style={s.doorGrid}>
-                    {FRONT_DOORS.map((d) => (
-                      <TouchableOpacity key={d.key} style={[s.door, { borderColor: d.color }]} activeOpacity={0.85} onPress={() => setDoor(d.key)}>
-                        <View style={[s.doorDot, { backgroundColor: d.color }]} />
-                        <Text style={s.doorLabel}>{d.label}</Text>
-                        <Text style={s.doorSub}>{d.sub}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                ) : !taxonomy ? (
+                {!taxonomy ? (
                   <ActivityIndicator color="#5B4BFF" style={{ marginVertical: 24 }} />
                 ) : (
-                  <>
-                    <TouchableOpacity onPress={() => setDoor(null)} style={s.backRow}><Text style={s.backT}>‹ Categories</Text></TouchableOpacity>
-                    {tradeGroups.map((g) => (
+                  tradeGroups.map((g, gi) => (
+                    g.section ? (
+                      <Text key={'sec-' + gi} style={{ fontSize: 12.5, fontWeight: '800', letterSpacing: 0.6, color: g.color, textTransform: 'uppercase', marginTop: gi === 0 ? 2 : 18, marginBottom: 10 }}>
+                        {g.section}
+                      </Text>
+                    ) : (
                       <View key={g.category?.id || g.category?.name} style={{ marginBottom: 8 }}>
                         <Text style={s.groupLabel}>{g.category?.name}</Text>
                         {g.trades.map((t) => (
@@ -168,8 +164,8 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
                           </TouchableOpacity>
                         ))}
                       </View>
-                    ))}
-                  </>
+                    )
+                  ))
                 )}
               </ScrollView>
             )}
