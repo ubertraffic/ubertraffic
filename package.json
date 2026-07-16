@@ -4,6 +4,7 @@
     "@supabase/supabase-js": "*",
     "expo-haptics": "*",
     "lucide-react-native": "*",
+    "expo-image-picker": "*",
     "react-native-svg": "*",
     "react-native-webview": "*",
     "expo-location": "*",
