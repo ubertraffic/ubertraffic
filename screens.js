@@ -997,15 +997,20 @@ export function OperatorJobs({ session, onOpenProfile }) {
           const next = committed ? ['en_route', 'Start journey']
             : a.status === 'en_route' ? ['on_site', 'Arrived on site']
             : a.status === 'on_site' ? ['complete', 'Mark complete'] : null;
+          const st = a.status === 'approved' ? { label: 'Paid', color: C.green }
+            : a.status === 'complete' ? { label: 'Awaiting approval', color: C.amber }
+            : a.status === 'on_site' ? { label: 'On site', color: C.green }
+            : a.status === 'en_route' ? { label: 'On the way', color: C.indigo }
+            : { label: 'Committed', color: C.mute };
           return (
             <View key={a.id} style={S_.card}>
-              <View style={S_.rowBetween}>
-                <Text style={T.heading}>{a.request_item?.type}</Text>
-                <Text style={[T.label, { color: a.status === 'approved' ? C.green : next ? C.indigo : C.amber }]}>
-                  {a.status === 'approved' ? 'Paid' : committed ? 'Committed' : a.status.replace('_', ' ')}
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{a.request_item?.type}</Text>
+                <View style={{ backgroundColor: st.color + '1A', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 }}>
+                  <Text style={{ color: st.color, fontWeight: '800', fontSize: 11.5, letterSpacing: 0.2 }}>{st.label}</Text>
+                </View>
               </View>
-              <Text style={[T.data, { color: C.mute, marginTop: 4 }]}>{a.request_item?.request?.address_text}</Text>
+              <Text style={[T.data, { color: C.mute, marginTop: 6 }]}>📍 {a.request_item?.request?.address_text}</Text>
 
               {/* JOB BRIEF — what the worker accepted: pay, timing, client, materials, and the
                   duties the client wrote. Previously a worker committed with no way to re-read any
@@ -1029,7 +1034,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
                     {payLine && (
                       <View style={S_.briefRow}>
                         <Text style={S_.briefK}>Pay</Text>
-                        <Text style={S_.briefV}>{payLine}</Text>
+                        <Text style={[S_.briefV, { color: C.green, fontWeight: '800' }]}>{payLine}</Text>
                       </View>
                     )}
                     <View style={S_.briefRow}>
