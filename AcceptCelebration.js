@@ -21,7 +21,7 @@ export default function AcceptCelebration({ data, onDone }) {
     color: CONFETTI[i % CONFETTI.length],
     size: 7 + Math.random() * 8,
     delay: Math.random() * 140,
-  }));
+  })));
   const conf = useRef(pieces.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
