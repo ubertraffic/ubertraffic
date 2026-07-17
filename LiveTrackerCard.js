@@ -223,7 +223,7 @@ export default function LiveTrackerCard({ state, onAction, onPressCard }) {  con
           {/* moment + confidence — the reassuring core (moment is the hero, not a status) */}
           <View style={styles.body}>
             <Text style={styles.headline} numberOfLines={2}>{state.moment || state.headline}</Text>
-            <Text style={[styles.detail, { color: theme.color }]} numberOfLines={1}>
+            <Text style={[styles.detail, { color: theme.color }]} numberOfLines={2}>
               {state.seen ? state.seen : (state.confidence_label ? state.confidence_label : detailText)}
               {!state.seen && state.stage === 'en_route' && shownEta != null ? ` · ~${shownEta} min` : ''}
             </Text>
