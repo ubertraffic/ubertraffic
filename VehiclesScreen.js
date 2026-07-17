@@ -3,8 +3,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { listMyVehicles, saveMyVehicle, removeMyVehicle, VEHICLE_TYPES } from './vehiclesService';
+import { setVehicle, getMyProfile } from './operatorService';
 import { formatDMY, dmyToISO, isoToDMY } from './dateFormat';
 import { C, S, R, T, shadowSm } from './theme';
+
+// Road vehicles that can be "shown on jobs" (the one the client/worker cards + tracker display).
+// Plant (excavator/bobcat) is a capability, not the driving vehicle, so it's excluded here.
+const ROAD_TYPES = ['Ute', 'Van', 'Truck', 'Tipper', 'Trailer', 'Car', 'Other'];
+const isRoad = (t) => ROAD_TYPES.includes(t);
+// The label shown across the app (cards, live tracker, profile) — it's stored in profiles.vehicle_type.
+const vehicleLabel = (v) => (v.make_model && v.make_model.trim()) ? `${v.type} · ${v.make_model.trim()}` : v.type;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 // Returns { label, color } for an expiry date (null = not provided).
@@ -23,6 +31,7 @@ export default function VehiclesScreen({ onClose }) {
   const [editing, setEditing] = useState(null);   // vehicle being added/edited, or null
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [activeLabel, setActiveLabel] = useState(null);   // profiles.vehicle_type = the one shown on jobs
 
   // form fields
   const [fType, setFType] = useState('Ute');
@@ -34,8 +43,19 @@ export default function VehiclesScreen({ onClose }) {
 
   const load = useCallback(async () => {
     try { setList(await listMyVehicles()); } catch (e) { setMsg(e.message || String(e)); setList([]); }
+    try { const p = await getMyProfile(); setActiveLabel(p?.vehicle_type || null); } catch (_) {}
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Make this vehicle the one shown on jobs (syncs profiles.vehicle_type, which every card/tracker/
+  // profile reads). Best-effort: if the column rejects the label it never blocks the screen.
+  async function showOnJobs(v) {
+    const label = vehicleLabel(v);
+    setBusy(true); setMsg('');
+    try { await setVehicle(label); setActiveLabel(label); }
+    catch (_) { setMsg('Couldn’t set that as your job vehicle — try again.'); }
+    finally { setBusy(false); }
+  }
 
   function openAdd() {
     setEditing('new'); setMsg('');
@@ -59,6 +79,12 @@ export default function VehiclesScreen({ onClose }) {
         type: fType, make_model: fMakeModel, rego: fRego,
         rego_expires: regoISO, insurer: fInsurer, insurance_expires: insISO,
       });
+      // If they have no vehicle shown on jobs yet, make this new road vehicle the one — so the app
+      // stops saying the hardcoded 'ute' and shows what they actually drive. Best-effort.
+      if (editing === 'new' && isRoad(fType) && !activeLabel) {
+        const label = (fMakeModel && fMakeModel.trim()) ? `${fType} · ${fMakeModel.trim()}` : fType;
+        try { await setVehicle(label); } catch (_) {}
+      }
       setEditing(null);
       await load();
     } catch (e) { setMsg(e.message || String(e)); } finally { setBusy(false); }
@@ -145,6 +171,14 @@ export default function VehiclesScreen({ onClose }) {
                   {ins ? <View style={[s.pill, { backgroundColor: ins.color + '1A' }]}><Text style={[s.pillT, { color: ins.color }]}>Insurance · {ins.label}</Text></View> : null}
                 </View>
               ) : <Text style={s.noDates}>No rego / insurance dates added</Text>}
+              {/* "shown on jobs" — the vehicle the app displays on your job cards, tracker & profile */}
+              {isRoad(v.type) && (
+                activeLabel === vehicleLabel(v)
+                  ? <View style={s.shownRow}><Text style={s.shownT}>✓ Shown on your jobs</Text></View>
+                  : <TouchableOpacity style={s.showBtn} onPress={() => showOnJobs(v)} disabled={busy}>
+                      <Text style={s.showBtnT}>Show this one on my jobs</Text>
+                    </TouchableOpacity>
+              )}
             </View>
           );
         })}
@@ -176,6 +210,10 @@ const s = StyleSheet.create({
   pill: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6 },
   pillT: { fontSize: 12, fontWeight: '800' },
   noDates: { fontSize: 12, color: C.mute2, marginTop: 10, fontWeight: '600' },
+  shownRow: { marginTop: 12, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10 },
+  shownT: { fontSize: 12.5, fontWeight: '800', color: C.green },
+  showBtn: { marginTop: 12, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10 },
+  showBtnT: { fontSize: 12.5, fontWeight: '700', color: C.indigo },
   addBtn: { borderWidth: 1.5, borderColor: C.indigo, borderRadius: R.md, paddingVertical: 14, alignItems: 'center', marginTop: 6 },
   addBtnT: { color: C.indigo, fontWeight: '800', fontSize: 15 },
   footNote: { fontSize: 12, color: C.mute2, marginTop: 20, lineHeight: 18 },
