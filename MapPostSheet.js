@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { createRequest } from './requestsService';
 import { searchAddress, reverseGeocode } from './geocodeService';
-import { loadTaxonomy, clientPickerGroups } from './taxonomyService';
+import { loadTaxonomy, clientPickerGroups, featuredTrades, pickerFolders, searchTrades } from './taxonomyService';
 import { getPosition } from './location';
 
 const KINDS = { equipment: 'plant', trades: 'crew', work: 'crew', tasks: 'task' };
@@ -29,6 +29,8 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
   const [door, setDoor] = useState(null);        // FRONT_DOORS key
   const [trade, setTrade] = useState(null);      // { id/type, kind, ... }
   const [qty, setQty] = useState(1);
+  const [pickQ, setPickQ] = useState('');        // picker search
+  const [openCats, setOpenCats] = useState({});  // which folders are expanded
   const [when, setWhen] = useState('now');       // now | booked
   const [bookDay, setBookDay] = useState(null);  // 0=today,1=tomorrow,2=day after...
   const [bookSlot, setBookSlot] = useState(null); // hour of day, e.g. 7, 12, 15
@@ -46,7 +48,7 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
     if (!visible) return;
     // reset each open
     setStep('what'); setDoor(null); setTrade(null); setQty(1); setWhen('now');
-    setBookDay(null); setBookSlot(null);
+    setBookDay(null); setBookSlot(null); setPickQ(''); setOpenCats({});
     setLoc(''); setCoords(null); setResults([]); setErr('');
     if (!taxonomy) { loadTaxonomy().then(setTaxonomy).catch(() => {}); }
   }, [visible]); // eslint-disable-line
@@ -77,8 +79,11 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
     setResults([]);
   }
 
-  // Same two-section list as the main post picker (one source of truth) — no door step.
-  const tradeGroups = clientPickerGroups(taxonomy, { task: '#B87514', skilled: '#5B4BFF' });
+  // Picker v2 (shared with the home post sheet): popular shortcuts + four collapsed folders + search.
+  const featured = featuredTrades(taxonomy, 6);
+  const folders = pickerFolders(taxonomy, { task: '#B87514', work: '#0E7A52', skilled: '#5B4BFF', equipment: '#2C6E8F' });
+  const pickHits = pickQ.trim() ? searchTrades(taxonomy, pickQ) : [];
+  const pickTradeMap = (t) => { setTrade(t); setStep('where'); };
 
   // next 5 days as chips: Today, Tomorrow, then weekday names
   const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -144,28 +149,64 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
 
             {/* ---- STEP: WHAT ---- */}
             {step === 'what' && (
-              <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
+              <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                 {!taxonomy ? (
                   <ActivityIndicator color="#5B4BFF" style={{ marginVertical: 24 }} />
                 ) : (
-                  tradeGroups.map((g, gi) => (
-                    g.section ? (
-                      <Text key={'sec-' + gi} style={{ fontSize: 12.5, fontWeight: '800', letterSpacing: 0.6, color: g.color, textTransform: 'uppercase', marginTop: gi === 0 ? 2 : 18, marginBottom: 10 }}>
-                        {g.section}
-                      </Text>
+                  <>
+                    {/* Search */}
+                    <View style={s.searchWrap}>
+                      <Text style={{ fontSize: 14 }}>🔍</Text>
+                      <TextInput style={s.searchInput} value={pickQ} onChangeText={setPickQ} placeholder="Search — traffic, cleaner, excavator…" placeholderTextColor="#9A9AA8" autoCorrect={false} returnKeyType="search" />
+                      {pickQ ? <TouchableOpacity onPress={() => setPickQ('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={{ color: '#9A9AA8', fontWeight: '700' }}>✕</Text></TouchableOpacity> : null}
+                    </View>
+
+                    {pickQ.trim() ? (
+                      pickHits.length === 0
+                        ? <Text style={{ color: '#9A9AA8', marginTop: 14 }}>No match for “{pickQ.trim()}”.</Text>
+                        : pickHits.map((t) => (
+                            <TouchableOpacity key={t.id || t.name} style={s.tradeRow} activeOpacity={0.8} onPress={() => pickTradeMap(t)}>
+                              <Text style={s.tradeT}>{t.name || t.type}</Text><Text style={s.tradeChevron}>›</Text>
+                            </TouchableOpacity>
+                          ))
                     ) : (
-                      <View key={g.category?.id || g.category?.name} style={{ marginBottom: 8 }}>
-                        <Text style={s.groupLabel}>{g.category?.name}</Text>
-                        {g.trades.map((t) => (
-                          <TouchableOpacity key={t.id || t.name} style={[s.tradeRow, trade && (trade.id || trade.name) === (t.id || t.name) && s.tradeRowOn]} activeOpacity={0.8}
-                            onPress={() => { setTrade(t); setStep('where'); }}>
-                            <Text style={s.tradeT}>{t.name || t.type}</Text>
-                            <Text style={s.tradeChevron}>›</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )
-                  ))
+                      <>
+                        {featured.length > 0 && (
+                          <>
+                            <Text style={s.pickSection}>POPULAR</Text>
+                            <View style={s.featWrap}>
+                              {featured.map((t) => (
+                                <TouchableOpacity key={t.id || t.name} style={s.featChip} activeOpacity={0.85} onPress={() => pickTradeMap(t)}>
+                                  <Text style={s.featChipT}>{t.name || t.type}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </>
+                        )}
+                        <Text style={[s.pickSection, { marginTop: 20 }]}>BROWSE ALL</Text>
+                        {folders.map((f) => {
+                          const isOpen = !!openCats[f.key];
+                          return (
+                            <View key={f.key} style={{ borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' }}>
+                              <TouchableOpacity onPress={() => setOpenCats((p) => ({ ...p, [f.key]: !isOpen }))} activeOpacity={0.7} style={s.folderHead}>
+                                <View style={[s.folderDot, { backgroundColor: f.color }]} />
+                                <View style={{ flex: 1 }}>
+                                  <Text style={s.folderTitle}>{f.label}<Text style={s.folderCount}>  {f.trades.length}</Text></Text>
+                                  <Text style={s.folderSub}>{f.sub}</Text>
+                                </View>
+                                <Text style={[s.tradeChevron, { transform: [{ rotate: isOpen ? '90deg' : '0deg' }] }]}>›</Text>
+                              </TouchableOpacity>
+                              {isOpen && f.trades.map((t) => (
+                                <TouchableOpacity key={t.id || t.name} style={[s.tradeRow, { paddingLeft: 22 }]} activeOpacity={0.8} onPress={() => pickTradeMap(t)}>
+                                  <Text style={s.tradeT}>{t.name || t.type}</Text><Text style={s.tradeChevron}>›</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          );
+                        })}
+                      </>
+                    )}
+                  </>
                 )}
               </ScrollView>
             )}
@@ -306,6 +347,17 @@ const s = StyleSheet.create({
   backRow: { paddingVertical: 8 },
   backT: { color: '#7C6BFF', fontSize: 14, fontWeight: '700' },
   groupLabel: { color: '#8A8A98', fontSize: 11, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 6, marginBottom: 4 },
+  searchWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 4, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  searchInput: { flex: 1, fontSize: 15, color: '#EDEDF2', padding: 0 },
+  pickSection: { color: '#8A8A98', fontSize: 11, fontWeight: '800', letterSpacing: 0.8, marginTop: 16, marginBottom: 10 },
+  featWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  featChip: { backgroundColor: '#5B4BFF', borderRadius: 999, paddingHorizontal: 15, paddingVertical: 11 },
+  featChipT: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  folderHead: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
+  folderDot: { width: 10, height: 10, borderRadius: 5 },
+  folderTitle: { fontSize: 15.5, fontWeight: '800', color: '#EDEDF2' },
+  folderCount: { fontSize: 13, fontWeight: '700', color: '#8A8A98' },
+  folderSub: { fontSize: 12, color: '#8A8A98', marginTop: 2, fontWeight: '600' },
   tradeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 13, paddingHorizontal: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', marginBottom: 6 },
   tradeRowOn: { backgroundColor: 'rgba(91,75,255,0.2)' },
   tradeT: { color: '#EDEDF2', fontSize: 15, fontWeight: '600' },

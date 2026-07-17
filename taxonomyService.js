@@ -120,3 +120,61 @@ export function clientPickerGroups(taxonomy, { task = '#B87514', skilled = '#463
 export function categoriesForDoor(taxonomy, doorKey) {
   return groupedTradesForDoor(taxonomy, doorKey).map((g) => g.category);
 }
+
+// ── PICKER v2 (researched IA) ────────────────────────────────────────────────
+// Problem the old clientPickerGroups had: it emitted EVERY task category as its own
+// accordion (all open by default), so a hirer scrolled past 5-6 expanded task folders
+// before skilled trades even appeared. Research (NN/G accordions-on-mobile, LogRocket,
+// Airtasker's "top categories" shortcuts) says: lead with the popular few, then a SMALL
+// set of folders COLLAPSED by default. So:
+//   1) featuredTrades() — the handful people pick most, shown up top as one tap.
+//   2) pickerFolders()  — exactly FOUR folders, all collapsed: the whole driver-licence
+//      "Tasks & runs" tier merged into ONE (not many), then Traffic & labour, Skilled
+//      trades, Equipment & plant.
+
+// The most-requested jobs, curated by name/alias match so it survives taxonomy edits.
+// Order = priority; first match per slot wins, deduped, capped.
+const FEATURED_PATTERNS = [
+  ['traffic control', 'traffic controller', 'tc'],
+  ['general labour', 'labourer', 'labour'],
+  ['rubbish', 'skip', 'removal', 'waste'],
+  ['delivery', 'materials run', 'pickup run', 'bunnings', 'parts run', 'courier'],
+  ['clean', 'site clean'],
+  ['handyman', 'handy'],
+];
+export function featuredTrades(taxonomy, limit = 6) {
+  if (!taxonomy) return [];
+  const visible = (taxonomy.trades || []).filter((t) => t.client_visible !== false);
+  const hit = (t, p) => t.name.toLowerCase().includes(p) || (t.aliases || []).some((a) => a.toLowerCase().includes(p));
+  const out = [];
+  const seen = new Set();
+  for (const pats of FEATURED_PATTERNS) {
+    const match = visible.find((t) => !seen.has(t.id) && pats.some((p) => hit(t, p)));
+    if (match) { out.push(match); seen.add(match.id); }
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// The four collapsed folders. colors: { task, work, skilled, equipment }.
+const FOLDER_DEFS = [
+  { key: 'tasks',     label: 'Tasks & runs',      sub: 'Anyone with a driver licence', colorKey: 'task' },
+  { key: 'work',      label: 'Traffic & labour',  sub: 'Traffic control, labourers & site support', colorKey: 'work' },
+  { key: 'trades',    label: 'Skilled trades',    sub: 'Ticketed tradespeople', colorKey: 'skilled' },
+  { key: 'equipment', label: 'Equipment & plant', sub: 'Machines, plant & vehicles', colorKey: 'equipment' },
+];
+export function pickerFolders(taxonomy, colors = {}) {
+  if (!taxonomy) return [];
+  const catById = Object.fromEntries((taxonomy.categories || []).map((c) => [c.id, c]));
+  const byDoor = { tasks: [], work: [], trades: [], equipment: [] };
+  (taxonomy.trades || []).forEach((t) => {
+    if (t.client_visible === false) return;
+    const cat = catById[t.category_id];
+    if (!cat) return;
+    const door = doorForTrade(t, cat.name);   // task→tasks, plant→equipment, crew→work|trades
+    if (byDoor[door]) byDoor[door].push(t);
+  });
+  return FOLDER_DEFS
+    .map((f) => ({ key: f.key, label: f.label, sub: f.sub, color: colors[f.colorKey], trades: byDoor[f.key] || [] }))
+    .filter((f) => f.trades.length > 0);
+}
