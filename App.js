@@ -538,9 +538,9 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       const isBooked = when === 'scheduled';
       const sched = isBooked ? scheduledISO() : null;
       if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
-      await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
+      const newId = await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
       setPhase('sent');
-      setTimeout(() => { onPosted && onPosted(); }, 1100);   // let the "sent" beat land, then drop home
+      setTimeout(() => { onPosted && onPosted(newId); }, 1100);   // let the "sent" beat land, then drop home
     } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
   }
 
@@ -1206,7 +1206,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={myLoc}
-      onPosted={() => { setSheetOpen(false); load(); }}
+      onPosted={async (id) => { setSheetOpen(false); await load(); if (id) payJob(id); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     <PayJobSheet
