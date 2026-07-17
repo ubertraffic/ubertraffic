@@ -467,7 +467,7 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
                 visible={postSheetOpen}
                 myLoc={me}
                 onClose={() => setPostSheetOpen(false)}
-                onPosted={(id) => { setPostSheetOpen(false); setFull(false); if (onPostFromMap) onPostFromMap({ posted: true, id }); }}
+                onPosted={(id, est, label) => { setPostSheetOpen(false); setFull(false); if (onPostFromMap) onPostFromMap({ posted: true, id, est, label }); }}
               />
             )}
             {/* IN-CENTRE DETAIL SHEET — job info + actions rise over the map, never leave */}

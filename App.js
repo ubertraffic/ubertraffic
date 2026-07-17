@@ -539,8 +539,12 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       const sched = isBooked ? scheduledISO() : null;
       if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
       const newId = await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
+      // estimate for the pay sheet (server still computes the authoritative charge) — mirrors the
+      // fee math: hourly items × 4h, job-priced as-is, + travel. Passed through so the sheet never flashes $0.
+      const estCents = items.reduce((s, it) => s + Math.round((Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : 4) * 100), 0) + Math.round((parseFloat(travel) || 0) * 100);
+      const estLabel = items[0]?.type || 'Job';
       setPhase('sent');
-      setTimeout(() => { onPosted && onPosted(newId); }, 1100);   // let the "sent" beat land, then drop home
+      setTimeout(() => { onPosted && onPosted(newId, estCents, estLabel); }, 1100);   // let the "sent" beat land, then drop home
     } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
   }
 
@@ -631,7 +635,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
           </View>
           )}
 
-          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="none" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: phase === 'where' ? 320 : 24, paddingTop: 4 }} style={{ height: SHEET_SCREEN_H * (phase === 'where' ? 0.56 : 0.44) }}>
+          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="none" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: phase === 'where' ? 320 : phase === 'review' ? 300 : 24, paddingTop: 4 }} style={{ height: SHEET_SCREEN_H * (phase === 'where' ? 0.56 : phase === 'review' ? 0.62 : 0.44) }}>
 
             <StepFade phase={phase}>
             {phase === 'door' && (
@@ -914,9 +918,14 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
   }
 
   // Post → open the pay sheet to AUTHORISE a hold (charged only when the client later approves).
-  function payJob(reqId) {
+  // estOverride/labelOverride let a fresh post pass its own numbers, since the just-created job
+  // isn't in `mine` yet (that's why the sheet used to flash $0). The final charge is always the
+  // server-computed amount either way.
+  function payJob(reqId, estOverride, labelOverride) {
     const req = getReq(reqId);
-    setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: estimateCentsFor(req) });
+    const est = Number(estOverride) > 0 ? Number(estOverride) : estimateCentsFor(req);
+    const label = labelOverride || req?.request_items?.[0]?.type || 'Job';
+    setPayReq({ id: reqId, label, estimateCents: est });
   }
   // Approve → open the pay sheet in auto-capture mode (secures the hold if needed, then captures).
   function beginApproval(reqId, adj) {
@@ -1093,7 +1102,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
     <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
       <MapHero
         height={240} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
-        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id), 500); } else { setSheetOpen(true); } }}
+        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id, r.est, r.label), 500); } else { setSheetOpen(true); } }}
         commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
         primaryAction={needsYou.length > 0
           ? { label: 'Review & pay', sub: `${needsYou.length} job${needsYou.length > 1 ? 's' : ''} ready`, tone: 'green', icon: '✓', closesMap: true, fn: () => onOpenReq && onOpenReq(needsYou[0].id) }
@@ -1219,7 +1228,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={myLoc}
-      onPosted={async (id) => { setSheetOpen(false); await load(); if (id) payJob(id); }}
+      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); if (id) payJob(id, est, label); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     {PaySheet}
@@ -1535,7 +1544,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={null}
-      onPosted={async (id) => { setSheetOpen(false); await load(); if (id) payJob(id); }}
+      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); if (id) payJob(id, est, label); }}
     />
     {PaySheet}
     <RateJob

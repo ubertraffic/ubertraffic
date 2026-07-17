@@ -97,20 +97,17 @@ function TrackerContainer({ requestId, onAction, perspective = 'client' }) {
 function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
   const [mounted, setMounted] = useState(!!assignmentId);
   const [content, setContent] = useState(assignmentId);   // held through exit
-  const [h, setH] = useState(0);          // measured card height; 0 = not measured yet
   const [kb, setKb] = useState(0);        // keyboard height, so the sheet lifts above it
-  const a = useRef(new Animated.Value(0)).current;         // 0 = hidden, 1 = shown
-  const waiting = useRef(false);          // open requested, holding until first measure
+  const a = useRef(new Animated.Value(0)).current;         // 0 = hidden (below screen), 1 = shown
   useEffect(() => {
     if (assignmentId) {
-      // Measure BEFORE we slide: stay hidden (h=0) until onLayout reports the real
-      // height, then spring in from exactly that distance — no mid-slide re-adjust
-      // (which caused the flash + stutter). Reset h so each open re-measures fresh.
+      // Slide up from a FIXED off-screen offset — the SAME clean motion as PrestartSheet. The old
+      // measure-first opacity gate ("measure then reveal") was the twitch; a bottom-anchored sheet
+      // parked at a big translateY springs to rest with no mid-slide re-adjust or flash.
       setContent(assignmentId);
       setMounted(true);
       a.setValue(0);
-      setH(0);
-      waiting.current = true;
+      Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start();
     } else if (mounted) {
       Animated.timing(a, { toValue: 0, duration: M.fast, easing: Easing.in(Easing.quad), useNativeDriver: true })
         .start(({ finished }) => { if (finished) setMounted(false); });
@@ -126,24 +123,15 @@ function CloseOutSheet({ assignmentId, onComplete, onCancel }) {
     return () => { s.remove(); hd.remove(); };
   }, []);
   if (!mounted) return null;
-  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [h || 1000, 0] });
+  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [900, 0] });
   const backdrop = a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
-  // On the first real measurement, start the slide once (uses the fresh height, not
-  // stale render state). The sheet stays opacity:0 until measured, so no pre-slide flash.
-  const onMeasured = (e) => {
-    const nh = e.nativeEvent.layout.height;
-    if (!nh) return;
-    if (Math.abs(nh - h) > 1) setH(nh);
-    if (waiting.current) { waiting.current = false; Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start(); }
-  };
   return (
     <Modal visible transparent animationType="none" onRequestClose={onCancel}>
       <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: kb }}>
         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: backdrop }} />
         <Animated.View
           pointerEvents={assignmentId ? 'auto' : 'none'}
-          onLayout={onMeasured}
-          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: h > 0 ? 1 : 0, transform: [{ translateY }] }}
+          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, transform: [{ translateY }] }}
         >
           <SafeAreaView>
             <ScrollView
@@ -1254,7 +1242,8 @@ export function OperatorEarnings({ session }) {
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 26 }]}>
         <Text style={T.label}>Paid to you</Text>
         <Text style={[T.dataBig, { fontSize: 38, color: C.green, marginTop: 6 }]}>${totalPaid.toLocaleString()}</Text>
-        <Text style={[T.small, { marginTop: 2 }]}>{paid.length} job{paid.length !== 1 ? 's' : ''} settled · net after 12% fee</Text>
+        <Text style={[T.small, { marginTop: 2 }]}>{paid.length} job{paid.length !== 1 ? 's' : ''} settled · net after fees</Text>
+        <Text style={[T.tiny, { marginTop: 6, color: C.mute2, textAlign: 'center', paddingHorizontal: 12 }]}>SiteCall keeps 10% of labour + $3 per task. Tips & travel are 100% yours.</Text>
       </View>
 
       {pending.length > 0 && (

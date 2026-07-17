@@ -68,7 +68,7 @@ export const SH = StyleSheet.create({
   err: { color: C.red, fontSize: 12.5, marginTop: 10 },
   optionalLabel: { fontSize: 13, fontWeight: '800', color: C.ink, marginTop: 16, marginBottom: 7 },
   optionalHint: { fontSize: 12, fontWeight: '500', color: C.mute },
-  optionalInput: { backgroundColor: C.canvas, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: C.ink, marginBottom: 8, borderWidth: 1, borderColor: C.line },
+  optionalInput: { backgroundColor: C.panel, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: 15, color: C.ink, marginBottom: 10, borderWidth: 1, borderColor: C.line, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } },
   dayChip: { backgroundColor: C.canvas, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 10, borderWidth: 1, borderColor: C.line },
   dayChipOn: { backgroundColor: C.indigo, borderColor: C.indigo },
   dayChipT: { fontSize: 13.5, fontWeight: '700', color: C.ink },

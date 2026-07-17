@@ -2,7 +2,7 @@
 // mobile paste limit. These are called from App.js, which imports them back.
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, StyleSheet } from 'react-native';
-import { C, R, S, E } from './theme';
+import { C, R, S, E, T } from './theme';
 import { S_ } from './styles';
 import Icon from './Icon';
 import { supabase } from './supabaseClient';
@@ -30,7 +30,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
   const info = React.useMemo(() => {
     if (!request) return null;
     const crew = [];
-    let base = 0;
+    let base = 0, labourBase = 0;   // labourBase = hourly work only; the 10% fee applies to it, not tasks
     const hours = request.duration_hours || 4;
     let anyIncomplete = false;
     for (const it of (request.request_items || [])) {
@@ -50,12 +50,14 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
           pay: done ? perItem : 0,
           events: a.job_events || [],   // embedded from listMyRequestsFull — feeds the safety record
         });
-        if (done) base += perItem;
+        if (done) { base += perItem; if (it.price_mode !== 'job') labourBase += perItem; }
       }
     }
     // primary (for single-worker back-compat display fields)
     const first = crew.find((m) => m.done) || crew[0] || null;
-    const fee = Math.round(base * 0.12 * 100) / 100;
+    // Fee model: 10% of labour only. Tasks are 100% to the worker (client pays a flat booking fee
+    // on top, handled at checkout). Tips + travel are always 100% to the worker.
+    const fee = Math.round(labourBase * 0.10 * 100) / 100;
     // if already settled, use the real settled figures
     let total, feeF, net;
     if (request.settle_total != null) {
@@ -172,9 +174,10 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
             {adjTotal > 0 && <View style={S_.revMoneyRow}><Text style={S_.revMoneyKmute}>Tip + travel</Text><Text style={S_.revMoneyVmute}>+{money(adjTotal)}</Text></View>}
             {matApproved > 0 && <View style={S_.revMoneyRow}><Text style={S_.revMoneyKmute}>Materials</Text><Text style={S_.revMoneyVmute}>+{money(matApproved)}</Text></View>}
             <View style={S_.revMoneyRow}><Text style={S_.revMoneyK}>Total</Text><Text style={S_.revMoneyV}>{money(shownTotal)}</Text></View>
-            {info?.fee != null && <View style={S_.revMoneyRow}><Text style={S_.revMoneyKmute}>Platform fee</Text><Text style={S_.revMoneyVmute}>{money(info.fee)}</Text></View>}
+            {info?.fee != null && <View style={S_.revMoneyRow}><Text style={S_.revMoneyKmute}>Platform fee (10% of labour)</Text><Text style={S_.revMoneyVmute}>{money(info.fee)}</Text></View>}
             <View style={S_.revMoneyRow}><Text style={S_.revMoneyK}>To worker</Text><Text style={S_.revMoneyVnet}>{money(shownNet)}</Text></View>
           </View>
+          <Text style={[T.small, { color: C.mute2, marginTop: 8, lineHeight: 17 }]}>SiteCall keeps 10% of labour + $3 per task. Tips & travel go 100% to the worker.</Text>
 
           {!!err && <Text style={S_.revErr}>{err}</Text>}
 

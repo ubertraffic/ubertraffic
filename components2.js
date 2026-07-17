@@ -468,7 +468,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
     const per = it.price_mode === 'job' ? rate : rate * hours;
     (it.assignments || []).filter((a) => ['complete', 'approved'].includes(a.status)).forEach(() => { payTotal += per; workers += 1; });
   });
-  const payNet = Math.round(payTotal * 0.88); // after 12% platform fee
+  const payNet = Math.round(payTotal * 0.90); // after 10% platform fee (labour); tasks/tips/travel are 100% to worker
   const payLabel = payNet > 0 ? `Approve — pay $${payNet.toLocaleString()} to ${workers} ${workers === 1 ? 'worker' : 'workers'}` : 'Approve & settle';
 
   const stalled = requestHasStall(r);
@@ -595,7 +595,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
             <View style={S_.settle}>
               <Text style={[T.label, { color: C.green, marginBottom: 10 }]}>✓ Settled</Text>
               <View style={S_.reviewRow}><Text style={T.small}>Job total</Text><Text style={T.data}>${Number(r.settle_total).toLocaleString()}</Text></View>
-              <View style={S_.reviewRow}><Text style={T.small}>Platform fee (12%)</Text><Text style={T.data}>−${Number(r.settle_fee).toLocaleString()}</Text></View>
+              <View style={S_.reviewRow}><Text style={T.small}>Platform fee</Text><Text style={T.data}>−${Number(r.settle_fee).toLocaleString()}</Text></View>
               <View style={[S_.reviewRow, { borderTopWidth: 1, borderTopColor: C.line, marginTop: 7, paddingTop: 11 }]}>
                 <Text style={T.bodyStrong}>Paid to worker</Text><Text style={[T.money, { color: C.ink }]}>${Number(r.settle_net).toLocaleString()}</Text>
               </View>
