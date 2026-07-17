@@ -23,6 +23,7 @@ import RunCloseOutCard from './RunCloseOutCard';
 import RunBrief from './RunBrief';
 import AcceptCelebration from './AcceptCelebration';
 import HelpCenter from './HelpCenter';
+import SkillDiscoverySheet from './SkillDiscoverySheet';
 import { complianceReady } from './complianceService';
 
 // A run = a task whose trade carries a run_style (set in migration 0045). The open
@@ -340,6 +341,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [busyId, setBusyId] = useState(null);   // which job/spot is acting (per-button spinner)
   const [celebrate, setCelebrate] = useState(null);   // "it's a match" payload after a successful accept
   const [helpOpen, setHelpOpen] = useState(false);    // Help centre sheet
+  const [discSkill, setDiscSkill] = useState(null);   // skill tapped in "What I supply" → discovery sheet
   const [msg, setMsg] = useState('');
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
@@ -782,23 +784,26 @@ export function OperatorHome({ session, onOpenProfile }) {
               <Text style={S_.capChevron}>›</Text>
             </TouchableOpacity>
           ) : (<>
-          <View style={{ marginTop: 10 }}>
+          {caps.length > 0 && <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 2 }]}>Tap a skill to see others who do it.</Text>}
+          <View style={{ marginTop: 8 }}>
             {caps.map((c) => {
               const r = c.trade_id ? readiness[c.trade_id] : null;
               return (
                 <View key={c.id} style={S_.capRow}>
-                  <Icon name={c.kind === 'gear' ? 'gear' : c.kind === 'task' ? 'task' : 'crew'} size={17} color={C.ink} strokeWidth={1.9} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={T.bodyStrong}>{c.type}</Text>
-                    {r && !r.ready && (
-                      <Text style={[T.small, { color: C.amber, marginTop: 2 }]}>Needs: {r.missing.join(', ')}</Text>
-                    )}
-                  </View>
+                  <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }} activeOpacity={0.7} onPress={() => setDiscSkill(c.type)}>
+                    <Icon name={c.kind === 'gear' ? 'gear' : c.kind === 'task' ? 'task' : 'crew'} size={17} color={C.ink} strokeWidth={1.9} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={T.bodyStrong}>{c.type}</Text>
+                      {r && !r.ready
+                        ? <Text style={[T.small, { color: C.amber, marginTop: 2 }]}>Needs: {r.missing.join(', ')}</Text>
+                        : <Text style={[T.small, { color: C.mute2, marginTop: 2 }]}>See others ›</Text>}
+                    </View>
+                  </TouchableOpacity>
                   {r && (r.ready
                     ? <View style={S_.readyPill}><Text style={S_.readyText}>Ready ✓</Text></View>
                     : <View style={S_.notReadyPill}><Text style={S_.notReadyText}>Tickets needed</Text></View>
                   )}
-                  <TouchableOpacity onPress={() => removeCap(c.id)} disabled={busy}>
+                  <TouchableOpacity onPress={() => removeCap(c.id)} disabled={busy} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Text style={S_.rm}>✕</Text>
                   </TouchableOpacity>
                 </View>
@@ -830,6 +835,7 @@ export function OperatorHome({ session, onOpenProfile }) {
     />
     <AcceptCelebration data={celebrate} onDone={() => setCelebrate(null)} />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
+    <SkillDiscoverySheet skill={discSkill} excludeUserId={session.user.id} onClose={() => setDiscSkill(null)} onOpenProfile={onOpenProfile} />
     <CloseOutSheet
       assignmentId={closeOut}
       onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
