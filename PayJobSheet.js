@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Modal, View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Animated, AppState, Linking } from 'react-native';
 import { C, S, R, T, shadowSm } from './theme';
-import { startJobCheckout, checkJobPayment, latestPaymentFor } from './paymentsService';
+import { startJobCheckout, checkJobPayment, latestPaymentFor, capturePayment } from './paymentsService';
 
 const money = (cents) => `$${((Number(cents) || 0) / 100).toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
@@ -19,13 +19,14 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
   const [err, setErr] = useState('');
   const check = useRef(new Animated.Value(0)).current;
 
-  // Reset each time it opens; if this job is already paid, jump straight to the paid state.
+  // Reset each time it opens; if this job already has a hold/capture, jump straight to that state.
   useEffect(() => {
     if (!visible) return;
     setPhase('intro'); setErr(''); setSession(null); setAmount(estimateCents || 0);
     (async () => {
       const p = await latestPaymentFor(requestId).catch(() => null);
-      if (p && p.status === 'paid') { setAmount(p.amount_cents); setPhase('paid'); }
+      if (p && p.status === 'captured') { setAmount(p.amount_cents); setPhase('paid'); }
+      else if (p && p.status === 'authorized') { setAmount(p.amount_cents); setPhase('held'); }
     })();
   }, [visible, requestId, estimateCents]);
 
@@ -38,7 +39,7 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
   }, [visible, session]);
 
   useEffect(() => {
-    if (phase !== 'paid') return;
+    if (phase !== 'paid' && phase !== 'held') return;
     check.setValue(0);
     Animated.spring(check, { toValue: 1, friction: 5, tension: 120, useNativeDriver: true }).start();
   }, [phase, check]);
@@ -56,8 +57,19 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
   async function confirm() {
     try {
       const r = await checkJobPayment(session);
-      if (r?.paid) { setPhase('paid'); onPaid && onPaid(); }
+      if (r?.captured) { setPhase('paid'); onPaid && onPaid(); }
+      else if (r?.authorized) { setPhase('held'); onPaid && onPaid(); }
     } catch (_) { /* leave it in waiting; the manual re-check button stays available */ }
+  }
+
+  // Capture the hold + pay out the worker(s). This is the "approve the work" moment; kept in the
+  // sheet so the whole hold → capture → payout flow is testable in one place.
+  const [capturing, setCapturing] = useState(false);
+  async function approveAndPay() {
+    setCapturing(true); setErr('');
+    try { await capturePayment(requestId); setPhase('paid'); onPaid && onPaid(); }
+    catch (e) { setErr(e.message || String(e)); }
+    finally { setCapturing(false); }
   }
 
   return (
@@ -67,13 +79,23 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
         <View style={s.sheet}>
           <View style={s.grip} />
 
-          {phase === 'paid' ? (
+          {(phase === 'paid' || phase === 'held') ? (
             <View style={{ alignItems: 'center', paddingBottom: 8 }}>
               <Animated.View style={[s.check, { transform: [{ scale: check }] }]}><Text style={s.checkT}>✓</Text></Animated.View>
-              <Text style={s.paidTitle}>Payment received</Text>
+              <Text style={s.paidTitle}>{phase === 'paid' ? 'Payment complete' : 'Payment secured'}</Text>
               <Text style={s.paidAmt}>{money(amount)}</Text>
-              <Text style={s.paidSub}>{label || 'Job'} · paid securely</Text>
-              <TouchableOpacity style={s.primary} onPress={onClose} activeOpacity={0.9}><Text style={s.primaryT}>Done</Text></TouchableOpacity>
+              <Text style={s.paidSub}>
+                {phase === 'paid'
+                  ? `${label || 'Job'} · paid & released to the worker`
+                  : `${label || 'Job'} · held securely — charged when you approve the work`}
+              </Text>
+              {!!err && <Text style={s.err}>{err}</Text>}
+              {phase === 'held' ? (
+                <TouchableOpacity style={[s.primary, capturing && { opacity: 0.6 }]} disabled={capturing} onPress={approveAndPay} activeOpacity={0.9}>
+                  <Text style={s.primaryT}>{capturing ? 'Paying…' : 'Approve & pay worker'}</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity style={s.ghost} onPress={onClose} activeOpacity={0.9}><Text style={s.ghostT}>Done</Text></TouchableOpacity>
             </View>
           ) : (
             <>
@@ -85,7 +107,7 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
               <View style={s.jobCard}>
                 <Text style={s.jobLabel} numberOfLines={1}>{label || 'Job'}</Text>
                 <Text style={s.amt}>{money(amount)}</Text>
-                <Text style={s.amtSub}>Estimated total{amount ? '' : ' — confirmed at checkout'}</Text>
+                <Text style={s.amtSub}>{amount ? 'Held until you approve the work' : 'Confirmed at checkout'}</Text>
               </View>
 
               <View style={s.secureRow}>
