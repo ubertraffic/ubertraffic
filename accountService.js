@@ -107,6 +107,24 @@ export async function setMyAbn(abn) {
   return { abn: clean, abn_status: 'valid' };
 }
 
+// Verify the caller's stored ABN against the free ABR ABN Lookup register (server-side Edge
+// Function 'verify-abn' — the GUID lives there, never in the app). Flips abn_status to 'verified'
+// on a real match. Returns { status: 'verified' | 'review', detail? }. Mirrors verifyMyCredential.
+export async function verifyMyAbn() {
+  const { data, error } = await supabase.functions.invoke('verify-abn', { body: {} });
+  if (error) {
+    let detail = error.message || String(error);
+    try {
+      if (error.context && typeof error.context.json === 'function') {
+        const body = await error.context.json();
+        if (body && (body.error || body.detail)) detail = body.error || body.detail;
+      }
+    } catch (_) {}
+    throw new Error(detail);
+  }
+  return data;
+}
+
 // ── Identity (legal name + DOB) ──────────────────────────────────────────────
 // The anchor a register/DVS check must match against. Sensitive PII — collected with a
 // clear purpose line, used only for verification, never shown publicly. Stored on the profile;

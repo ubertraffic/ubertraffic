@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential } from './credentialsService';
 import { getMyProfile } from './operatorService';
-import { setMyAbn, abnValid, normalizeAbn, setMyIdentity } from './accountService';
+import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn } from './accountService';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 import Icon from './Icon';
 
@@ -32,9 +32,19 @@ export default function CredentialsScreen({ onClose }) {
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
   const [abnSaved, setAbnSaved] = useState(null);     // stored ABN (digits) or null
+  const [abnStatus, setAbnStatus] = useState(null);   // 'valid' | 'verified' | null
   const [abnInput, setAbnInput] = useState('');
   const [abnBusy, setAbnBusy] = useState(false);
   const [abnMsg, setAbnMsg] = useState('');
+
+  async function verifyAbn() {
+    setAbnBusy(true); setAbnMsg('');
+    try {
+      const r = await verifyMyAbn();
+      if (r && r.status === 'verified') { setAbnStatus('verified'); setAbnMsg('✓ Verified against the ABR.'); }
+      else setAbnMsg(r && r.detail ? `Needs a check: ${r.detail}` : 'Sent for manual review.');
+    } catch (e) { setAbnMsg('Verify failed: ' + (e.message || String(e))); } finally { setAbnBusy(false); }
+  }
   const [idSaved, setIdSaved] = useState(null);       // { legal_name, date_of_birth } or null
   const [idEditing, setIdEditing] = useState(false);
   const [idName, setIdName] = useState('');
@@ -76,6 +86,7 @@ export default function CredentialsScreen({ onClose }) {
       if (p) {
         setCaps({ can_work: p.can_work, can_task: p.can_task });
         setAbnSaved(p.abn || null);
+        setAbnStatus(p.abn_status || null);
         setIdSaved(p.legal_name ? { legal_name: p.legal_name, date_of_birth: p.date_of_birth } : null);
       }
     } catch (e) { setMsg(e.message || String(e)); setTypes([]); }
@@ -220,15 +231,25 @@ export default function CredentialsScreen({ onClose }) {
         <View style={styles.abnCard}>
           <Text style={styles.abnLabel}>Your ABN</Text>
           {abnSaved ? (
-            <View style={styles.abnRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.abnValue}>{formatAbn(abnSaved)}</Text>
-                <Text style={styles.abnOk}>✓ Valid format · full ABR check coming</Text>
+            <>
+              <View style={styles.abnRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.abnValue}>{formatAbn(abnSaved)}</Text>
+                  <Text style={[styles.abnOk, abnStatus !== 'verified' && { color: C.mute }]}>
+                    {abnStatus === 'verified' ? '✓ Verified against the ABR' : 'Valid format · not yet register-checked'}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => { setAbnInput(abnSaved); setAbnSaved(null); setAbnMsg(''); }}>
+                  <Text style={styles.abnEdit}>Edit</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity onPress={() => { setAbnInput(abnSaved); setAbnSaved(null); setAbnMsg(''); }}>
-                <Text style={styles.abnEdit}>Edit</Text>
-              </TouchableOpacity>
-            </View>
+              {abnStatus !== 'verified' && (
+                <TouchableOpacity style={[styles.abnSave, abnBusy && { opacity: 0.5 }]} disabled={abnBusy} onPress={verifyAbn}>
+                  <Text style={styles.abnSaveT}>{abnBusy ? 'Checking…' : 'Verify against the ABR'}</Text>
+                </TouchableOpacity>
+              )}
+              {!!abnMsg && <Text style={[styles.hint, { marginTop: 8 }]}>{abnMsg}</Text>}
+            </>
           ) : (
             <>
               <Text style={styles.abnHint}>
