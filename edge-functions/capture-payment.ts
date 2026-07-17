@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
     const { data: pay } = await admin
-      .from("payments").select("id, client_id, status, stripe_payment_intent")
+      .from("payments").select("id, client_id, status, stripe_payment_intent, tip_cents, travel_cents")
       .eq("request_id", requestId).eq("status", "authorized")
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (!pay) return json({ error: "no_held_payment", detail: "No authorized payment to capture on this job." }, 404);
@@ -74,14 +74,22 @@ Deno.serve(async (req) => {
       .from("assignments").select("id, operator_id, request_item_id, status")
       .in("request_item_id", Object.keys(itemById))
       .in("status", ["complete", "approved"]);
+    const paid = ((assigns as any[]) || []).filter((a) => a.operator_id && itemById[a.request_item_id]);
+
+    // travel + tip go 100% to the worker(s), split evenly across everyone being paid.
+    const tipCents = Math.max(0, Number((pay as any).tip_cents) || 0);
+    const travelCents = Math.max(0, Number((pay as any).travel_cents) || 0);
+    const perWorkerExtra = paid.length ? Math.floor((tipCents + travelCents) / paid.length) : 0;
 
     const results: any[] = [];
-    for (const a of (assigns as any[]) || []) {
+    for (const a of paid) {
       const it = itemById[a.request_item_id];
-      if (!it || !a.operator_id) continue;
-      const units = it.price_mode === "job" ? 1 : hours;
-      const gross = Math.round(Number(it.rate || 0) * units * 100);
-      const net = Math.round(gross * (1 - feePct / 100));
+      const isTask = it.price_mode === "job";
+      // task → 100% of the price; labour → rate×hours minus the platform fee.
+      const base = isTask
+        ? Math.round(Number(it.rate || 0) * 100)
+        : Math.round(Number(it.rate || 0) * hours * 100 * (1 - feePct / 100));
+      const net = base + perWorkerExtra;   // + their even share of travel + tip (fee-free)
       if (net < 1) { results.push({ operator_id: a.operator_id, skipped: "zero" }); continue; }
 
       const { data: prof } = await admin.from("profiles").select("stripe_account_id").eq("id", a.operator_id).maybeSingle();

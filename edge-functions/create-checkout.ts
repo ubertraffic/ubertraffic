@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
 
     // The request must exist AND belong to the caller — never let someone pay against a job they don't own.
     const { data: request } = await admin
-      .from("requests").select("id, client_id, duration_hours, address_text").eq("id", requestId).maybeSingle();
+      .from("requests").select("id, client_id, duration_hours, address_text, travel_cents").eq("id", requestId).maybeSingle();
     if (!request) return json({ error: "request_not_found" }, 404);
     if ((request as any).client_id !== user.id) return json({ error: "not_your_request" }, 403);
 
@@ -54,15 +54,24 @@ Deno.serve(async (req) => {
       .from("request_items").select("type, rate, qty, price_mode").eq("request_id", requestId);
     const list = (items as any[]) || [];
 
-    // SERVER-AUTHORITATIVE amount: sum rate × qty × hours (job-priced items count as 1 unit).
+    // FEE MODEL (must mirror capture-payment):
+    //   labour (hourly): client pays rate×hours; worker keeps 90% (10% platform fee).
+    //   task (job-priced): client pays price + a flat $3 booking per spot; worker keeps 100%.
+    //   travel + tip: added on top, 100% to the worker.
+    const TASK_FEE_CENTS = Math.max(0, Math.round(Number(Deno.env.get("TASK_FLAT_FEE") || "300")));
     const hours = Number((request as any).duration_hours) || 4;
     let cents = 0;
     for (const it of list) {
       const rate = Number(it.rate) || 0;
       const qty = Number(it.qty) || 1;
-      const units = it.price_mode === "job" ? 1 : hours;
-      cents += Math.round(rate * qty * units * 100);
+      const isTask = it.price_mode === "job";
+      cents += isTask
+        ? (Math.round(rate * 100) + TASK_FEE_CENTS) * qty   // task price + booking, per spot
+        : Math.round(rate * hours * 100) * qty;             // hourly
     }
+    const travelCents = Math.max(0, Math.round(Number((request as any).travel_cents) || 0));
+    const tipCents = Math.max(0, Math.floor(Number(body?.tip_cents) || 0));
+    cents += travelCents + tipCents;
     if (cents < 100) return json({ error: "amount_too_small", detail: "Nothing to charge on this job yet." }, 400);
 
     const label = `SiteCall — ${list[0]?.type || "Job"}${list.length > 1 ? ` +${list.length - 1} more` : ""}`;
@@ -100,6 +109,8 @@ Deno.serve(async (req) => {
       client_id: user.id,
       amount_cents: cents,
       currency: "aud",
+      tip_cents: tipCents,
+      travel_cents: travelCents,
       stripe_session_id: session.id,
       stripe_payment_intent: session.payment_intent || null,
       status: "pending",
