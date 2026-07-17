@@ -1,7 +1,7 @@
 // components.js — leaf components + helpers extracted from App.js so App.js fits under the
 // mobile paste limit. These are called from App.js, which imports them back.
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, StyleSheet, Dimensions } from 'react-native';
 import { C, R, S, E, T } from './theme';
 import { S_ } from './styles';
 import Icon from './Icon';
@@ -14,6 +14,8 @@ import { logError } from './errorService';
 import { listMaterialClaims, resolveMaterialClaim, submitMaterialClaim } from './completionService';
 import { verifiedCredentialsFor } from './credentialsService';
 import { Entrance, PressableScale, AnimatedBar, useCountUp, CrossFade, useAttentionBump } from './Motion';
+
+const SCREEN_H = Dimensions.get('window').height;
 
 // local copy (App.js keeps its own) — tiny pure helper, safe to duplicate
 export function suburbOf(addr) { return (addr || 'No location').split(',')[0].trim(); }
@@ -106,6 +108,10 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
           <Text style={S_.revTitle}>Review before you pay</Text>
           <Text style={S_.revSub}>Check the work before releasing payment.</Text>
 
+          {/* Body scrolls inside a capped region so the sheet stays ~half-screen and the
+              Approve/Not-yet buttons are always visible (pinned below), no matter how much
+              crew/safety detail there is. */}
+          <ScrollView style={{ maxHeight: SCREEN_H * 0.42 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 2 }}>
           <View style={S_.revCard}>
             <ReviewRow k="Job" v={`${info?.primary?.trade || 'Job'}${isCrewJob ? ` · crew of ${info.crew.length}` : ''}`} />
             {isCrewJob ? (
@@ -178,6 +184,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
             <View style={S_.revMoneyRow}><Text style={S_.revMoneyK}>To worker</Text><Text style={S_.revMoneyVnet}>{money(shownNet)}</Text></View>
           </View>
           <Text style={[T.small, { color: C.mute2, marginTop: 8, lineHeight: 17 }]}>SiteCall keeps 10% of labour + $3 per task. Tips & travel go 100% to the worker.</Text>
+          </ScrollView>
 
           {!!err && <Text style={S_.revErr}>{err}</Text>}
 
