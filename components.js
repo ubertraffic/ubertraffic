@@ -20,14 +20,10 @@ export function suburbOf(addr) { return (addr || 'No location').split(',')[0].tr
 
 export function ReviewApprove({ visible, request, onClose, onConfirm }) {
   const [busy, setBusy] = useState(false);
-  const [tickets, setTickets] = useState(null);   // verified credentials of the worker
   const [claims, setClaims] = useState(null);      // material claims on this job
   const [err, setErr] = useState('');
-  const [tip, setTip] = useState(0);               // upward adjustments (100% to worker)
-  const [travel, setTravel] = useState('');
-  const [showExtras, setShowExtras] = useState(false);
 
-  useEffect(() => { if (visible) { setTip(0); setTravel(''); setShowExtras(false); setErr(''); } }, [visible, request]);
+  useEffect(() => { if (visible) { setErr(''); } }, [visible, request]);
 
   // pull the WHOLE crew (every filled spot) + the money preview. Previously this broke on the
   // first worker, so workers 2..N were invisible and the client couldn't see/settle them.
@@ -71,12 +67,6 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
   }, [request]);
 
   useEffect(() => {
-    if (!visible || !info || !info.primary) { setTickets(null); return; }
-    setErr('');
-    verifiedCredentialsFor(info.primary.operator_id).then(setTickets).catch(() => setTickets([]));
-  }, [visible, info]);
-
-  useEffect(() => {
     if (!visible || !request) { setClaims(null); return; }
     listMaterialClaims(request.id).then(setClaims).catch(() => setClaims([]));
   }, [visible, request]);
@@ -93,8 +83,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
   const money = (n) => (n == null ? '—' : `$${Number(n).toFixed(2)}`);
   const opName = info?.primary?.name || 'the worker';
   const isCrewJob = (info?.crew?.length || 0) > 1;
-  const travelNum = Math.max(0, parseFloat(travel) || 0);
-  const adjTotal = (tip || 0) + travelNum;
+  const adjTotal = 0;   // tips + travel now live in the pay sheet, not on this review screen
   const matApproved = (claims || []).filter((c) => c.status === 'approved').reduce((s, c) => s + Number(c.amount), 0);
   const matPending = (claims || []).filter((c) => c.needs_approval && c.status === 'pending');
   const shownTotal = (info?.total || 0) + adjTotal + matApproved;
@@ -102,7 +91,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
 
   async function confirm() {
     setBusy(true); setErr('');
-    try { await onConfirm({ tip: tip || 0, travel: travelNum }); }
+    try { await onConfirm({ tip: 0, travel: 0 }); }
     catch (e) { setErr((e && e.message) || 'Approve failed.'); setBusy(false); }
   }
 
@@ -144,16 +133,6 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
             </View>
           )}
 
-          {/* worker's verified tickets — the trust piece */}
-          <View style={S_.revTickets}>
-            <Text style={S_.revTicketsLabel}>Verified tickets</Text>
-            {tickets == null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 6 }} />
-              : tickets.length === 0 ? <Text style={S_.revTicketsNone}>No verified tickets on file</Text>
-              : <View style={S_.revTicketChips}>{tickets.map((t, i) => (
-                  <View key={i} style={S_.revChip}><Text style={S_.revChipT}>✓ {t}</Text></View>
-                ))}</View>}
-          </View>
-
           {/* materials claims — reimbursement, separate from labour */}
           {claims && claims.length > 0 && (
             <View style={S_.revTickets}>
@@ -175,29 +154,6 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
               {matPending.length > 0 && <Text style={[T.small, { color: C.amber, marginTop: 6 }]}>Approve or deny flagged materials before paying.</Text>}
             </View>
           )}
-
-          {/* upward adjustments — always safe, encouraged, frictionless */}
-          <View style={S_.revAdj}>
-            {!showExtras ? (
-              <TouchableOpacity onPress={() => setShowExtras(true)}>
-                <Text style={S_.revAddLink}>+ Add a tip or travel</Text>
-              </TouchableOpacity>
-            ) : (
-              <>
-                <Text style={S_.revAdjLabel}>Add a tip{isCrewJob ? ` (split evenly across the crew of ${info.crew.length})` : ` (100% goes to ${opName.split(' ')[0]})`}</Text>
-                <View style={S_.revTipRow}>
-                  {[0, 20, 50, 100].map((amt) => (
-                    <TouchableOpacity key={amt} style={[S_.revTipBtn, tip === amt && S_.revTipBtnOn]} onPress={() => setTip(amt)}>
-                      <Text style={[S_.revTipBtnT, tip === amt && S_.revTipBtnTOn]}>{amt === 0 ? 'None' : `$${amt}`}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={S_.revAdjLabel}>Travel contribution (optional)</Text>
-                <TextInput style={S_.revTravelInput} value={travel} onChangeText={setTravel}
-                  placeholder="$0" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
-              </>
-            )}
-          </View>
 
           {/* SAFETY RECORD — what was captured on site + the client's own sign-off. A shared
               record and an acknowledgement, not a safety guarantee (honest-language rule). */}
