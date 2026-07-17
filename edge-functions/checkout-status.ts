@@ -40,20 +40,27 @@ Deno.serve(async (req) => {
       .from("payments").select("id, client_id").eq("stripe_session_id", sessionId).maybeSingle();
     if (!pay || (pay as any).client_id !== user.id) return json({ error: "not_your_payment" }, 403);
 
-    const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
+    // Expand the PaymentIntent: with manual capture the session's payment_status stays 'unpaid'
+    // until capture, so the PI status is the source of truth (requires_capture = held/authorized).
+    const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=payment_intent`, {
       headers: { Authorization: `Bearer ${secret}` },
     });
     const session = await res.json();
     if (!res.ok) return json({ error: "stripe_error", detail: session?.error?.message || `HTTP ${res.status}` }, 502);
 
-    // payment_status: 'paid' | 'unpaid' | 'no_payment_required'
-    const paid = session.payment_status === "paid";
-    const status = paid ? "paid" : (session.status === "expired" ? "cancelled" : "pending");
-    await admin.from("payments")
-      .update({ status, stripe_payment_intent: session.payment_intent || null, updated_at: new Date().toISOString() })
-      .eq("stripe_session_id", sessionId);
+    const pi = session.payment_intent && typeof session.payment_intent === "object" ? session.payment_intent : null;
+    const piStatus = pi?.status || null;
+    let status = "pending";
+    if (piStatus === "requires_capture") status = "authorized";       // funds held
+    else if (piStatus === "succeeded") status = "captured";           // money taken
+    else if (piStatus === "canceled") status = "released";            // hold released
+    else if (session.status === "expired") status = "cancelled";
 
-    return json({ status, paid, payment_status: session.payment_status });
+    const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
+    if (pi?.id) patch.stripe_payment_intent = pi.id;
+    await admin.from("payments").update(patch).eq("stripe_session_id", sessionId);
+
+    return json({ status, authorized: status === "authorized", captured: status === "captured", pi_status: piStatus });
   } catch (e) {
     return json({ error: "server_error", detail: (e as Error)?.message || String(e) }, 500);
   }

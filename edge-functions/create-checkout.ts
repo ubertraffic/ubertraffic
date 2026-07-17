@@ -77,6 +77,10 @@ Deno.serve(async (req) => {
     form.set("client_reference_id", requestId);
     form.set("metadata[request_id]", requestId);
     form.set("metadata[client_id]", user.id);
+    // HOLD, don't charge: authorize the funds now, capture when the client approves the work
+    // (release if the job's cancelled). This is the marketplace-correct model.
+    form.set("payment_intent_data[capture_method]", "manual");
+    form.set("payment_intent_data[metadata][request_id]", requestId);
     form.set("line_items[0][quantity]", "1");
     form.set("line_items[0][price_data][currency]", "aud");
     form.set("line_items[0][price_data][unit_amount]", String(cents));
