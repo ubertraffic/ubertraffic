@@ -15,7 +15,7 @@ import { supabase } from './supabaseClient';
  * a user can only insert a request as themselves, and items only under their
  * own request.
  */
-export async function createRequest({ when_type, address_text, lat, lng, duration_hours, items, scheduled_for = null, siteContact = null, materialsCap = 0, jobDetails = null }) {
+export async function createRequest({ when_type, address_text, lat, lng, duration_hours, items, scheduled_for = null, siteContact = null, materialsCap = 0, jobDetails = null, pickupText = null }) {
   // basic client-side guards (server-side validation comes with the Edge Fn later)
   if (!items || items.length === 0) throw new Error('Add at least one item first.');
   if (!address_text || !address_text.trim()) throw new Error('Enter a site location.');
@@ -51,6 +51,8 @@ export async function createRequest({ when_type, address_text, lat, lng, duratio
       // duties / what the worker will actually do — shown to workers before they accept.
       // Normalise empty/whitespace to null so blank briefs stay clean nulls, not "".
       job_details: (jobDetails && jobDetails.trim()) ? jobDetails.trim() : null,
+      // runs only: where to buy (plain text). Shown to the worker up front so they know where to go.
+      pickup_text: (pickupText && pickupText.trim()) ? pickupText.trim() : null,
     })
     .select('id')
     .single();

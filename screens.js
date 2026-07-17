@@ -17,6 +17,7 @@ import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut
 import CloseOutCard from './CloseOutCard';
 import PrestartCard from './PrestartCard';
 import RunCloseOutCard from './RunCloseOutCard';
+import RunBrief from './RunBrief';
 import { complianceReady } from './complianceService';
 
 // A run = a task whose trade carries a run_style (set in migration 0045). The open
@@ -24,7 +25,7 @@ import { complianceReady } from './complianceService';
 function isRunAssignment(a) { return !!(a && a.request_item && a.request_item.trade && a.request_item.trade.run_style); }
 function runInfoFor(a) {
   const r = a.request_item?.request;
-  return { id: a.id, list: r?.job_details || '', cap: r?.materials_cap || 0, a };
+  return { id: a.id, list: r?.job_details || '', cap: r?.materials_cap || 0, pickup: r?.pickup_text || '', drop: r?.address_text || '', a };
 }
 
 // local copy (App.js has its own) — small pure helper, avoids a circular screens<->App import
@@ -678,6 +679,16 @@ export function OperatorHome({ session, onOpenProfile }) {
       })()}
       <View style={{ padding: 24, paddingTop: 24 }}>
 
+        {/* Run brief — the moment a worker has an active run, show what/where/cap/drop + the
+            "message before you buy" CTA up front, so the details aren't buried in the finish sheet. */}
+        {(() => {
+          const runA = (myAssigns || []).find((a) => isRunAssignment(a) && ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status));
+          if (!runA) return null;
+          const info = runInfoFor(runA);
+          return <RunBrief list={info.list} pickup={info.pickup} cap={info.cap} drop={info.drop}
+            onMessage={() => setChat({ a: runA, title: `${runA.request_item?.type || 'Run'} · ${suburbOf(runA.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: runA, it: runA.request_item, r: runA.request_item?.request }) })} />;
+        })()}
+
         {/* offline first-impression — the display hero this screen was missing, pointing at the
             loud "Go online" toggle above. WorkFeed still shows its quiet "jobs near you" note below. */}
         {mission === 'offline' && (
@@ -798,6 +809,7 @@ export function OperatorHome({ session, onOpenProfile }) {
           assignmentId={run.id}
           list={run.list}
           cap={run.cap}
+          pickup={run.pickup}
           onComplete={async () => { const id = run.id; setRunOut(null); await mapComplete(id); }}
           onCancel={() => setRunOut(null)}
           onMessage={() => setChat({ a: run.a, title: `${run.a.request_item?.type || 'Run'} · ${suburbOf(run.a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
@@ -1167,6 +1179,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
           assignmentId={run.id}
           list={run.list}
           cap={run.cap}
+          pickup={run.pickup}
           onComplete={async () => { const id = run.id; setRunOut(null); await complete(id); }}
           onCancel={() => setRunOut(null)}
           onMessage={() => setChat({ a: run.a, title: `Job room · ${run.a.request_item?.type || 'Run'}`, sub: suburbOf(run.a.request_item?.request?.address_text), info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}

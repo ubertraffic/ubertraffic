@@ -23,7 +23,7 @@ import { submitMaterialClaim } from './completionService';
 import ProofPhoto from './ProofPhoto';
 import ReceiptCapture from './ReceiptCapture';
 
-export default function RunCloseOutCard({ assignmentId, list, cap, onComplete, onCancel, onMessage }) {
+export default function RunCloseOutCard({ assignmentId, list, cap, pickup, onComplete, onCancel, onMessage }) {
   const [dropDone, setDropDone] = useState(false);       // drop-off (completion) photo captured
   const [receiptPath, setReceiptPath] = useState(null);  // stored receipt image path
   const [amount, setAmount] = useState('');
@@ -53,23 +53,15 @@ export default function RunCloseOutCard({ assignmentId, list, cap, onComplete, o
   return (
     <View style={cardStyle}>
       <Text style={[T.eyebrow, { marginBottom: 4 }]}>Finish the run</Text>
-      {list ? (
+      {/* Compact reminder of what/where — the full brief (with "message before you buy") now
+          lives up front on the run, so this sheet stays focused on proof. */}
+      {(list || pickup) ? (
         <View style={listBox}>
-          <Text style={[T.small, { color: C.mute, marginBottom: 4, fontWeight: '700' }]}>What was ordered</Text>
-          <Text style={[T.body]}>{list}</Text>
+          {list ? (<><Text style={[T.small, { color: C.mute, marginBottom: 4, fontWeight: '700' }]}>What was ordered</Text>
+          <Text style={[T.body]}>{list}</Text></>) : null}
+          {pickup ? <Text style={[T.small, { color: C.mute, marginTop: list ? 6 : 0 }]}>From: {pickup}</Text> : null}
           {cap > 0 ? <Text style={[T.small, { color: C.mute, marginTop: 6 }]}>Spend cap: up to ${cap}</Text> : null}
         </View>
-      ) : null}
-
-      {/* Check-before-you-buy — the loudest thing on the card. */}
-      {onMessage ? (
-        <TouchableOpacity onPress={onMessage} activeOpacity={0.9} style={msgBtn}>
-          <Text style={{ fontSize: 17 }}>{'💬'}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Not sure what's wanted?</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12.5, marginTop: 1 }}>Message the client before you buy</Text>
-          </View>
-        </TouchableOpacity>
       ) : null}
 
       {/* Drop-off photo -> satisfies the completion gate */}

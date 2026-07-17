@@ -123,11 +123,11 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
         <View style={[S_.rowBetween, { alignItems: 'center' }]}>
           <Text style={T.heading}>Work near you</Text><LiveTag />
         </View>
-        <Text style={[T.small, { color: C.mute, marginTop: 2 }]}>
-          {jobs === null ? 'Looking…'
-            : nearCount > 0 ? `${nearCount} job${nearCount > 1 ? 's' : ''} you can take right now`
-            : "You're online — we'll alert you the moment work appears"}
-        </Text>
+        {(jobs === null || nearCount > 0) && (
+          <Text style={[T.small, { color: C.mute, marginTop: 2 }]}>
+            {jobs === null ? 'Looking…' : `${nearCount} job${nearCount > 1 ? 's' : ''} you can take right now`}
+          </Text>
+        )}
       </View>
       {jobs === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
         : jobs.length === 0 ? <EmptyState icon="crew" title="No jobs nearby right now" sub="New work near you appears here the moment it's posted. Stay online to catch it first." />
