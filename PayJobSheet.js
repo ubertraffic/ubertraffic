@@ -12,7 +12,7 @@ import { startJobCheckout, checkJobPayment, latestPaymentFor, capturePayment } f
 
 const money = (cents) => `$${((Number(cents) || 0) / 100).toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-export default function PayJobSheet({ visible, requestId, label, estimateCents, onClose, onPaid }) {
+export default function PayJobSheet({ visible, requestId, label, estimateCents, autoCapture, onClose, onPaid }) {
   const [phase, setPhase] = useState('intro');   // intro | opening | waiting | held | paid | error
   const [amount, setAmount] = useState(estimateCents || 0);
   const [tipCents, setTipCents] = useState(0);   // client tip — 100% to the worker
@@ -59,7 +59,7 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
     try {
       const r = await checkJobPayment(session);
       if (r?.captured) { setPhase('paid'); onPaid && onPaid(); }
-      else if (r?.authorized) { setPhase('held'); onPaid && onPaid(); }
+      else if (r?.authorized) { setPhase('held'); }   // onPaid fires only on capture (below)
     } catch (_) { /* leave it in waiting; the manual re-check button stays available */ }
   }
 
@@ -72,6 +72,13 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
     catch (e) { setErr(e.message || String(e)); }
     finally { setCapturing(false); }
   }
+
+  // In the approval flow, once the hold is secured we capture + pay the worker automatically,
+  // so the client experiences ONE smooth payment rather than a two-step secure-then-approve.
+  useEffect(() => {
+    if (phase === 'held' && autoCapture && !capturing) approveAndPay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, autoCapture]);
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
