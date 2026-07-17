@@ -5,10 +5,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image } from 'react-native';
 import {
   adminOverview, adminPendingCredentials, adminDecideCredential, adminGrantCredential,
-  adminRemoveCredential, adminUserCredentials, adminPendingAbns, adminDecideAbn,
+  adminRemoveCredential, adminUserCredentials, adminUserVehicles, adminPendingAbns, adminDecideAbn,
   adminSearchUsers, adminActiveJobs,
 } from './adminService';
 import { listCredentialTypes, credentialEvidenceUrl } from './credentialsService';
+import { isoToDMY } from './dateFormat';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 
 const formatAbn = (clean) => (clean || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4');
@@ -206,6 +207,7 @@ function Users() {
 
 function UserDetail({ user, onBack }) {
   const [creds, setCreds] = useState(null);
+  const [vehicles, setVehicles] = useState(null);
   const [types, setTypes] = useState([]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -216,8 +218,8 @@ function UserDetail({ user, onBack }) {
   const load = useCallback(async () => {
     setErr('');
     try {
-      const [c, t] = await Promise.all([adminUserCredentials(user.id), listCredentialTypes()]);
-      setCreds(c); setTypes(t);
+      const [c, t, v] = await Promise.all([adminUserCredentials(user.id), listCredentialTypes(), adminUserVehicles(user.id).catch(() => [])]);
+      setCreds(c); setTypes(t); setVehicles(v);
     } catch (e) { setErr(e.message || String(e)); setCreds([]); }
   }, [user.id]);
   useEffect(() => { load(); }, [load]);
@@ -256,6 +258,21 @@ function UserDetail({ user, onBack }) {
               <Text style={[s.pillT, { color: c.status === 'verified' ? C.green : C.amber }]}>{c.status}</Text>
             </View>
             <TouchableOpacity onPress={() => remove(c.id)} disabled={busy}><Text style={s.rm}>✕</Text></TouchableOpacity>
+          </View>
+        ))}
+
+      {/* Vehicles — read-only: rego + insurance the admin can eyeball */}
+      <Text style={s.sectionLabel}>Vehicles</Text>
+      {vehicles == null ? <Loading />
+        : vehicles.length === 0 ? <Empty label="None on file." />
+        : vehicles.map((v) => (
+          <View key={v.id} style={s.credRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.credName}>{v.type}{v.make_model ? ` · ${v.make_model}` : ''}{v.rego ? `  ·  ${v.rego}` : ''}</Text>
+              <Text style={s.cardMeta}>
+                {[v.rego_expires && `rego ${isoToDMY(v.rego_expires)}`, v.insurer && v.insurer, v.insurance_expires && `ins ${isoToDMY(v.insurance_expires)}`].filter(Boolean).join(' · ') || 'no rego / insurance dates'}
+              </Text>
+            </View>
           </View>
         ))}
 

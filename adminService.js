@@ -49,6 +49,13 @@ export async function adminUserCredentials(operatorId) {
   return data || [];
 }
 
+// A specific user's vehicles (rego + insurance) — read-only, for the admin detail view.
+export async function adminUserVehicles(operatorId) {
+  const { data, error } = await supabase.rpc('admin_user_vehicles', { p_operator_id: operatorId });
+  if (error) throw error;
+  return data || [];
+}
+
 // ── ABN reviews ──────────────────────────────────────────────────────────────
 export async function adminPendingAbns() {
   const { data, error } = await supabase.rpc('admin_pending_abns');
