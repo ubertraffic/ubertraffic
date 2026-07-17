@@ -492,10 +492,16 @@ export function OperatorHome({ session, onOpenProfile }) {
     // GPS may be unavailable at checkout (indoors, permission, dead signal) — don't let that
     // block the worker from checking out and getting paid. Attempt a fix; proceed without it.
     // check_out records what coords it can; the C3 reconciliation path verifies hours otherwise.
+    // capture details for the "job done" celebration before refresh clears them
+    const doneA = (myAssigns || []).find((x) => x.id === id);
+    const doneIt = doneA?.request_item;
     try {
       let lat = null, lng = null;
       try { const pos = await getPosition(); lat = pos.lat; lng = pos.lng; } catch (_) {}
-      await checkOut(id, lat, lng, null); await refresh();
+      await checkOut(id, lat, lng, null);
+      tap('success');
+      setCelebrate({ variant: 'complete', type: doneIt?.type, suburb: suburbOf(doneIt?.request?.address_text) });
+      await refresh();
     }
     catch (e) { setMsg('Complete failed: ' + friendly(e)); logError('complete', e, { correlationId: id, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
   }

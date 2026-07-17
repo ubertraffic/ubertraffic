@@ -46,7 +46,10 @@ export default function AcceptCelebration({ data, onDone }) {
   }
 
   if (!data) return null;
+  const isDone = data.variant === 'complete';
   const rate = data.rate ? `$${data.rate}/hr` : null;
+  const kicker = isDone ? 'NICE WORK' : (data.urgent ? "IT'S A MATCH · URGENT" : "IT'S A MATCH");
+  const title = isDone ? 'Job done!' : "You're in!";
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={close} statusBarTranslucent>
@@ -69,19 +72,22 @@ export default function AcceptCelebration({ data, onDone }) {
             <Animated.View style={[s.badge, { transform: [{ scale: badge }] }]}>
               <Text style={s.badgeT}>✓</Text>
             </Animated.View>
-            <Text style={s.kicker}>{data.urgent ? "IT'S A MATCH · URGENT" : "IT'S A MATCH"}</Text>
-            <Text style={s.title}>You're in!</Text>
+            <Text style={s.kicker}>{kicker}</Text>
+            <Text style={s.title}>{title}</Text>
             <Text style={s.job} numberOfLines={2}>{data.type || 'the job'}</Text>
-            {(rate || data.suburb) ? (
+            {(!isDone && (rate || data.suburb)) ? (
               <View style={s.metaRow}>
                 {rate ? <View style={s.chip}><Text style={s.chipT}>{rate}</Text></View> : null}
                 {data.suburb ? <View style={s.chip}><Text style={s.chipT}>{data.suburb}</Text></View> : null}
               </View>
             ) : null}
+            {isDone && data.suburb ? (
+              <View style={s.metaRow}><View style={s.chip}><Text style={s.chipT}>{data.suburb}</Text></View></View>
+            ) : null}
             <TouchableOpacity style={s.cta} onPress={close} activeOpacity={0.9}>
-              <Text style={s.ctaT}>Let’s go →</Text>
+              <Text style={s.ctaT}>{isDone ? 'Done' : 'Let’s go →'}</Text>
             </TouchableOpacity>
-            <Text style={s.hint}>Your spot is locked in</Text>
+            <Text style={s.hint}>{isDone ? 'Payment’s on the way once it’s approved' : 'Your spot is locked in'}</Text>
           </Animated.View>
         </View>
       </Animated.View>

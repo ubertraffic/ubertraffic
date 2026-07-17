@@ -494,7 +494,7 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
                       <TouchableOpacity key={i}
                         style={[styles.detailBtn, a.tone === 'green' ? styles.detailBtnGreen : a.tone === 'danger' ? styles.detailBtnDanger : a.tone === 'ready' ? styles.detailBtnReady : styles.detailBtnGhost]}
                         activeOpacity={0.88}
-                        onPress={() => { const closeAfter = a.closesMap; setDetailJob(null); if (closeAfter) setFull(false); a.fn && a.fn(); }}>
+                        onPress={() => { setDetailJob(null); setFull(false); a.fn && a.fn(); }}>
                         <Text style={[styles.detailBtnT, (a.tone === 'ghost' || !a.tone) && { color: '#C8C8D4' }, a.tone === 'danger' && { color: '#FF5A5F' }]}>{a.label}</Text>
                       </TouchableOpacity>
                     ))}
