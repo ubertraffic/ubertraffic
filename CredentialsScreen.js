@@ -10,7 +10,10 @@ import Icon from './Icon';
 
 const formatAbn = (clean) => (clean || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4');
 
-const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Licence', induction: 'Induction' };
+const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Licence', induction: 'Induction', licence: 'Trade licence', insurance: 'Insurance' };
+const todayISO = () => new Date().toISOString().slice(0, 10);
+// display status: self-declared cover expired past its date shows Expired even when 'unverified'.
+const displayStatus = (held) => (held && held.expires_at && held.expires_at < todayISO()) ? 'expired' : (held ? held.status : 'none');
 const STATUS_COLOR = { verified: C.green, unverified: C.amber, expired: C.red, suspended: C.red, review: C.amber, none: C.mute };
 const STATUS_LABEL = { verified: '✓ Verified', unverified: 'Unverified', expired: 'Expired', suspended: 'Suspended', review: 'In review' };
 
@@ -21,6 +24,7 @@ export default function CredentialsScreen({ onClose }) {
   const [adding, setAdding] = useState(null);   // credential_type being added
   const [number, setNumber] = useState('');
   const [expiry, setExpiry] = useState('');
+  const [provider, setProvider] = useState('');   // insurer/provider (only for needs_provider types)
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
@@ -63,8 +67,8 @@ export default function CredentialsScreen({ onClose }) {
     if (!adding) return;
     setBusy(true); setMsg('');
     try {
-      await addMyCredential({ credential_id: adding.id, number, expires_at: expiry || null });
-      setAdding(null); setNumber(''); setExpiry('');
+      await addMyCredential({ credential_id: adding.id, number, expires_at: expiry || null, provider });
+      setAdding(null); setNumber(''); setExpiry(''); setProvider('');
       await refresh();
     } catch (e) { setMsg(e.message || String(e)); } finally { setBusy(false); }
   }
@@ -80,16 +84,24 @@ export default function CredentialsScreen({ onClose }) {
     return (
       <View style={styles.screen}>
         <View style={styles.head}>
-          <TouchableOpacity onPress={() => { setAdding(null); setNumber(''); setExpiry(''); }}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+          <TouchableOpacity onPress={() => { setAdding(null); setNumber(''); setExpiry(''); setProvider(''); }}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
           <Text style={styles.h1}>{adding.name}</Text>
-          <Text style={styles.tier}>{TIER_LABEL[adding.tier]}{adding.renews_years ? ` · renews every ${adding.renews_years}yr` : ''}</Text>
+          <Text style={styles.tier}>{adding.needs_provider ? 'Insurance' : adding.self_declared ? 'Trade licence' : (TIER_LABEL[adding.tier] || adding.tier)}{adding.renews_years ? ` · renews every ${adding.renews_years}yr` : ''}</Text>
         </View>
         <ScrollView contentContainerStyle={{ padding: S.xl }}>
-          <Text style={styles.label}>Card / licence number</Text>
-          <TextInput style={styles.input} value={number} onChangeText={setNumber} placeholder="e.g. 1234-5678" placeholderTextColor={C.mute2} autoCapitalize="characters" />
-          <Text style={styles.label}>Expiry date (optional)</Text>
+          {adding.needs_provider && (
+            <>
+              <Text style={styles.label}>Insurer / provider</Text>
+              <TextInput style={styles.input} value={provider} onChangeText={setProvider} placeholder="e.g. Allianz, CGU" placeholderTextColor={C.mute2} />
+            </>
+          )}
+          <Text style={styles.label}>{adding.needs_provider ? 'Policy number' : 'Card / licence number'}</Text>
+          <TextInput style={styles.input} value={number} onChangeText={setNumber} placeholder={adding.needs_provider ? 'e.g. POL-12345678' : 'e.g. 1234-5678'} placeholderTextColor={C.mute2} autoCapitalize="characters" />
+          <Text style={styles.label}>Expiry date{adding.needs_provider ? '' : ' (optional)'}</Text>
           <TextInput style={styles.input} value={expiry} onChangeText={setExpiry} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} />
-          <Text style={styles.hint}>You'll be able to upload a photo of the card and get it verified. For now it's saved as unverified — verified tickets unlock high-risk jobs.</Text>
+          <Text style={styles.hint}>{adding.self_declared
+            ? "Saved as self-declared — we record what you enter and flag it as expired past its date. We don't verify it against a register."
+            : "You'll be able to upload a photo of the card and get it verified. For now it's saved as unverified — verified tickets unlock high-risk jobs."}</Text>
           {!!msg && <Text style={styles.err}>{msg}</Text>}
           <TouchableOpacity style={[styles.primary, busy && { opacity: 0.6 }]} onPress={save} disabled={busy}>
             <Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save credential'}</Text>
@@ -172,11 +184,12 @@ export default function CredentialsScreen({ onClose }) {
             <View key={t.id} style={styles.row}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.name}>{t.name}</Text>
-                <Text style={styles.sub}>{TIER_LABEL[t.tier]}{held && held.expires_at ? ` · exp ${held.expires_at}` : ''}</Text>
+                <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${held.expires_at}` : ''}</Text>
               </View>
               {held ? (
                 <View style={styles.heldRight}>
-                  {held.status !== 'verified' && (
+                  {/* self-declared cover (insurance/licence) isn't register-verified in this build */}
+                  {held.status !== 'verified' && !t.self_declared && (
                     <TouchableOpacity
                       style={styles.verifyBtn}
                       onPress={() => verify(held.id)}
@@ -185,9 +198,17 @@ export default function CredentialsScreen({ onClose }) {
                       <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Verify'}</Text>
                     </TouchableOpacity>
                   )}
-                  <View style={[styles.statusPill, { backgroundColor: (STATUS_COLOR[held.status] || C.mute) + '1A' }]}>
-                    <Text style={[styles.statusText, { color: STATUS_COLOR[held.status] || C.mute }]}>{STATUS_LABEL[held.status] || held.status}</Text>
-                  </View>
+                  {(() => {
+                    const ds = displayStatus(held);
+                    const selfDecl = !!t.self_declared;
+                    const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
+                    const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
+                    return (
+                      <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
+                        <Text style={[styles.statusText, { color }]}>{label}</Text>
+                      </View>
+                    );
+                  })()}
                   <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
                 </View>
               ) : (

@@ -8,7 +8,7 @@ export async function listCredentialTypes() {
   if (_typesCache) return _typesCache;
   const { data, error } = await supabase
     .from('credential_types')
-    .select('id, name, tier, renews_years, register_url, sort')
+    .select('id, name, tier, renews_years, register_url, sort, needs_provider, self_declared')
     .order('sort');
   if (error) throw error;
   _typesCache = data || [];
@@ -21,15 +21,16 @@ export async function listMyCredentials() {
   if (!u || !u.user) throw new Error('Not signed in — please log in again.');
   const { data, error } = await supabase
     .from('operator_credentials')
-    .select('id, credential_id, number, issued_at, expires_at, state, status, evidence_url, verified_at')
+    .select('id, credential_id, number, issued_at, expires_at, state, status, evidence_url, verified_at, provider')
     .eq('operator_id', u.user.id)
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data || [];
 }
 
-// add / update one of the operator's credentials (self-declared -> unverified)
-export async function addMyCredential({ credential_id, number, expires_at, state }) {
+// add / update one of the operator's credentials (self-declared -> unverified).
+// `provider` is used by cover that has an issuer (e.g. public-liability insurance); null otherwise.
+export async function addMyCredential({ credential_id, number, expires_at, state, provider }) {
   const { data: u } = await supabase.auth.getUser();
   if (!u || !u.user) throw new Error('Not signed in — please log in again.');
   const { error } = await supabase
@@ -41,6 +42,7 @@ export async function addMyCredential({ credential_id, number, expires_at, state
         number: number || null,
         expires_at: expires_at || null,
         state: state || null,
+        provider: (provider && provider.trim()) ? provider.trim() : null,
         status: 'unverified',
       },
       { onConflict: 'operator_id,credential_id' }
