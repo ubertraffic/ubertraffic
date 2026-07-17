@@ -9,6 +9,10 @@
 --   * EVERY admin RPC below re-checks is_admin() first and raises 42501 if not. The app hiding the
 --     panel is convenience; THIS is the real gate. No service-role key ever goes to the client.
 --
+-- NOTE: several status columns (account_type, worker/company_verify_status, request/assignment/
+-- credential status) are Postgres ENUMs. We cast them to ::text in queries so the function return
+-- types (declared text) match, and so a '' literal is never cast into an enum.
+--
 -- BOOTSTRAP (make yourself the admin — do this once, in the dashboard):
 --   select id, email from auth.users;                       -- find your user id
 --   insert into admins (user_id) values ('<your-user-id>'); -- grant yourself admin
@@ -19,7 +23,6 @@ create table if not exists admins (
   added_at timestamptz not null default now()
 );
 alter table admins enable row level security;
--- a signed-in user may read ONLY their own row; nobody (authenticated) may write. Service-role bypasses RLS.
 drop policy if exists "admins read self" on admins;
 create policy "admins read self" on admins for select to authenticated using (user_id = auth.uid());
 revoke insert, update, delete on admins from authenticated;
@@ -36,7 +39,6 @@ create policy "cred-evidence read (admin)" on storage.objects
   for select to authenticated
   using ( bucket_id = 'credential-evidence' and public.is_admin() );
 
--- optional: record why a credential was rejected
 alter table operator_credentials add column if not exists review_note text;
 
 -- ── Overview counts ───────────────────────────────────────────────────────────
@@ -46,13 +48,13 @@ declare r jsonb;
 begin
   if not public.is_admin() then raise exception 'not authorized' using errcode = '42501'; end if;
   select jsonb_build_object(
-    'pending_credentials', (select count(*) from operator_credentials where status in ('review','pending')),
+    'pending_credentials', (select count(*) from operator_credentials where status::text in ('review','pending')),
     'pending_abns',        (select count(*) from profiles
-                              where (abn is not null and coalesce(abn_status,'') <> 'verified')
-                                 or (company_abn is not null and coalesce(company_verify_status,'') <> 'verified')),
+                              where (abn is not null and coalesce(abn_status::text,'') <> 'verified')
+                                 or (company_abn is not null and coalesce(company_verify_status::text,'') <> 'verified')),
     'total_users',         (select count(*) from profiles),
     'workers_online',      (select count(*) from profiles where is_online = true),
-    'active_jobs',         (select count(*) from requests where status not in ('complete','cancelled'))
+    'active_jobs',         (select count(*) from requests where status::text not in ('complete','cancelled'))
   ) into r;
   return r;
 end $$;
@@ -69,12 +71,12 @@ begin
   if not public.is_admin() then raise exception 'not authorized' using errcode = '42501'; end if;
   return query
     select oc.id, oc.operator_id, oc.credential_id, p.full_name, p.legal_name, p.date_of_birth,
-           oc.number, oc.card_number, oc.state, oc.expires_at, oc.status, oc.evidence_url,
+           oc.number, oc.card_number, oc.state, oc.expires_at, oc.status::text, oc.evidence_url,
            ct.name, oc.created_at
       from operator_credentials oc
       join profiles p on p.id = oc.operator_id
       left join credential_types ct on ct.id = oc.credential_id
-     where oc.status in ('review','pending')
+     where oc.status::text in ('review','pending')
      order by oc.created_at asc;
 end $$;
 grant execute on function public.admin_pending_credentials() to authenticated;
@@ -120,7 +122,7 @@ language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'not authorized' using errcode = '42501'; end if;
   return query
-    select oc.id, oc.credential_id, ct.name, oc.number, oc.expires_at, oc.status, oc.evidence_url
+    select oc.id, oc.credential_id, ct.name, oc.number, oc.expires_at, oc.status::text, oc.evidence_url
       from operator_credentials oc
       left join credential_types ct on ct.id = oc.credential_id
      where oc.operator_id = p_operator_id
@@ -135,13 +137,13 @@ language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'not authorized' using errcode = '42501'; end if;
   return query
-    select p.id, coalesce(p.full_name, p.legal_name), 'worker'::text, p.abn, p.abn_status
+    select p.id, coalesce(p.full_name, p.legal_name), 'worker'::text, p.abn, p.abn_status::text
       from profiles p
-     where p.abn is not null and coalesce(p.abn_status,'') <> 'verified'
+     where p.abn is not null and coalesce(p.abn_status::text,'') <> 'verified'
     union all
-    select p.id, coalesce(p.company_name, p.full_name), 'company'::text, p.company_abn, p.company_verify_status
+    select p.id, coalesce(p.company_name, p.full_name), 'company'::text, p.company_abn, p.company_verify_status::text
       from profiles p
-     where p.company_abn is not null and coalesce(p.company_verify_status,'') <> 'verified';
+     where p.company_abn is not null and coalesce(p.company_verify_status::text,'') <> 'verified';
 end $$;
 grant execute on function public.admin_pending_abns() to authenticated;
 
@@ -153,7 +155,7 @@ begin
     update profiles set abn_status = case when p_approve then 'verified' else 'valid' end where id = p_user_id;
   elsif p_kind = 'company' then
     update profiles
-       set company_verify_status = case when p_approve then 'verified' else 'none' end,
+       set company_verify_status = case when p_approve then 'verified'::verify_status else null end,
            can_hire              = case when p_approve then true else can_hire end
      where id = p_user_id;
   end if;
@@ -169,9 +171,9 @@ language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'not authorized' using errcode = '42501'; end if;
   return query
-    select p.id, coalesce(p.full_name, p.legal_name, p.company_name), p.account_type,
-           p.can_work, p.can_hire, p.worker_verify_status, p.company_verify_status,
-           p.abn, p.abn_status, p.is_online, p.rating, p.rating_count
+    select p.id, coalesce(p.full_name, p.legal_name, p.company_name), p.account_type::text,
+           p.can_work, p.can_hire, p.worker_verify_status::text, p.company_verify_status::text,
+           p.abn, p.abn_status::text, p.is_online, p.rating::numeric, p.rating_count::int
       from profiles p
      where p_q is null or p_q = ''
         or coalesce(p.full_name,'')    ilike '%'||p_q||'%'
@@ -189,14 +191,14 @@ language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'not authorized' using errcode = '42501'; end if;
   return query
-    select r.id, r.status, r.address_text, r.created_at,
+    select r.id, r.status::text, r.address_text, r.created_at,
            (select count(*) from request_items ri where ri.request_id = r.id),
            (select count(*) from assignments a
               join request_items ri on ri.id = a.request_item_id
              where ri.request_id = r.id
-               and a.status in ('committed','accepted','en_route','on_site','complete','approved'))
+               and a.status::text in ('committed','accepted','en_route','on_site','complete','approved'))
       from requests r
-     where r.status not in ('complete','cancelled')
+     where r.status::text not in ('complete','cancelled')
      order by r.created_at desc
      limit 50;
 end $$;
