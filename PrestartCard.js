@@ -20,14 +20,18 @@ import { getPosition } from './location';
 // The four triggers, in the exact keys the server rule reads. Each carries a
 // plain-language example so a worker never has to guess what a question means.
 const QUESTIONS = [
-  { key: 'road_traffic',  q: 'Working on or next to a road or live traffic?',
-    eg: 'e.g. roadworks, a live lane beside you, or a footpath next to moving cars.' },
-  { key: 'mobile_plant',  q: 'Around moving powered plant? (excavators, cranes, loaders)',
-    eg: 'e.g. an excavator, crane, forklift, loader or bobcat operating near you.' },
-  { key: 'fall_over_2m',  q: 'Any risk of falling more than 2 metres?',
-    eg: 'e.g. roof work, scaffold, a ladder, an unguarded edge, a void or an elevated platform.' },
-  { key: 'asbestos_demo', q: 'Disturbing asbestos, demolition, or structural work?',
-    eg: 'e.g. cutting or removing old sheeting, knocking out walls, or changing anything structural.' },
+  { key: 'road_traffic',  q: 'Working on or next to a road or live traffic?', icon: '🚧',
+    eg: 'e.g. roadworks, a live lane beside you, or a footpath next to moving cars.',
+    controls: 'Traffic control plan, cones & barriers, hi-vis, and a spotter.' },
+  { key: 'mobile_plant',  q: 'Around moving powered plant? (excavators, cranes, loaders)', icon: '🚜',
+    eg: 'e.g. an excavator, crane, forklift, loader or bobcat operating near you.',
+    controls: 'Exclusion zones, eye contact with the operator, and a spotter.' },
+  { key: 'fall_over_2m',  q: 'Any risk of falling more than 2 metres?', icon: '🪜',
+    eg: 'e.g. roof work, scaffold, a ladder, an unguarded edge, a void or an elevated platform.',
+    controls: 'Edge protection, guardrails, a harness, or a proper platform.' },
+  { key: 'asbestos_demo', q: 'Disturbing asbestos, demolition, or structural work?', icon: '⚠️',
+    eg: 'e.g. cutting or removing old sheeting, knocking out walls, or changing anything structural.',
+    controls: 'A licensed removalist, containment, a SWMS — never dry-cut.' },
 ];
 
 // onDone() = proceed (prestart recorded). onCancel() = "Not yet" (gate stays shut).
@@ -91,9 +95,21 @@ export default function PrestartCard({ assignmentId, onDone, onCancel }) {
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               style={{ marginTop: 12 }}
             >
-              <Text style={[T.small, { color: C.indigo, textDecorationLine: 'underline' }]}>{info ? 'Hide' : 'What’s this?'}</Text>
+              <Text style={[T.small, { color: C.indigo, fontWeight: '700' }]}>{info ? '× Close' : 'ⓘ What’s this?'}</Text>
             </TouchableOpacity>
-            {info ? <Text style={[T.small, { color: C.mute, marginTop: 8 }]}>{item.eg}</Text> : null}
+            {info ? (
+              <View style={infoCard}>
+                <View style={infoIconWrap}><Text style={{ fontSize: 26 }}>{item.icon}</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[T.small, { color: C.ink, fontWeight: '700', marginBottom: 4 }]}>What this means</Text>
+                  <Text style={[T.small, { color: C.mute, lineHeight: 18 }]}>{item.eg}</Text>
+                  <View style={infoControls}>
+                    <Text style={[T.small, { color: C.green, fontWeight: '800', marginBottom: 2 }]}>Typical controls</Text>
+                    <Text style={[T.small, { color: C.mute, lineHeight: 18 }]}>{item.controls}</Text>
+                  </View>
+                </View>
+              </View>
+            ) : null}
           </View>
         );
       })}
@@ -175,3 +191,16 @@ const checkbox = {
   alignItems: 'center', justifyContent: 'center',
 };
 const checkboxOn = { backgroundColor: C.green, borderColor: C.green };
+const infoCard = {
+  flexDirection: 'row', gap: 12, marginTop: 10,
+  backgroundColor: C.canvas, borderRadius: R.md, padding: S.md,
+  borderWidth: 1, borderColor: C.line,
+};
+const infoIconWrap = {
+  width: 48, height: 48, borderRadius: 12, backgroundColor: '#fff',
+  alignItems: 'center', justifyContent: 'center',
+  borderWidth: 1, borderColor: C.line,
+};
+const infoControls = {
+  marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.line,
+};
