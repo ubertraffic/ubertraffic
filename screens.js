@@ -193,19 +193,17 @@ function usePrestartStatus(assigns) {
 function PrestartSheet({ assignmentId, onDone, onCancel }) {
   const [mounted, setMounted] = useState(!!assignmentId);
   const [content, setContent] = useState(assignmentId);   // held through exit
-  const [h, setH] = useState(0);          // measured card height; 0 = not measured yet
   const [kb, setKb] = useState(0);        // keyboard height, so the sheet lifts above it
-  const a = useRef(new Animated.Value(0)).current;         // 0 = hidden, 1 = shown
-  const waiting = useRef(false);          // open requested, holding until first measure
+  const a = useRef(new Animated.Value(0)).current;         // 0 = hidden (below screen), 1 = shown
   useEffect(() => {
     if (assignmentId) {
-      // Measure BEFORE we slide (see CloseOutSheet): hidden until the real height is
-      // known, then spring in from exactly that distance — no mid-slide re-adjust.
+      // Slide up from a FIXED off-screen offset (no measure-first opacity gate — that one-frame
+      // "measure then reveal" step was the glitch). The sheet is bottom-anchored, so starting at
+      // a big translateY simply parks it below the screen, then it springs cleanly to rest.
       setContent(assignmentId);
       setMounted(true);
       a.setValue(0);
-      setH(0);
-      waiting.current = true;
+      Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start();
     } else if (mounted) {
       Animated.timing(a, { toValue: 0, duration: M.fast, easing: Easing.in(Easing.quad), useNativeDriver: true })
         .start(({ finished }) => { if (finished) setMounted(false); });
@@ -220,22 +218,15 @@ function PrestartSheet({ assignmentId, onDone, onCancel }) {
     return () => { s.remove(); hd.remove(); };
   }, []);
   if (!mounted) return null;
-  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [h || 1000, 0] });
+  const translateY = a.interpolate({ inputRange: [0, 1], outputRange: [900, 0] });
   const backdrop = a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
-  const onMeasured = (e) => {
-    const nh = e.nativeEvent.layout.height;
-    if (!nh) return;
-    if (Math.abs(nh - h) > 1) setH(nh);
-    if (waiting.current) { waiting.current = false; Animated.spring(a, { toValue: 1, useNativeDriver: true, ...M.spring }).start(); }
-  };
   return (
     <Modal visible transparent animationType="none" onRequestClose={onCancel}>
       <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: kb }}>
         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: backdrop }} />
         <Animated.View
           pointerEvents={assignmentId ? 'auto' : 'none'}
-          onLayout={onMeasured}
-          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, opacity: h > 0 ? 1 : 0, transform: [{ translateY }] }}
+          style={{ maxHeight: '100%', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0, transform: [{ translateY }] }}
         >
           <SafeAreaView>
             <ScrollView
@@ -1006,15 +997,20 @@ export function OperatorJobs({ session, onOpenProfile }) {
           const next = committed ? ['en_route', 'Start journey']
             : a.status === 'en_route' ? ['on_site', 'Arrived on site']
             : a.status === 'on_site' ? ['complete', 'Mark complete'] : null;
+          const st = a.status === 'approved' ? { label: 'Paid', color: C.green }
+            : a.status === 'complete' ? { label: 'Awaiting approval', color: C.amber }
+            : a.status === 'on_site' ? { label: 'On site', color: C.green }
+            : a.status === 'en_route' ? { label: 'On the way', color: C.indigo }
+            : { label: 'Committed', color: C.mute };
           return (
             <View key={a.id} style={S_.card}>
-              <View style={S_.rowBetween}>
-                <Text style={T.heading}>{a.request_item?.type}</Text>
-                <Text style={[T.label, { color: a.status === 'approved' ? C.green : next ? C.indigo : C.amber }]}>
-                  {a.status === 'approved' ? 'Paid' : committed ? 'Committed' : a.status.replace('_', ' ')}
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{a.request_item?.type}</Text>
+                <View style={{ backgroundColor: st.color + '1A', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 }}>
+                  <Text style={{ color: st.color, fontWeight: '800', fontSize: 11.5, letterSpacing: 0.2 }}>{st.label}</Text>
+                </View>
               </View>
-              <Text style={[T.data, { color: C.mute, marginTop: 4 }]}>{a.request_item?.request?.address_text}</Text>
+              <Text style={[T.data, { color: C.mute, marginTop: 6 }]}>📍 {a.request_item?.request?.address_text}</Text>
 
               {/* JOB BRIEF — what the worker accepted: pay, timing, client, materials, and the
                   duties the client wrote. Previously a worker committed with no way to re-read any
@@ -1038,7 +1034,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
                     {payLine && (
                       <View style={S_.briefRow}>
                         <Text style={S_.briefK}>Pay</Text>
-                        <Text style={S_.briefV}>{payLine}</Text>
+                        <Text style={[S_.briefV, { color: C.green, fontWeight: '800' }]}>{payLine}</Text>
                       </View>
                     )}
                     <View style={S_.briefRow}>

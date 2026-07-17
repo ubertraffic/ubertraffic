@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, PanResponder,
-  Animated, Dimensions, Pressable, Keyboard, Modal, Easing,
+  Animated, Dimensions, Pressable, Keyboard, Modal, Easing, Alert,
 } from 'react-native';
 import { supabase } from './supabaseClient';
+import { startJobCheckout, checkJobPayment } from './paymentsService';
 import { createRequest, listMyRequests } from './requestsService';
 import { submitRating, myRatingForAssignment } from './ratingsService';
 import { searchAddress, reverseGeocode } from './geocodeService';
@@ -976,6 +977,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
         actions: [
           isReady ? { label: 'Review & pay', tone: 'green', fn: () => openReview(j.requestId) } : null,
           j.assignedName ? { label: j.crewSize > 1 ? 'Message crew' : `Message ${j.assignedName.split(' ')[0]}`, tone: 'ready', closesMap: true, fn: () => messageForRaw(j) } : null,
+          { label: 'Pay securely (test)', tone: 'ready', fn: () => payJob(j.requestId) },
           j.status !== 'done' ? { label: 'Re-post to pool', tone: 'ghost', fn: () => repost(j.requestId) } : null,
           j.status !== 'done' ? { label: 'Cancel job', tone: 'danger', fn: () => cancel(j.requestId) } : null,
         ].filter(Boolean),
@@ -1020,6 +1022,24 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
   async function repost(reqId) {
     setBusy(true); setMsg('');
     try { await repostRequest(reqId); await load(); } catch (e) { setMsg('Re-post failed: ' + friendly(e)); } finally { setBusy(false); }
+  }
+  // Stripe test payment (increment 1): opens the hosted Checkout for this job, then confirms.
+  // Additive — does NOT touch the approve/settlement path yet. Amount is computed server-side.
+  async function payJob(reqId) {
+    try {
+      const { session_id } = await startJobCheckout(reqId);
+      Alert.alert('Secure payment opened', 'Finish paying on the Stripe page, then come back and tap “I’ve paid”.', [
+        { text: 'Not yet', style: 'cancel' },
+        { text: 'I’ve paid', onPress: async () => {
+          try {
+            const r = await checkJobPayment(session_id);
+            Alert.alert(r.paid ? 'Payment received ✓' : 'Not paid yet',
+              r.paid ? 'The test payment went through.' : 'We didn’t see it as paid yet — if you completed it, try again in a moment.');
+            load();
+          } catch (e) { Alert.alert('Couldn’t confirm', e.message || String(e)); }
+        } },
+      ]);
+    } catch (e) { Alert.alert('Payment error', e.message || String(e)); }
   }
   const onHubAction = (j) => messageForRaw(j._raw);
   return (
