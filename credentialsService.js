@@ -1,6 +1,17 @@
 // credentialsService.js — the ONE place the app reads/writes credentials (Pillar 2).
 import { supabase } from './supabaseClient';
 
+// Registers we can auto-verify against a live API. Everything else (driver's licence, HRWL,
+// insurance, trade licences) has NO free register check — those take the photo-evidence interim.
+export const WIRED_REGISTERS = ['wc', 'trades'];
+export function isAutoVerifiable(type) {
+  return !!type && WIRED_REGISTERS.includes(type.register);
+}
+
+// Private, owner-only bucket for photos of credentials that can't be auto-verified.
+// A client can NEVER read this — it's the worker's ID. See migration 0056.
+const EVIDENCE_BUCKET = 'credential-evidence';
+
 let _typesCache = null;
 
 // catalog of all credential types (reference data)
@@ -8,7 +19,7 @@ export async function listCredentialTypes() {
   if (_typesCache) return _typesCache;
   const { data, error } = await supabase
     .from('credential_types')
-    .select('id, name, tier, renews_years, register_url, sort, needs_provider, self_declared, expiry_rule, requires_card_no')
+    .select('id, name, tier, renews_years, register_url, sort, needs_provider, self_declared, expiry_rule, requires_card_no, register')
     .order('sort');
   if (error) throw error;
   _typesCache = data || [];
@@ -73,6 +84,48 @@ export async function verifyMyCredential(id) {
     throw new Error(detail);
   }
   return data; // { status: 'verified' | 'review', detail?: string }
+}
+
+// ── Photo evidence ("ID on file") — the honest interim where there's no free register API ──────
+// The worker uploads a photo of the credential (e.g. driver's licence). It lands the credential
+// 'review' — NEVER 'verified'. Only an admin (verify_credential) can verify, after eyeballing the
+// image. The accept-gate ignores 'review' (it needs status='verified'), so nothing unlocks by
+// uploading. Storage is PRIVATE and owner-only (path = {operator_id}/{credential_id}.jpg).
+
+// Upload the photo to the private bucket. Stable path per credential → a re-take overwrites the
+// old image (no pile-up / no image history to leak). Returns the stored path.
+export async function uploadCredentialEvidence(credentialId, fileUri) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
+  const path = `${u.user.id}/${credentialId}.jpg`;
+  const res = await fetch(fileUri);
+  const blob = await res.blob();
+  const { error } = await supabase.storage
+    .from(EVIDENCE_BUCKET)
+    .upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+  if (error) throw error;
+  return path;
+}
+
+// Attach the uploaded photo to the credential and mark it 'review'. Honest: a photo on file is not
+// a check — it's a submission for manual review. Scoped to the caller's own credential row (RLS too).
+export async function setCredentialEvidence(credentialId, path) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
+  const { error } = await supabase
+    .from('operator_credentials')
+    .update({ evidence_url: path, status: 'review' })
+    .eq('operator_id', u.user.id)
+    .eq('credential_id', credentialId);
+  if (error) throw error;
+}
+
+// Signed URL so the OWNER can see the photo they uploaded (bucket is private). Never breaks the UI.
+export async function credentialEvidenceUrl(path, expiresSec = 3600) {
+  if (!path) return null;
+  const { data, error } = await supabase.storage.from(EVIDENCE_BUCKET).createSignedUrl(path, expiresSec);
+  if (error) return null;
+  return data?.signedUrl || null;
 }
 
 // what a given trade requires (to show on jobs + profile)

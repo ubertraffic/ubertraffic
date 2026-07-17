@@ -12,6 +12,9 @@ import JobChat from './JobChat';
 import { jobTitle, jobSubtitle, estTotal, RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, PrimaryBtn, tap, Center } from './components2';
 import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard } from './components';
 import CredentialsScreen from './CredentialsScreen';
+import BusinessDetailsScreen from './BusinessDetailsScreen';
+import AdminScreen from './AdminScreen';
+import { amIAdmin } from './adminService';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
 import CloseOutCard from './CloseOutCard';
@@ -52,6 +55,7 @@ import { useRealtime } from './useRealtime';
 import { cacheGet, cacheSet, cacheClearAll } from './screenCache';
 import { setRole, setOnline, setVehicle, getMyProfile, updateMyName, setMyOperatorLocation, addCapability, listMyCapabilities, removeCapability, listMyDispatches, acceptSpot, listMyAssignments, getDemandHeat } from './operatorService';
 import { setMyIdentity } from './accountService';
+import { formatDMY, dmyToISO } from './dateFormat';
 import { getPosition, watchPosition } from './location';
 import { getUnreadCounts } from './messagesService';
 import { readinessForTrades } from './credentialsService';
@@ -337,7 +341,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
   const [capsOpen, setCapsOpen] = useState(false);     // "What I supply" expanded to the full editor (collapsed by default — the home stays calm)
   const [idName, setIdName] = useState('');            // onboarding identity: full legal name
-  const [idDob, setIdDob] = useState('');              // onboarding identity: date of birth (YYYY-MM-DD)
+  const [idDob, setIdDob] = useState('');              // onboarding identity: date of birth (entered DD/MM/YYYY, stored ISO)
   const [readiness, setReadiness] = useState({});      // trade_id -> { ready, missing[] }
   const [myLoc, setMyLoc] = useState(null);            // operator's own location for the map
   const [opMapJobs, setOpMapJobs] = useState([]);      // operator's assigned job sites
@@ -413,9 +417,10 @@ export function OperatorHome({ session, onOpenProfile }) {
     // Capture identity first — the anchor a register check needs (Phase 2). Validated in setMyIdentity.
     const name = (idName || '').trim();
     if (name.length < 2) { setMsg('Enter your full legal name.'); return; }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test((idDob || '').trim())) { setMsg('Enter your date of birth as YYYY-MM-DD.'); return; }
+    const iso = dmyToISO(idDob);
+    if (!iso) { setMsg('Enter your date of birth as DD/MM/YYYY.'); return; }
     setBusy(true); setMsg('');
-    try { await setMyIdentity(name, idDob.trim()); await setRole('operator'); await addCapability('crew', 'Traffic control', 'traffic_controller'); await setVehicle('ute'); await refresh(); }
+    try { await setMyIdentity(name, iso); await setRole('operator'); await addCapability('crew', 'Traffic control', 'traffic_controller'); await setVehicle('ute'); await refresh(); }
     catch (e) { setMsg(friendly(e)); } finally { setBusy(false); }
   }
   async function toggleOnline() {
@@ -534,7 +539,7 @@ export function OperatorHome({ session, onOpenProfile }) {
         <Text style={[T.label, { marginBottom: 6 }]}>Full legal name</Text>
         <TextInput style={S_.input} value={idName} onChangeText={setIdName} placeholder="As it appears on your licence / White Card" placeholderTextColor={C.mute2} />
         <Text style={[T.label, { marginBottom: 6, marginTop: 12 }]}>Date of birth</Text>
-        <TextInput style={S_.input} value={idDob} onChangeText={setIdDob} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+        <TextInput style={S_.input} value={idDob} onChangeText={(t) => setIdDob(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
         <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 18 }]}>Used only to check your tickets and licences against the registers — never shown publicly.</Text>
         <PrimaryBtn label="Set me up to work" onPress={becomeOperator} busy={busy} />
         {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
@@ -1257,18 +1262,20 @@ export function OperatorEarnings({ session }) {
 
 /* ============================================================ ACCOUNT (both roles) */
 export function Account({ session, role, onNameSaved, onOpenProfile }) {
-  const [screen, setScreen] = useState(null);   // null | 'credentials'
+  const [screen, setScreen] = useState(null);   // null | 'credentials' | 'business'
   const [comingSoon, setComingSoon] = useState(null);  // label of a not-yet-built feature the user tapped
   const [name, setName] = useState(() => cacheGet('profile-name') || '');
   const [savedName, setSavedName] = useState(() => cacheGet('profile-name'));   // instant paint — no email→name flicker
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameMsg, setNameMsg] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);   // server-checked; the panel only appears for admins
 
   useEffect(() => {
     (async () => {
       try { const p = await getMyProfile(); if (p.full_name) { setSavedName(p.full_name); setName(p.full_name); cacheSet('profile-name', p.full_name); } } catch (_) {}
     })();
+    (async () => { try { setIsAdmin(await amIAdmin()); } catch (_) {} })();
   }, []);
 
   async function saveName() {
@@ -1284,6 +1291,12 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
 
   if (screen === 'credentials') {
     return <CredentialsScreen onClose={() => setScreen(null)} />;
+  }
+  if (screen === 'business') {
+    return <BusinessDetailsScreen onClose={() => setScreen(null)} />;
+  }
+  if (screen === 'admin') {
+    return <AdminScreen onClose={() => setScreen(null)} />;
   }
 
   return (
@@ -1328,9 +1341,20 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
         </TouchableOpacity>
       </View>
 
+      {isAdmin && (
+        <TouchableOpacity style={S_.adminCard} onPress={() => setScreen('admin')} activeOpacity={0.9}>
+          <View style={S_.adminIcon}><Icon name="settings" size={20} color="#fff" /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={S_.adminTitle}>Admin panel</Text>
+            <Text style={S_.adminSub}>Reviews · ABNs · users · ops</Text>
+          </View>
+          <Text style={S_.adminChev}>›</Text>
+        </TouchableOpacity>
+      )}
+
       <AccountSection title="Profile" rows={role === 'operator'
         ? [['verified', 'Tickets & expiry', 'Manage', () => setScreen('credentials')], ['insurance', 'Insurance', 'Soon', () => setComingSoon('Insurance')], ['gear', 'Capabilities & rig', 'Soon', () => setComingSoon('Capabilities & rig')], ['pin', 'Service radius', 'Soon', () => setComingSoon('Service radius')]]
-        : [['company', 'Company & ABN', 'Add', () => setComingSoon('Company & ABN')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
+        : [['company', 'Company & ABN', 'Manage', () => setScreen('business')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
 
       <AccountSection title={role === 'operator' ? 'Payouts' : 'Business'} rows={role === 'operator'
         ? [['payment', 'Bank details', 'Soon', () => setComingSoon('Bank details')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]

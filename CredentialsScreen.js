@@ -2,9 +2,11 @@
 // Self-contained. Props: onClose()
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
-import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential } from './credentialsService';
+import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential, isAutoVerifiable } from './credentialsService';
+import CredentialEvidence from './CredentialEvidence';
 import { getMyProfile } from './operatorService';
 import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn } from './accountService';
+import { formatDMY, dmyToISO, isoToDMY } from './dateFormat';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 import Icon from './Icon';
 
@@ -31,6 +33,7 @@ export default function CredentialsScreen({ onClose }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
+  const [evidenceFor, setEvidenceFor] = useState(null);   // credential_type id whose photo panel is open
   const [abnSaved, setAbnSaved] = useState(null);     // stored ABN (digits) or null
   const [abnStatus, setAbnStatus] = useState(null);   // 'valid' | 'verified' | null
   const [abnInput, setAbnInput] = useState('');
@@ -53,9 +56,11 @@ export default function CredentialsScreen({ onClose }) {
   const [idMsg, setIdMsg] = useState('');
 
   async function saveIdentity() {
+    const iso = dmyToISO(idDob);
+    if (!iso) { setIdMsg('Enter your date of birth as DD/MM/YYYY.'); return; }
     setIdBusy(true); setIdMsg('');
     try {
-      const r = await setMyIdentity(idName, idDob);
+      const r = await setMyIdentity(idName, iso);
       setIdSaved({ legal_name: r.legal_name, date_of_birth: r.date_of_birth });
       setIdEditing(false);
     } catch (e) { setIdMsg(e.message || String(e)); } finally { setIdBusy(false); }
@@ -101,15 +106,19 @@ export default function CredentialsScreen({ onClose }) {
     if (!adding) return;
     // field-aware validation
     if (adding.requires_card_no && !cardNumber.trim()) { setMsg('This licence needs a card number.'); return; }
-    if (adding.expiry_rule === 'required' && !expiry.trim()) { setMsg('This credential needs an expiry date.'); return; }
-    if (expiry.trim() && !validDate(expiry.trim())) { setMsg('Enter the expiry as YYYY-MM-DD.'); return; }
+    let expiryISO = null;
+    if (adding.expiry_rule !== 'none' && expiry.trim()) {
+      expiryISO = dmyToISO(expiry.trim());
+      if (!expiryISO) { setMsg('Enter the expiry as DD/MM/YYYY.'); return; }
+    }
+    if (adding.expiry_rule === 'required' && !expiryISO) { setMsg('This credential needs an expiry date.'); return; }
     setBusy(true); setMsg('');
     try {
       await addMyCredential({
         credential_id: adding.id,
         number,
         card_number: adding.requires_card_no ? cardNumber : null,
-        expires_at: adding.expiry_rule === 'none' ? null : (expiry.trim() || null),
+        expires_at: expiryISO,
         state: adding.requires_card_no ? credState : null,
         provider,
       });
@@ -159,7 +168,7 @@ export default function CredentialsScreen({ onClose }) {
           {adding.expiry_rule !== 'none' && (
             <>
               <Text style={styles.label}>Expiry date{adding.expiry_rule === 'required' ? '' : ' (optional)'}</Text>
-              <TextInput style={styles.input} value={expiry} onChangeText={setExpiry} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+              <TextInput style={styles.input} value={expiry} onChangeText={(t) => setExpiry(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
             </>
           )}
           <Text style={styles.hint}>{adding.self_declared
@@ -205,9 +214,9 @@ export default function CredentialsScreen({ onClose }) {
             <View style={styles.abnRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.idDisplayName}>{idSaved.legal_name}</Text>
-                <Text style={styles.abnOk}>DOB {idSaved.date_of_birth || '—'} · on file</Text>
+                <Text style={styles.abnOk}>DOB {isoToDMY(idSaved.date_of_birth) || '—'} · on file</Text>
               </View>
-              <TouchableOpacity onPress={() => { setIdName(idSaved.legal_name || ''); setIdDob(idSaved.date_of_birth || ''); setIdEditing(true); setIdMsg(''); }}>
+              <TouchableOpacity onPress={() => { setIdName(idSaved.legal_name || ''); setIdDob(isoToDMY(idSaved.date_of_birth)); setIdEditing(true); setIdMsg(''); }}>
                 <Text style={styles.abnEdit}>Edit</Text>
               </TouchableOpacity>
             </View>
@@ -217,7 +226,7 @@ export default function CredentialsScreen({ onClose }) {
               <Text style={styles.label}>Full legal name</Text>
               <TextInput style={styles.input} value={idName} onChangeText={setIdName} placeholder="As on your licence / White Card" placeholderTextColor={C.mute2} />
               <Text style={styles.label}>Date of birth</Text>
-              <TextInput style={styles.input} value={idDob} onChangeText={setIdDob} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+              <TextInput style={styles.input} value={idDob} onChangeText={(t) => setIdDob(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
               {!!idMsg && <Text style={styles.err}>{idMsg}</Text>}
               <TouchableOpacity style={[styles.abnSave, idBusy && { opacity: 0.5 }]} disabled={idBusy} onPress={saveIdentity}>
                 <Text style={styles.abnSaveT}>{idBusy ? 'Saving…' : 'Save identity'}</Text>
@@ -281,41 +290,63 @@ export default function CredentialsScreen({ onClose }) {
         {!!msg && <Text style={styles.err}>{msg}</Text>}
         {types.map((t) => {
           const held = heldById[t.id];
+          const ds = displayStatus(held);
+          const autoVerify = isAutoVerifiable(t);
+          // Photo-evidence path: held, not yet verified, and NO free register check (driver's
+          // licence, HRWL, insurance, trade licences). The honest interim for those.
+          const canEvidence = held && ds !== 'verified' && !autoVerify;
           return (
-            <View key={t.id} style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{t.name}</Text>
-                <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${held.expires_at}` : ''}</Text>
-              </View>
-              {held ? (
-                <View style={styles.heldRight}>
-                  {/* self-declared cover (insurance/licence) isn't register-verified in this build */}
-                  {held.status !== 'verified' && !t.self_declared && (
-                    <TouchableOpacity
-                      style={styles.verifyBtn}
-                      onPress={() => verify(held.id)}
-                      disabled={verifying === held.id}
-                    >
-                      <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Verify'}</Text>
-                    </TouchableOpacity>
-                  )}
-                  {(() => {
-                    const ds = displayStatus(held);
-                    const selfDecl = !!t.self_declared;
-                    const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
-                    const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
-                    return (
-                      <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
-                        <Text style={[styles.statusText, { color }]}>{label}</Text>
-                      </View>
-                    );
-                  })()}
-                  <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
+            <View key={t.id}>
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.name}>{t.name}</Text>
+                  <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${isoToDMY(held.expires_at)}` : ''}</Text>
                 </View>
-              ) : (
-                <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(t)}>
-                  <Text style={styles.addText}>+ Add</Text>
-                </TouchableOpacity>
+                {held ? (
+                  <View style={styles.heldRight}>
+                    {/* register check only where we actually have a live register (White Card etc.) */}
+                    {held.status !== 'verified' && autoVerify && (
+                      <TouchableOpacity
+                        style={styles.verifyBtn}
+                        onPress={() => verify(held.id)}
+                        disabled={verifying === held.id}
+                      >
+                        <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Verify'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {/* photo ID toggle for the no-register interim */}
+                    {canEvidence && (
+                      <TouchableOpacity
+                        style={styles.photoBtn}
+                        onPress={() => setEvidenceFor(evidenceFor === t.id ? null : t.id)}
+                      >
+                        <Text style={styles.photoBtnT}>{held.evidence_url ? '📷 ✓' : '📷 ID'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {(() => {
+                      const selfDecl = !!t.self_declared;
+                      const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
+                      const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
+                      return (
+                        <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
+                          <Text style={[styles.statusText, { color }]}>{label}</Text>
+                        </View>
+                      );
+                    })()}
+                    <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(t)}>
+                    <Text style={styles.addText}>+ Add</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {canEvidence && evidenceFor === t.id && (
+                <CredentialEvidence
+                  credentialId={t.id}
+                  existingPath={held.evidence_url}
+                  onDone={() => refresh()}
+                />
               )}
             </View>
           );
@@ -338,6 +369,8 @@ const styles = StyleSheet.create({
   heldRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   verifyBtn: { backgroundColor: C.indigo, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 7 },
   verifyText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  photoBtn: { borderWidth: 1.5, borderColor: C.line, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7 },
+  photoBtnT: { color: C.indigo, fontWeight: '700', fontSize: 12 },
   statusPill: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6 },
   abnCard: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, ...shadowSm },
   abnLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 },
