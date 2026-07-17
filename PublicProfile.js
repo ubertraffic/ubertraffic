@@ -309,16 +309,19 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
               </View>
             )}
 
-            {/* verified credentials — the trust anchor, only real ones */}
+            {/* verified credentials — the trust anchor, only real ones. Compact chips (not a long
+                stacked list) so a worker with several tickets still reads as one tidy row. */}
             {creds.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionLabel}>Verified credentials</Text>
-                {creds.map((c, i) => (
-                  <View key={`${c.id}-${i}`} style={styles.credRow}>
-                    <Icon name="verified" size={16} color={C.green} />
-                    <Text style={styles.credT}>{c.label}</Text>
-                  </View>
-                ))}
+                <View style={styles.chipWrap}>
+                  {creds.map((c, i) => (
+                    <View key={`${c.id}-${i}`} style={styles.credChip}>
+                      <Icon name="verified" size={13} color={C.green} />
+                      <Text style={styles.credChipT}>{c.label}</Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             )}
 
@@ -422,7 +425,7 @@ const styles = StyleSheet.create({
   verifyPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(14,122,82,0.10)', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6 },
   verifyT: { color: C.green, fontSize: 12.5, fontWeight: '800' },
   since: { fontSize: 13, color: C.mute2, fontWeight: '600', marginTop: 12 },
-  stats: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.panel, marginHorizontal: 20, marginTop: 24, paddingVertical: 18, borderRadius: R.xl, ...shadowSm },
+  stats: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.panel, marginHorizontal: 20, marginTop: 18, paddingVertical: 18, borderRadius: R.xl, ...shadowSm },
   stat: { flex: 1, alignItems: 'center' },
   statRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statNum: { fontSize: 22, fontWeight: '900', color: C.ink },
@@ -446,11 +449,13 @@ const styles = StyleSheet.create({
   repTagN: { fontSize: 11.5, fontWeight: '800', color: C.green, opacity: 0.7 },
   newNote: { marginHorizontal: 20, marginTop: 14, backgroundColor: 'rgba(70,54,232,0.06)', borderRadius: R.lg, paddingVertical: 12, paddingHorizontal: 14 },
   newNoteT: { fontSize: 13.5, color: C.indigo, fontWeight: '700', textAlign: 'center' },
-  section: { marginHorizontal: 20, marginTop: 26 },
+  section: { marginHorizontal: 20, marginTop: 20 },
   sectionLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 12 },
   sectionHint: { fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: -6, marginBottom: 12 },
   credRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.panel, borderRadius: R.md, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8, ...shadowSm },
   credT: { fontSize: 14.5, fontWeight: '700', color: C.ink },
+  credChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(14,122,82,0.10)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  credChipT: { fontSize: 13, fontWeight: '800', color: C.green },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.panel, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 8, ...shadowSm },
   chipT: { fontSize: 13, fontWeight: '700', color: C.ink },
