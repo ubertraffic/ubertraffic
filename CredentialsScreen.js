@@ -12,6 +12,7 @@ const formatAbn = (clean) => (clean || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{3}
 
 const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Licence', induction: 'Induction', licence: 'Trade licence', insurance: 'Insurance' };
 const todayISO = () => new Date().toISOString().slice(0, 10);
+const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T00:00:00').getTime());
 // display status: self-declared cover expired past its date shows Expired even when 'unverified'.
 const displayStatus = (held) => (held && held.expires_at && held.expires_at < todayISO()) ? 'expired' : (held ? held.status : 'none');
 const STATUS_COLOR = { verified: C.green, unverified: C.amber, expired: C.red, suspended: C.red, review: C.amber, none: C.mute };
@@ -25,6 +26,8 @@ export default function CredentialsScreen({ onClose }) {
   const [number, setNumber] = useState('');
   const [expiry, setExpiry] = useState('');
   const [provider, setProvider] = useState('');   // insurer/provider (only for needs_provider types)
+  const [cardNumber, setCardNumber] = useState('');   // card number (licences: separate from licence number)
+  const [credState, setCredState] = useState('NSW');  // issuing state/jurisdiction (licences)
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
@@ -63,12 +66,24 @@ export default function CredentialsScreen({ onClose }) {
   const heldById = {};
   mine.forEach((c) => { heldById[c.credential_id] = c; });
 
+  function resetAddForm() { setAdding(null); setNumber(''); setExpiry(''); setProvider(''); setCardNumber(''); setCredState('NSW'); setMsg(''); }
   async function save() {
     if (!adding) return;
+    // field-aware validation
+    if (adding.requires_card_no && !cardNumber.trim()) { setMsg('This licence needs a card number.'); return; }
+    if (adding.expiry_rule === 'required' && !expiry.trim()) { setMsg('This credential needs an expiry date.'); return; }
+    if (expiry.trim() && !validDate(expiry.trim())) { setMsg('Enter the expiry as YYYY-MM-DD.'); return; }
     setBusy(true); setMsg('');
     try {
-      await addMyCredential({ credential_id: adding.id, number, expires_at: expiry || null, provider });
-      setAdding(null); setNumber(''); setExpiry(''); setProvider('');
+      await addMyCredential({
+        credential_id: adding.id,
+        number,
+        card_number: adding.requires_card_no ? cardNumber : null,
+        expires_at: adding.expiry_rule === 'none' ? null : (expiry.trim() || null),
+        state: adding.requires_card_no ? credState : null,
+        provider,
+      });
+      resetAddForm();
       await refresh();
     } catch (e) { setMsg(e.message || String(e)); } finally { setBusy(false); }
   }
@@ -84,7 +99,7 @@ export default function CredentialsScreen({ onClose }) {
     return (
       <View style={styles.screen}>
         <View style={styles.head}>
-          <TouchableOpacity onPress={() => { setAdding(null); setNumber(''); setExpiry(''); setProvider(''); }}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+          <TouchableOpacity onPress={resetAddForm}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
           <Text style={styles.h1}>{adding.name}</Text>
           <Text style={styles.tier}>{adding.needs_provider ? 'Insurance' : adding.self_declared ? 'Trade licence' : (TIER_LABEL[adding.tier] || adding.tier)}{adding.renews_years ? ` · renews every ${adding.renews_years}yr` : ''}</Text>
         </View>
@@ -95,10 +110,28 @@ export default function CredentialsScreen({ onClose }) {
               <TextInput style={styles.input} value={provider} onChangeText={setProvider} placeholder="e.g. Allianz, CGU" placeholderTextColor={C.mute2} />
             </>
           )}
-          <Text style={styles.label}>{adding.needs_provider ? 'Policy number' : 'Card / licence number'}</Text>
-          <TextInput style={styles.input} value={number} onChangeText={setNumber} placeholder={adding.needs_provider ? 'e.g. POL-12345678' : 'e.g. 1234-5678'} placeholderTextColor={C.mute2} autoCapitalize="characters" />
-          <Text style={styles.label}>Expiry date{adding.needs_provider ? '' : ' (optional)'}</Text>
-          <TextInput style={styles.input} value={expiry} onChangeText={setExpiry} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} />
+          <Text style={styles.label}>{adding.needs_provider ? 'Policy number' : adding.requires_card_no ? 'Licence number' : 'Card / ticket number'}</Text>
+          <TextInput style={styles.input} value={number} onChangeText={setNumber} placeholder={adding.needs_provider ? 'e.g. POL-12345678' : 'e.g. 1234 5678'} placeholderTextColor={C.mute2} autoCapitalize="characters" />
+          {adding.requires_card_no && (
+            <>
+              <Text style={styles.label}>Card number</Text>
+              <TextInput style={styles.input} value={cardNumber} onChangeText={setCardNumber} placeholder="the number printed on the card" placeholderTextColor={C.mute2} autoCapitalize="characters" />
+              <Text style={styles.label}>Issuing state</Text>
+              <View style={styles.stateRow}>
+                {['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'].map((st) => (
+                  <TouchableOpacity key={st} style={[styles.stateChip, credState === st && styles.stateChipOn]} onPress={() => setCredState(st)}>
+                    <Text style={[styles.stateChipT, credState === st && styles.stateChipTOn]}>{st}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+          {adding.expiry_rule !== 'none' && (
+            <>
+              <Text style={styles.label}>Expiry date{adding.expiry_rule === 'required' ? '' : ' (optional)'}</Text>
+              <TextInput style={styles.input} value={expiry} onChangeText={setExpiry} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+            </>
+          )}
           <Text style={styles.hint}>{adding.self_declared
             ? "Saved as self-declared — we record what you enter and flag it as expired past its date. We don't verify it against a register."
             : "You'll be able to upload a photo of the card and get it verified. For now it's saved as unverified — verified tickets unlock high-risk jobs."}</Text>
@@ -248,6 +281,11 @@ const styles = StyleSheet.create({
   abnLink: { color: C.indigo, fontWeight: '700' },
   abnSave: { backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   abnSaveT: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  stateRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  stateChip: { borderWidth: 1.5, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
+  stateChipOn: { borderColor: C.indigo, backgroundColor: C.indigo + '12' },
+  stateChipT: { fontSize: 13, fontWeight: '700', color: C.mute },
+  stateChipTOn: { color: C.indigo },
   capBanner: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, gap: 8, ...shadowSm },
   capRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   capIcon: { fontSize: 15, fontWeight: '800', color: C.mute, width: 18, textAlign: 'center' },
