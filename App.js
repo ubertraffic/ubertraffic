@@ -27,6 +27,7 @@ import LiveTrackerCard from './LiveTrackerCard';
 import PublicProfile from './PublicProfile';
 import { registerForPush, unregisterPush, addPushTapListener } from './pushService';
 import MapHero from './MapHero';
+import HelpCenter from './HelpCenter';
 import SearchingScreen from './SearchingScreen';
 import ProofPhotoTest from './ProofPhotoTest';
 import TradePicker from './TradePicker';
@@ -835,6 +836,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
   const [msg, setMsg] = useState('');
   const [activeNow, setActiveNow] = useState(null);
   const [coverage, setCoverage] = useState(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const load = useCallback(async () => {
     try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); } catch (e) { setMine((p) => (p == null ? [] : p)); }
     try { setMapJobs(await getMapJobs()); } catch (_) { /* map just shows empty */ }
@@ -1015,7 +1017,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
             if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: suburbOf(m.r.address_text), info: buildJobInfo({ a: trav.a, it: trav.it, r: m.r }) });
             else if (onOpenReq) onOpenReq(trackedId);
           }
-          else if (action === 'open_help' && onOpenReq) onOpenReq(trackedId);
+          else if (action === 'open_help') setHelpOpen(true);
         }} />;
       })()}
       <View style={{ padding: 24, paddingTop: 24 }}>
@@ -1093,6 +1095,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       myLoc={myLoc}
       onPosted={() => { setSheetOpen(false); load(); }}
     />
+    <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     <JobChat
       visible={!!chat}
       onClose={() => { setChat(null); load(); }}

@@ -22,6 +22,7 @@ import PrestartCard from './PrestartCard';
 import RunCloseOutCard from './RunCloseOutCard';
 import RunBrief from './RunBrief';
 import AcceptCelebration from './AcceptCelebration';
+import HelpCenter from './HelpCenter';
 import { complianceReady } from './complianceService';
 
 // A run = a task whose trade carries a run_style (set in migration 0045). The open
@@ -338,6 +339,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState(null);   // which job/spot is acting (per-button spinner)
   const [celebrate, setCelebrate] = useState(null);   // "it's a match" payload after a successful accept
+  const [helpOpen, setHelpOpen] = useState(false);    // Help centre sheet
   const [msg, setMsg] = useState('');
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
@@ -679,12 +681,14 @@ export function OperatorHome({ session, onOpenProfile }) {
         const act = (myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status));
         const rid = act?.request_item?.request?.id;
         if (!rid) return null;
-        return <TrackerContainer requestId={rid} perspective="operator" onAction={(action) => {
+        return <TrackerContainer requestId={rid} perspective="operator" onAction={(action, arg) => {
           const aid = act?.id;
           if (action === 'open_chat') setChat({ a: act, title: `${act.request_item?.type || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
           else if (action === 'start_journey' && aid) mapBeginJourney(aid);
           else if (action === 'arrive' && aid) mapArrive(aid);
           else if (action === 'complete' && aid) { if (prestartNeeds[aid] === true) setPrestart(aid); else if (isRunAssignment(act)) setRunOut(runInfoFor(act)); else setCloseOut(aid); }
+          else if (action === 'open_help') setHelpOpen(true);
+          else if (action === 'open_profile' && arg && onOpenProfile) onOpenProfile(arg);
         }} />;
       })()}
       {/* dock bar — mirrors Hire's "Post a job" bar, but holds the online toggle. When a live
@@ -819,6 +823,7 @@ export function OperatorHome({ session, onOpenProfile }) {
       onOpenProfile={onOpenProfile}
     />
     <AcceptCelebration data={celebrate} onDone={() => setCelebrate(null)} />
+    <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
     <CloseOutSheet
       assignmentId={closeOut}
       onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
@@ -1281,6 +1286,7 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   const [saving, setSaving] = useState(false);
   const [nameMsg, setNameMsg] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);   // server-checked; the panel only appears for admins
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -1371,7 +1377,9 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
         ? [['payment', 'Bank details', 'Soon', () => setComingSoon('Bank details')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
         : [['users', 'Team seats', 'Soon', () => setComingSoon('Team seats')], ['payment', 'Monthly billing', 'Soon', () => setComingSoon('Monthly billing')], ['trending', 'Spend reporting', 'Soon', () => setComingSoon('Spend reporting')]]} />
 
-      <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Active', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setComingSoon('Help & support')]]} />
+      <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Active', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
+
+      <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role={role === 'operator' ? 'operator' : 'client'} />
 
       <TouchableOpacity style={S_.signoutBtn} onPress={async () => { cacheClearAll(); await unregisterPush(); supabase.auth.signOut(); }}>
         <Text style={S_.signoutText}>Sign out</Text>

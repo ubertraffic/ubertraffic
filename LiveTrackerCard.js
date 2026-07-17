@@ -562,7 +562,7 @@ const styles = StyleSheet.create({
   exCrewMeta: { fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 2 },
   exCrewPill: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6 },
   exCrewPillT: { fontSize: 12, fontWeight: '800' },
-  exVerified: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1.5, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, maxWidth: 130 },
+  exVerified: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1.5, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, maxWidth: 180, flexShrink: 0 },
   exVerifiedT: { fontSize: 11.5, fontWeight: '800' },
   exTimeline: { marginHorizontal: 24, marginTop: 28 },
   exStep: { flexDirection: 'row', alignItems: 'flex-start', gap: 14 },
