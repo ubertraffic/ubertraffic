@@ -10,15 +10,18 @@ export function formatDMY(s) {
 }
 
 // DD/MM/YYYY -> YYYY-MM-DD, or null if not a real date (rejects 31/02 etc.).
+// Built and validated entirely in UTC — building in local time then checking UTC components
+// shifted the day for +ve-offset zones (Australia), rejecting perfectly valid dates.
 export function dmyToISO(s) {
   const m = String(s || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!m) return null;
   const [, dd, mm, yyyy] = m;
-  const iso = `${yyyy}-${mm}-${dd}`;
-  const dt = new Date(iso + 'T00:00:00');
+  const y = +yyyy, mo = +mm, d = +dd;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
   if (isNaN(dt.getTime())) return null;
-  if (dt.getUTCFullYear() !== +yyyy || dt.getUTCMonth() + 1 !== +mm || dt.getUTCDate() !== +dd) return null;
-  return iso;
+  // round-trip check catches impossible dates (e.g. 31/02 rolls over to March)
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() + 1 !== mo || dt.getUTCDate() !== d) return null;
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 // YYYY-MM-DD -> DD/MM/YYYY for display (leaves anything else untouched).

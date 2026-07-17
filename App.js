@@ -8,7 +8,7 @@ import { supabase } from './supabaseClient';
 import { createRequest, listMyRequests } from './requestsService';
 import { submitRating, myRatingForAssignment } from './ratingsService';
 import { searchAddress, reverseGeocode } from './geocodeService';
-import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor, clientPickerGroups } from './taxonomyService';
+import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor, clientPickerGroups, featuredTrades, pickerFolders, searchTrades } from './taxonomyService';
 import {
   setRole, setOnline, setVehicle, getMyProfile, updateMyName,
   setMyOperatorLocation, getOperatorCoverage, getDemandHeat,
@@ -27,6 +27,7 @@ import LiveTrackerCard from './LiveTrackerCard';
 import PublicProfile from './PublicProfile';
 import { registerForPush, unregisterPush, addPushTapListener } from './pushService';
 import MapHero from './MapHero';
+import HelpCenter from './HelpCenter';
 import SearchingScreen from './SearchingScreen';
 import ProofPhotoTest from './ProofPhotoTest';
 import TradePicker from './TradePicker';
@@ -440,6 +441,25 @@ const SHEET_RATES = {
 };
 const sheetRateFor = (name, kind) => SHEET_RATES[name] || (kind === 'task' ? 40 : 55);
 
+// Picker v2 styles — popular shortcuts + collapsed folders + search.
+const pk = StyleSheet.create({
+  searchWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.panel2 || '#F0F0EE', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6, borderWidth: 1, borderColor: C.line },
+  searchIcon: { fontSize: 14 },
+  searchInput: { flex: 1, fontSize: 15, color: C.ink, padding: 0 },
+  searchClear: { fontSize: 15, color: C.mute2, fontWeight: '700', paddingHorizontal: 2 },
+  sectionT: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.8, color: C.mute, marginTop: 18, marginBottom: 10 },
+  featWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  featChip: { backgroundColor: C.indigo, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 11 },
+  featChipT: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  folder: { borderTopWidth: 1, borderTopColor: C.line },
+  folderHead: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
+  folderDot: { width: 10, height: 10, borderRadius: 5 },
+  folderTitle: { fontSize: 15.5, fontWeight: '800', color: C.ink },
+  folderCount: { fontSize: 13, fontWeight: '700', color: C.mute2 },
+  folderSub: { fontSize: 12, color: C.mute, marginTop: 2, fontWeight: '600' },
+  folderChev: { fontSize: 22, color: C.mute2, fontWeight: '300' },
+});
+
 function RequestSheet({ visible, onClose, myLoc, onPosted }) {
   const y = useRef(new Animated.Value(SHEET_SCREEN_H)).current;
   const dim = useRef(new Animated.Value(0)).current;
@@ -447,7 +467,8 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
   const [phase, setPhase] = useState('door');
   const [door, setDoor] = useState(null);
   const [cat, setCat] = useState(null);
-  const [openCats, setOpenCats] = useState({});   // picker accordion: which trade categories are expanded
+  const [openCats, setOpenCats] = useState({});   // picker accordion: which folders are expanded
+  const [pickQ, setPickQ] = useState('');         // picker search query
   const [items, setItems] = useState([]);
   const [loc, setLoc] = useState('');
   const [coords, setCoords] = useState(null);
@@ -484,7 +505,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       Animated.parallel([
         Animated.timing(y, { toValue: SHEET_SCREEN_H, duration: 240, useNativeDriver: true }),
         Animated.timing(dim, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); });
+      ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
     }
   }, [visible]);
 
@@ -531,6 +552,10 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
   // task/errand categories first under "Tasks & runs", then "Skilled trades & plant",
   // each category once.
   const allTradeGroups = clientPickerGroups(tax, { task: C.amber, skilled: C.indigo });
+  // Picker v2: popular shortcuts + four collapsed folders (researched IA).
+  const featured = featuredTrades(tax, 6);
+  const folders = pickerFolders(tax, { task: C.amber, work: C.green, skilled: C.indigo, equipment: '#2C6E8F' });
+  const pickHits = pickQ.trim() ? searchTrades(tax, pickQ) : [];
   const canSend = items.length > 0 && loc.trim();
 
   return (
@@ -609,44 +634,80 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
             <StepFade phase={phase}>
             {phase === 'door' && (
               <>
-                {!tax ? <ActivityIndicator color={C.indigo} style={{ marginTop: 16 }} />
-                  : allTradeGroups.length === 0
-                  ? <Text style={[SH.hint, { marginTop: 4 }]}>Nothing here yet.</Text>
-                  : allTradeGroups.map((g, gi) => (
-                    g.section ? (
-                      <Text
-                        key={'sec-' + gi}
-                        style={{ fontSize: 12.5, fontWeight: '800', letterSpacing: 0.6, color: g.color, textTransform: 'uppercase', marginTop: gi === 0 ? 4 : 22, marginBottom: 12 }}
-                      >
-                        {g.section}
-                      </Text>
-                    ) : (() => {
-                      // Accordion: the common Tasks & runs categories (amber) open by default; the
-                      // long tail of skilled trades & plant (indigo) folds away — tap to expand.
-                      const isOpen = openCats[g.category.id] ?? (g.doorColor === C.amber);
-                      return (
-                      <View key={g.category.id} style={{ marginBottom: 4 }}>
-                        <TouchableOpacity onPress={() => setOpenCats((p) => ({ ...p, [g.category.id]: !isOpen }))} activeOpacity={0.7}
-                          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Text style={[SH.groupHead, { color: g.doorColor, marginBottom: 0 }]}>{g.category.name}</Text>
-                            <Text style={{ fontSize: 12, color: C.mute2, fontWeight: '700' }}>{g.trades.length}</Text>
-                          </View>
-                          <Text style={{ fontSize: 20, color: C.mute2, fontWeight: '300', transform: [{ rotate: isOpen ? '90deg' : '0deg' }] }}>›</Text>
-                        </TouchableOpacity>
-                        {isOpen && (
-                          <View style={[SH.wrapChips, { marginBottom: 12 }]}>
-                            {g.trades.map((t) => (
-                              <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: g.doorColor }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
+                {!tax ? <ActivityIndicator color={C.indigo} style={{ marginTop: 16 }} /> : (
+                  <>
+                    {/* Search — the escape hatch: type and every matching job surfaces, no folder-hunting */}
+                    <View style={pk.searchWrap}>
+                      <Text style={pk.searchIcon}>🔍</Text>
+                      <TextInput
+                        style={pk.searchInput}
+                        value={pickQ}
+                        onChangeText={setPickQ}
+                        placeholder="Search — e.g. traffic, cleaner, excavator"
+                        placeholderTextColor={C.mute2}
+                        autoCorrect={false}
+                        returnKeyType="search"
+                      />
+                      {pickQ ? <TouchableOpacity onPress={() => setPickQ('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={pk.searchClear}>✕</Text></TouchableOpacity> : null}
+                    </View>
+
+                    {pickQ.trim() ? (
+                      // SEARCH RESULTS — flat chips, no folders
+                      pickHits.length === 0
+                        ? <Text style={[SH.hint, { marginTop: 12 }]}>No match for “{pickQ.trim()}”. Try a simpler word.</Text>
+                        : <View style={[SH.wrapChips, { marginTop: 14 }]}>
+                            {pickHits.map((t) => (
+                              <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: C.indigo }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
                                 <Text style={SH.pickT}>{t.name}</Text>
                               </TouchableOpacity>
                             ))}
                           </View>
+                    ) : (
+                      <>
+                        {/* POPULAR — the handful people pick most, one tap, always visible */}
+                        {featured.length > 0 && (
+                          <>
+                            <Text style={pk.sectionT}>POPULAR</Text>
+                            <View style={pk.featWrap}>
+                              {featured.map((t) => (
+                                <TouchableOpacity key={t.id} style={pk.featChip} onPress={() => pickTrade(t)} activeOpacity={0.85}>
+                                  <Text style={pk.featChipT}>{t.name}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </>
                         )}
-                      </View>
-                      );
-                    })()
-                  ))}
+
+                        {/* BROWSE ALL — four folders, ALL collapsed by default (tap to open one) */}
+                        <Text style={[pk.sectionT, { marginTop: 22 }]}>BROWSE ALL</Text>
+                        {folders.map((f) => {
+                          const isOpen = !!openCats[f.key];
+                          return (
+                            <View key={f.key} style={pk.folder}>
+                              <TouchableOpacity onPress={() => setOpenCats((p) => ({ ...p, [f.key]: !isOpen }))} activeOpacity={0.7} style={pk.folderHead}>
+                                <View style={[pk.folderDot, { backgroundColor: f.color }]} />
+                                <View style={{ flex: 1 }}>
+                                  <Text style={pk.folderTitle}>{f.label}<Text style={pk.folderCount}>  {f.trades.length}</Text></Text>
+                                  <Text style={pk.folderSub}>{f.sub}</Text>
+                                </View>
+                                <Text style={[pk.folderChev, { transform: [{ rotate: isOpen ? '90deg' : '0deg' }] }]}>›</Text>
+                              </TouchableOpacity>
+                              {isOpen && (
+                                <View style={[SH.wrapChips, { marginTop: 4, marginBottom: 12 }]}>
+                                  {f.trades.map((t) => (
+                                    <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: f.color }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
+                                      <Text style={SH.pickT}>{t.name}</Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              )}
+                            </View>
+                          );
+                        })}
+                      </>
+                    )}
+                  </>
+                )}
               </>
             )}
 
@@ -835,6 +896,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
   const [msg, setMsg] = useState('');
   const [activeNow, setActiveNow] = useState(null);
   const [coverage, setCoverage] = useState(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const load = useCallback(async () => {
     try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); } catch (e) { setMine((p) => (p == null ? [] : p)); }
     try { setMapJobs(await getMapJobs()); } catch (_) { /* map just shows empty */ }
@@ -1015,7 +1077,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
             if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: suburbOf(m.r.address_text), info: buildJobInfo({ a: trav.a, it: trav.it, r: m.r }) });
             else if (onOpenReq) onOpenReq(trackedId);
           }
-          else if (action === 'open_help' && onOpenReq) onOpenReq(trackedId);
+          else if (action === 'open_help') setHelpOpen(true);
         }} />;
       })()}
       <View style={{ padding: 24, paddingTop: 24 }}>
@@ -1093,6 +1155,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       myLoc={myLoc}
       onPosted={() => { setSheetOpen(false); load(); }}
     />
+    <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     <JobChat
       visible={!!chat}
       onClose={() => { setChat(null); load(); }}

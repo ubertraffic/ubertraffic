@@ -14,6 +14,7 @@ import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, request
 import CredentialsScreen from './CredentialsScreen';
 import BusinessDetailsScreen from './BusinessDetailsScreen';
 import AdminScreen from './AdminScreen';
+import VehiclesScreen from './VehiclesScreen';
 import { amIAdmin } from './adminService';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
@@ -22,6 +23,8 @@ import PrestartCard from './PrestartCard';
 import RunCloseOutCard from './RunCloseOutCard';
 import RunBrief from './RunBrief';
 import AcceptCelebration from './AcceptCelebration';
+import HelpCenter from './HelpCenter';
+import SkillDiscoverySheet from './SkillDiscoverySheet';
 import { complianceReady } from './complianceService';
 
 // A run = a task whose trade carries a run_style (set in migration 0045). The open
@@ -338,6 +341,8 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState(null);   // which job/spot is acting (per-button spinner)
   const [celebrate, setCelebrate] = useState(null);   // "it's a match" payload after a successful accept
+  const [helpOpen, setHelpOpen] = useState(false);    // Help centre sheet
+  const [discSkill, setDiscSkill] = useState(null);   // skill tapped in "What I supply" → discovery sheet
   const [msg, setMsg] = useState('');
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
@@ -490,10 +495,16 @@ export function OperatorHome({ session, onOpenProfile }) {
     // GPS may be unavailable at checkout (indoors, permission, dead signal) — don't let that
     // block the worker from checking out and getting paid. Attempt a fix; proceed without it.
     // check_out records what coords it can; the C3 reconciliation path verifies hours otherwise.
+    // capture details for the "job done" celebration before refresh clears them
+    const doneA = (myAssigns || []).find((x) => x.id === id);
+    const doneIt = doneA?.request_item;
     try {
       let lat = null, lng = null;
       try { const pos = await getPosition(); lat = pos.lat; lng = pos.lng; } catch (_) {}
-      await checkOut(id, lat, lng, null); await refresh();
+      await checkOut(id, lat, lng, null);
+      tap('success');
+      setCelebrate({ variant: 'complete', type: doneIt?.type, suburb: suburbOf(doneIt?.request?.address_text) });
+      await refresh();
     }
     catch (e) { setMsg('Complete failed: ' + friendly(e)); logError('complete', e, { correlationId: id, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
   }
@@ -679,12 +690,14 @@ export function OperatorHome({ session, onOpenProfile }) {
         const act = (myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status));
         const rid = act?.request_item?.request?.id;
         if (!rid) return null;
-        return <TrackerContainer requestId={rid} perspective="operator" onAction={(action) => {
+        return <TrackerContainer requestId={rid} perspective="operator" onAction={(action, arg) => {
           const aid = act?.id;
           if (action === 'open_chat') setChat({ a: act, title: `${act.request_item?.type || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
           else if (action === 'start_journey' && aid) mapBeginJourney(aid);
           else if (action === 'arrive' && aid) mapArrive(aid);
           else if (action === 'complete' && aid) { if (prestartNeeds[aid] === true) setPrestart(aid); else if (isRunAssignment(act)) setRunOut(runInfoFor(act)); else setCloseOut(aid); }
+          else if (action === 'open_help') setHelpOpen(true);
+          else if (action === 'open_profile' && arg && onOpenProfile) onOpenProfile(arg);
         }} />;
       })()}
       {/* dock bar — mirrors Hire's "Post a job" bar, but holds the online toggle. When a live
@@ -772,23 +785,26 @@ export function OperatorHome({ session, onOpenProfile }) {
               <Text style={S_.capChevron}>›</Text>
             </TouchableOpacity>
           ) : (<>
-          <View style={{ marginTop: 10 }}>
+          {caps.length > 0 && <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 2 }]}>Tap a skill to see others who do it.</Text>}
+          <View style={{ marginTop: 8 }}>
             {caps.map((c) => {
               const r = c.trade_id ? readiness[c.trade_id] : null;
               return (
                 <View key={c.id} style={S_.capRow}>
-                  <Icon name={c.kind === 'gear' ? 'gear' : c.kind === 'task' ? 'task' : 'crew'} size={17} color={C.ink} strokeWidth={1.9} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={T.bodyStrong}>{c.type}</Text>
-                    {r && !r.ready && (
-                      <Text style={[T.small, { color: C.amber, marginTop: 2 }]}>Needs: {r.missing.join(', ')}</Text>
-                    )}
-                  </View>
+                  <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }} activeOpacity={0.7} onPress={() => setDiscSkill(c.type)}>
+                    <Icon name={c.kind === 'gear' ? 'gear' : c.kind === 'task' ? 'task' : 'crew'} size={17} color={C.ink} strokeWidth={1.9} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={T.bodyStrong}>{c.type}</Text>
+                      {r && !r.ready
+                        ? <Text style={[T.small, { color: C.amber, marginTop: 2 }]}>Needs: {r.missing.join(', ')}</Text>
+                        : <Text style={[T.small, { color: C.mute2, marginTop: 2 }]}>See others ›</Text>}
+                    </View>
+                  </TouchableOpacity>
                   {r && (r.ready
                     ? <View style={S_.readyPill}><Text style={S_.readyText}>Ready ✓</Text></View>
                     : <View style={S_.notReadyPill}><Text style={S_.notReadyText}>Tickets needed</Text></View>
                   )}
-                  <TouchableOpacity onPress={() => removeCap(c.id)} disabled={busy}>
+                  <TouchableOpacity onPress={() => removeCap(c.id)} disabled={busy} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Text style={S_.rm}>✕</Text>
                   </TouchableOpacity>
                 </View>
@@ -819,6 +835,8 @@ export function OperatorHome({ session, onOpenProfile }) {
       onOpenProfile={onOpenProfile}
     />
     <AcceptCelebration data={celebrate} onDone={() => setCelebrate(null)} />
+    <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
+    <SkillDiscoverySheet skill={discSkill} excludeUserId={session.user.id} onClose={() => setDiscSkill(null)} onOpenProfile={onOpenProfile} />
     <CloseOutSheet
       assignmentId={closeOut}
       onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
@@ -1281,6 +1299,7 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   const [saving, setSaving] = useState(false);
   const [nameMsg, setNameMsg] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);   // server-checked; the panel only appears for admins
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -1308,6 +1327,9 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   }
   if (screen === 'admin') {
     return <AdminScreen onClose={() => setScreen(null)} />;
+  }
+  if (screen === 'rig') {
+    return <VehiclesScreen onClose={() => setScreen(null)} />;
   }
 
   return (
@@ -1364,14 +1386,16 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
       )}
 
       <AccountSection title="Profile" rows={role === 'operator'
-        ? [['verified', 'Tickets & expiry', 'Manage', () => setScreen('credentials')], ['insurance', 'Insurance', 'Soon', () => setComingSoon('Insurance')], ['gear', 'Capabilities & rig', 'Soon', () => setComingSoon('Capabilities & rig')], ['pin', 'Service radius', 'Soon', () => setComingSoon('Service radius')]]
-        : [['company', 'Company & ABN', 'Manage', () => setScreen('business')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
+        ? [['verified', 'Tickets & expiry', 'Manage', () => setScreen('credentials')], ['gear', 'Vehicles & rego', 'Manage', () => setScreen('rig')], ['pin', 'Service radius', 'Soon', () => setComingSoon('Service radius')]]
+        : [['company', 'Company & ABN', 'Manage', () => setScreen('business')], ['gear', 'Vehicles & plant', 'Manage', () => setScreen('rig')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
 
       <AccountSection title={role === 'operator' ? 'Payouts' : 'Business'} rows={role === 'operator'
         ? [['payment', 'Bank details', 'Soon', () => setComingSoon('Bank details')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
         : [['users', 'Team seats', 'Soon', () => setComingSoon('Team seats')], ['payment', 'Monthly billing', 'Soon', () => setComingSoon('Monthly billing')], ['trending', 'Spend reporting', 'Soon', () => setComingSoon('Spend reporting')]]} />
 
-      <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Active', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setComingSoon('Help & support')]]} />
+      <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Active', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
+
+      <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role={role === 'operator' ? 'operator' : 'client'} />
 
       <TouchableOpacity style={S_.signoutBtn} onPress={async () => { cacheClearAll(); await unregisterPush(); supabase.auth.signOut(); }}>
         <Text style={S_.signoutText}>Sign out</Text>

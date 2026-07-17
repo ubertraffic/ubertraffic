@@ -12,8 +12,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, TextInput } from 'react-native';
 import { C, S, R, T } from './theme';
 import { complianceReady, submitSignoff } from './complianceService';
+import { getMyProfile } from './operatorService';
 import { getPosition } from './location';
 import ProofPhoto from './ProofPhoto';
+
+// A signature must be the worker's real name. Compare loosely (case/space-insensitive) so
+// "john smith" matches "John  Smith", but a different name is rejected.
+const nameKey = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const fmtTime = (d) => { try { return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (_) { return ''; } };
 
 // A human label + helper for each missing requirement key the gate can return.
 const REQ_LABEL = {
@@ -32,6 +38,16 @@ export default function CloseOutCard({ assignmentId, onComplete, onCancel }) {
   const [busy, setBusy] = useState(false);
   const [signName, setSignName] = useState('');
   const [signing, setSigning] = useState(false);
+  const [captured, setCaptured] = useState({});      // { completion?: Date, arrival?: Date } — persists the ✓ after the gate clears
+  const [expectedName, setExpectedName] = useState(null);   // the worker's real name, to match the signature against
+
+  // Load the worker's real name once (legal name preferred, else display name) so the
+  // signature can be checked against it — a sign-off should be the person's actual name.
+  useEffect(() => {
+    (async () => {
+      try { const p = await getMyProfile(); const n = (p && (p.legal_name || p.full_name)) || null; if (n) { setExpectedName(n); setSignName(n); } } catch (_) {}
+    })();
+  }, []);
 
   const refreshGate = useCallback(async () => {
     try {
@@ -54,6 +70,11 @@ export default function CloseOutCard({ assignmentId, onComplete, onCancel }) {
   // Worker sign-on-glass (typed name for now; signature-draw can layer on later).
   async function doSignoff() {
     if (!signName.trim()) { setErr('Type your name to sign off.'); return; }
+    // The signature must match the name on file — a legal record, not a nickname.
+    if (expectedName && nameKey(signName) !== nameKey(expectedName)) {
+      setErr(`Sign with your full name as it appears on your profile: ${expectedName}`);
+      return;
+    }
     setSigning(true); setErr('');
     let lat = null, lng = null;
     try { const p = await getPosition(); lat = p.lat; lng = p.lng; } catch (_) {}
@@ -96,27 +117,36 @@ export default function CloseOutCard({ assignmentId, onComplete, onCancel }) {
         {ready ? 'All done — you\u2019re clear to finish.' : 'A couple of quick steps before you finish.'}
       </Text>
 
-      {/* Completion photo — the proof spine. Only shown if the trade needs it. */}
-      {needs('completion_photo') && (
+      {/* Completion photo — the proof spine. Once captured, a timestamped ✓ row REPLACES the
+          capture box and PERSISTS (even after the gate clears), so it never just vanishes. */}
+      {(needs('completion_photo') || captured.completion) && (
         <View style={{ marginBottom: S.md }}>
-          <ProofPhoto
-            assignmentId={assignmentId}
-            kind="completion"
-            label="Completion photo"
-            onCaptured={() => refreshGate()}
-          />
+          {captured.completion ? (
+            <PhotoConfirmed label="Completion photo" at={captured.completion} />
+          ) : (
+            <ProofPhoto
+              assignmentId={assignmentId}
+              kind="completion"
+              label="Completion photo"
+              onCaptured={() => { setCaptured((c) => ({ ...c, completion: new Date() })); refreshGate(); }}
+            />
+          )}
         </View>
       )}
 
       {/* Arrival photo (rare — only some trades) */}
-      {needs('arrival_photo') && (
+      {(needs('arrival_photo') || captured.arrival) && (
         <View style={{ marginBottom: S.md }}>
-          <ProofPhoto
-            assignmentId={assignmentId}
-            kind="arrival"
-            label="Arrival photo"
-            onCaptured={() => refreshGate()}
-          />
+          {captured.arrival ? (
+            <PhotoConfirmed label="Arrival photo" at={captured.arrival} />
+          ) : (
+            <ProofPhoto
+              assignmentId={assignmentId}
+              kind="arrival"
+              label="Arrival photo"
+              onCaptured={() => { setCaptured((c) => ({ ...c, arrival: new Date() })); refreshGate(); }}
+            />
+          )}
         </View>
       )}
 
@@ -134,6 +164,7 @@ export default function CloseOutCard({ assignmentId, onComplete, onCancel }) {
           <Text style={[T.body, { fontWeight: '700', marginBottom: 6 }]}>Sign off the job</Text>
           <Text style={[T.small, { color: C.mute, marginBottom: 8 }]}>
             Confirm the work is done. This protects you if there's any dispute later.
+            {expectedName ? ` Sign as ${expectedName} — it must match your profile.` : ''}
           </Text>
           <TextInput
             style={{
@@ -179,6 +210,21 @@ export default function CloseOutCard({ assignmentId, onComplete, onCancel }) {
           <Text style={[T.small, { color: C.mute }]}>Not yet</Text>
         </TouchableOpacity>
       ) : null}
+    </View>
+  );
+}
+
+// A persistent "✓ captured at 2:45 PM" confirmation that stays put after the gate clears.
+function PhotoConfirmed({ label, at }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(14,122,82,0.08)', borderRadius: R.md, padding: S.md }}>
+      <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>{'✓'}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[T.body, { fontWeight: '700', color: C.ink }]}>{label} added</Text>
+        <Text style={[T.small, { color: C.green, fontWeight: '600' }]}>Confirmed{at ? ` · ${fmtTime(at)}` : ''}</Text>
+      </View>
     </View>
   );
 }
