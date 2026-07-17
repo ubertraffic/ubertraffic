@@ -15,6 +15,7 @@ import CredentialsScreen from './CredentialsScreen';
 import BusinessDetailsScreen from './BusinessDetailsScreen';
 import AdminScreen from './AdminScreen';
 import VehiclesScreen from './VehiclesScreen';
+import PayoutsScreen from './PayoutsScreen';
 import { amIAdmin } from './adminService';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
@@ -1327,6 +1328,9 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   if (screen === 'rig') {
     return <VehiclesScreen onClose={() => setScreen(null)} />;
   }
+  if (screen === 'payouts') {
+    return <PayoutsScreen onClose={() => setScreen(null)} />;
+  }
 
   return (
     <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
@@ -1386,7 +1390,7 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
         : [['company', 'Company & ABN', 'Manage', () => setScreen('business')], ['gear', 'Vehicles & plant', 'Manage', () => setScreen('rig')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
 
       <AccountSection title={role === 'operator' ? 'Payouts' : 'Business'} rows={role === 'operator'
-        ? [['payment', 'Bank details', 'Soon', () => setComingSoon('Bank details')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
+        ? [['payment', 'Payouts & bank', 'Set up', () => setScreen('payouts')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
         : [['users', 'Team seats', 'Soon', () => setComingSoon('Team seats')], ['payment', 'Monthly billing', 'Soon', () => setComingSoon('Monthly billing')], ['trending', 'Spend reporting', 'Soon', () => setComingSoon('Spend reporting')]]} />
 
       <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Active', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
