@@ -13,8 +13,9 @@ import { startJobCheckout, checkJobPayment, latestPaymentFor, capturePayment } f
 const money = (cents) => `$${((Number(cents) || 0) / 100).toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
 export default function PayJobSheet({ visible, requestId, label, estimateCents, onClose, onPaid }) {
-  const [phase, setPhase] = useState('intro');   // intro | opening | waiting | paid | error
+  const [phase, setPhase] = useState('intro');   // intro | opening | waiting | held | paid | error
   const [amount, setAmount] = useState(estimateCents || 0);
+  const [tipCents, setTipCents] = useState(0);   // client tip — 100% to the worker
   const [session, setSession] = useState(null);
   const [err, setErr] = useState('');
   const check = useRef(new Animated.Value(0)).current;
@@ -22,7 +23,7 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
   // Reset each time it opens; if this job already has a hold/capture, jump straight to that state.
   useEffect(() => {
     if (!visible) return;
-    setPhase('intro'); setErr(''); setSession(null); setAmount(estimateCents || 0);
+    setPhase('intro'); setErr(''); setSession(null); setAmount(estimateCents || 0); setTipCents(0);
     (async () => {
       const p = await latestPaymentFor(requestId).catch(() => null);
       if (p && p.status === 'captured') { setAmount(p.amount_cents); setPhase('paid'); }
@@ -47,7 +48,7 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
   async function pay() {
     setPhase('opening'); setErr('');
     try {
-      const r = await startJobCheckout(requestId);   // computes amount server-side + opens the hosted page
+      const r = await startJobCheckout(requestId, tipCents);   // amount computed server-side + opens hosted page
       if (r?.amount_cents) setAmount(r.amount_cents);
       setSession(r.session_id);
       setPhase('waiting');
@@ -126,9 +127,18 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
                 </>
               ) : (
                 <>
+                  {/* Tip — optional, 100% to the worker */}
+                  <Text style={s.tipLabel}>Add a tip? <Text style={s.tipHint}>100% goes to the worker</Text></Text>
+                  <View style={s.tipRow}>
+                    {[0, 500, 1000, 2000].map((c) => (
+                      <TouchableOpacity key={c} style={[s.tipChip, tipCents === c && s.tipChipOn]} onPress={() => setTipCents(c)} activeOpacity={0.85}>
+                        <Text style={[s.tipChipT, tipCents === c && s.tipChipTOn]}>{c === 0 ? 'No tip' : `$${c / 100}`}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                   {!!err && <Text style={s.err}>{err}</Text>}
                   <TouchableOpacity style={[s.primary, phase === 'opening' && { opacity: 0.6 }]} disabled={phase === 'opening'} onPress={pay} activeOpacity={0.9}>
-                    <Text style={s.primaryT}>{phase === 'opening' ? 'Opening…' : `Pay ${amount ? money(amount) + ' ' : ''}securely`}</Text>
+                    <Text style={s.primaryT}>{phase === 'opening' ? 'Opening…' : `Pay ${money((amount || 0) + tipCents)} securely`}</Text>
                   </TouchableOpacity>
                   <Text style={s.testHint}>Test card 4242 4242 4242 4242 · any future date · any CVC</Text>
                 </>
@@ -160,6 +170,13 @@ const s = StyleSheet.create({
   ghost: { paddingVertical: 12, alignItems: 'center' },
   ghostT: { color: C.mute, fontWeight: '700', fontSize: 13.5 },
   testHint: { fontSize: 11.5, color: C.mute2, textAlign: 'center', marginTop: 12, fontWeight: '600' },
+  tipLabel: { fontSize: 13, fontWeight: '800', color: C.ink, marginTop: 18, marginBottom: 8 },
+  tipHint: { fontSize: 12, fontWeight: '600', color: C.green },
+  tipRow: { flexDirection: 'row', gap: 8 },
+  tipChip: { flex: 1, borderWidth: 1.5, borderColor: C.line, borderRadius: 12, paddingVertical: 11, alignItems: 'center' },
+  tipChipOn: { borderColor: C.indigo, backgroundColor: C.indigo + '10' },
+  tipChipT: { fontSize: 13.5, fontWeight: '700', color: C.mute },
+  tipChipTOn: { color: C.indigo },
   waitBox: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.panel, borderRadius: R.md, padding: 14, marginTop: 16 },
   waitT: { flex: 1, fontSize: 13, color: C.mute, lineHeight: 18, fontWeight: '600' },
   err: { color: C.red, fontSize: 13, marginTop: 14, textAlign: 'center' },

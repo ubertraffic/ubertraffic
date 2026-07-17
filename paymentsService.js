@@ -6,8 +6,8 @@ import { supabase } from './supabaseClient';
 
 // Ask the server to build a Checkout Session for a job (amount computed SERVER-SIDE from the
 // request), then open Stripe's hosted payment page. Returns { url, session_id, amount_cents }.
-export async function startJobCheckout(requestId) {
-  const { data, error } = await supabase.functions.invoke('create-checkout', { body: { request_id: requestId } });
+export async function startJobCheckout(requestId, tipCents = 0) {
+  const { data, error } = await supabase.functions.invoke('create-checkout', { body: { request_id: requestId, tip_cents: Math.max(0, Math.floor(tipCents || 0)) } });
   if (error) {
     let detail = error.message || String(error);
     try { if (error.context?.json) { const b = await error.context.json(); if (b?.error || b?.detail) detail = b.detail || b.error; } } catch (_) {}

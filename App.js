@@ -479,6 +479,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
   const [contactName, setContactName] = useState('');   // optional site contact (who to ask for)
   const [contactPhone, setContactPhone] = useState(''); // optional site contact phone
   const [materialsCap, setMaterialsCap] = useState(''); // optional materials budget
+  const [travel, setTravel] = useState('');             // optional travel allowance ($, 100% to worker)
   const [jobDetails, setJobDetails] = useState('');     // duties — what the worker will do (shown before accepting)
   const [pickupText, setPickupText] = useState('');     // runs only: where to buy (plain text, e.g. "Bunnings Alexandria")
   const [busy, setBusy] = useState(false);
@@ -506,7 +507,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       Animated.parallel([
         Animated.timing(y, { toValue: SHEET_SCREEN_H, duration: 240, useNativeDriver: true }),
         Animated.timing(dim, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
+      ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
     }
   }, [visible]);
 
@@ -537,7 +538,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       const isBooked = when === 'scheduled';
       const sched = isBooked ? scheduledISO() : null;
       if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
-      await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText });
+      await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
       setPhase('sent');
       setTimeout(() => { onPosted && onPosted(); }, 1100);   // let the "sent" beat land, then drop home
     } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
@@ -835,6 +836,9 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
                 )}
                 <Text style={SH.optionalLabel}>Materials budget <Text style={SH.optionalHint}>(optional — if they'll buy parts)</Text></Text>
                 <TextInput style={SH.optionalInput} value={materialsCap} onChangeText={setMaterialsCap} placeholder="$0 cap you'll cover" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
+                <Text style={SH.optionalLabel}>Travel allowance <Text style={SH.optionalHint}>(optional — paid 100% to the worker)</Text></Text>
+                <TextInput style={SH.optionalInput} value={travel} onChangeText={setTravel} placeholder="$ toward their travel" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
+                <Text style={[SH.optionalHint, { marginTop: -4, marginBottom: 4 }]}>Guide: the ATO rate is 88c/km — e.g. a 20km round trip ≈ $18.</Text>
                 <TouchableOpacity style={[SH.send, !canSend && { opacity: 0.4 }]} disabled={!canSend || busy} onPress={send}><Text style={SH.sendT}>{busy ? 'Sending…' : 'Send request →'}</Text></TouchableOpacity>
                 <TouchableOpacity onPress={() => setPhase('when')} style={{ marginTop: 12, alignItems: 'center' }}><Text style={SH.back}>‹ back</Text></TouchableOpacity>
               </>
@@ -1034,6 +1038,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       const rate = Number(it.rate) || 0, qty = Number(it.qty) || 1;
       cents += Math.round(rate * qty * (it.price_mode === 'job' ? 1 : hrs) * 100);
     }
+    cents += Number(req?.travel_cents) || 0;   // travel is part of the total the client pays
     const label = req?.request_items?.[0]?.type || 'Job';
     setPayReq({ id: reqId, label, estimateCents: cents });
   }
