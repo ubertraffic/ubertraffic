@@ -5,6 +5,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Activi
 import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential } from './credentialsService';
 import { getMyProfile } from './operatorService';
 import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn } from './accountService';
+import { formatDMY, dmyToISO, isoToDMY } from './dateFormat';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 import Icon from './Icon';
 
@@ -53,9 +54,11 @@ export default function CredentialsScreen({ onClose }) {
   const [idMsg, setIdMsg] = useState('');
 
   async function saveIdentity() {
+    const iso = dmyToISO(idDob);
+    if (!iso) { setIdMsg('Enter your date of birth as DD/MM/YYYY.'); return; }
     setIdBusy(true); setIdMsg('');
     try {
-      const r = await setMyIdentity(idName, idDob);
+      const r = await setMyIdentity(idName, iso);
       setIdSaved({ legal_name: r.legal_name, date_of_birth: r.date_of_birth });
       setIdEditing(false);
     } catch (e) { setIdMsg(e.message || String(e)); } finally { setIdBusy(false); }
@@ -101,15 +104,19 @@ export default function CredentialsScreen({ onClose }) {
     if (!adding) return;
     // field-aware validation
     if (adding.requires_card_no && !cardNumber.trim()) { setMsg('This licence needs a card number.'); return; }
-    if (adding.expiry_rule === 'required' && !expiry.trim()) { setMsg('This credential needs an expiry date.'); return; }
-    if (expiry.trim() && !validDate(expiry.trim())) { setMsg('Enter the expiry as YYYY-MM-DD.'); return; }
+    let expiryISO = null;
+    if (adding.expiry_rule !== 'none' && expiry.trim()) {
+      expiryISO = dmyToISO(expiry.trim());
+      if (!expiryISO) { setMsg('Enter the expiry as DD/MM/YYYY.'); return; }
+    }
+    if (adding.expiry_rule === 'required' && !expiryISO) { setMsg('This credential needs an expiry date.'); return; }
     setBusy(true); setMsg('');
     try {
       await addMyCredential({
         credential_id: adding.id,
         number,
         card_number: adding.requires_card_no ? cardNumber : null,
-        expires_at: adding.expiry_rule === 'none' ? null : (expiry.trim() || null),
+        expires_at: expiryISO,
         state: adding.requires_card_no ? credState : null,
         provider,
       });
@@ -159,7 +166,7 @@ export default function CredentialsScreen({ onClose }) {
           {adding.expiry_rule !== 'none' && (
             <>
               <Text style={styles.label}>Expiry date{adding.expiry_rule === 'required' ? '' : ' (optional)'}</Text>
-              <TextInput style={styles.input} value={expiry} onChangeText={setExpiry} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+              <TextInput style={styles.input} value={expiry} onChangeText={(t) => setExpiry(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
             </>
           )}
           <Text style={styles.hint}>{adding.self_declared
@@ -205,9 +212,9 @@ export default function CredentialsScreen({ onClose }) {
             <View style={styles.abnRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.idDisplayName}>{idSaved.legal_name}</Text>
-                <Text style={styles.abnOk}>DOB {idSaved.date_of_birth || '—'} · on file</Text>
+                <Text style={styles.abnOk}>DOB {isoToDMY(idSaved.date_of_birth) || '—'} · on file</Text>
               </View>
-              <TouchableOpacity onPress={() => { setIdName(idSaved.legal_name || ''); setIdDob(idSaved.date_of_birth || ''); setIdEditing(true); setIdMsg(''); }}>
+              <TouchableOpacity onPress={() => { setIdName(idSaved.legal_name || ''); setIdDob(isoToDMY(idSaved.date_of_birth)); setIdEditing(true); setIdMsg(''); }}>
                 <Text style={styles.abnEdit}>Edit</Text>
               </TouchableOpacity>
             </View>
@@ -217,7 +224,7 @@ export default function CredentialsScreen({ onClose }) {
               <Text style={styles.label}>Full legal name</Text>
               <TextInput style={styles.input} value={idName} onChangeText={setIdName} placeholder="As on your licence / White Card" placeholderTextColor={C.mute2} />
               <Text style={styles.label}>Date of birth</Text>
-              <TextInput style={styles.input} value={idDob} onChangeText={setIdDob} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+              <TextInput style={styles.input} value={idDob} onChangeText={(t) => setIdDob(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
               {!!idMsg && <Text style={styles.err}>{idMsg}</Text>}
               <TouchableOpacity style={[styles.abnSave, idBusy && { opacity: 0.5 }]} disabled={idBusy} onPress={saveIdentity}>
                 <Text style={styles.abnSaveT}>{idBusy ? 'Saving…' : 'Save identity'}</Text>
@@ -285,7 +292,7 @@ export default function CredentialsScreen({ onClose }) {
             <View key={t.id} style={styles.row}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.name}>{t.name}</Text>
-                <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${held.expires_at}` : ''}</Text>
+                <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${isoToDMY(held.expires_at)}` : ''}</Text>
               </View>
               {held ? (
                 <View style={styles.heldRight}>
