@@ -1,11 +1,14 @@
 // CredentialsScreen.js — operator manages their tickets & licences (Pillar 2).
 // Self-contained. Props: onClose()
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential } from './credentialsService';
 import { getMyProfile } from './operatorService';
+import { setMyAbn, abnValid, normalizeAbn } from './accountService';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 import Icon from './Icon';
+
+const formatAbn = (clean) => (clean || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4');
 
 const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Licence', induction: 'Induction' };
 const STATUS_COLOR = { verified: C.green, unverified: C.amber, expired: C.red, suspended: C.red, review: C.amber, none: C.mute };
@@ -21,6 +24,18 @@ export default function CredentialsScreen({ onClose }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
+  const [abnSaved, setAbnSaved] = useState(null);     // stored ABN (digits) or null
+  const [abnInput, setAbnInput] = useState('');
+  const [abnBusy, setAbnBusy] = useState(false);
+  const [abnMsg, setAbnMsg] = useState('');
+
+  async function saveAbn() {
+    setAbnBusy(true); setAbnMsg('');
+    try {
+      const r = await setMyAbn(abnInput);
+      setAbnSaved(r.abn); setAbnInput('');
+    } catch (e) { setAbnMsg(e.message || String(e)); } finally { setAbnBusy(false); }
+  }
 
   async function verify(id) {
     setVerifying(id); setMsg('');
@@ -36,7 +51,7 @@ export default function CredentialsScreen({ onClose }) {
     try {
       const [t, m, p] = await Promise.all([listCredentialTypes(), listMyCredentials(), getMyProfile().catch(() => null)]);
       setTypes(t); setMine(m);
-      if (p) setCaps({ can_work: p.can_work, can_task: p.can_task });
+      if (p) { setCaps({ can_work: p.can_work, can_task: p.can_task }); setAbnSaved(p.abn || null); }
     } catch (e) { setMsg(e.message || String(e)); setTypes([]); }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
@@ -108,6 +123,48 @@ export default function CredentialsScreen({ onClose }) {
             </View>
           </View>
         )}
+        {/* ABN — contractor status. Format + checksum only (honest: NOT register-verified).
+            Non-blocking: a nudge, never a gate. Register verification is a deferred server-side step. */}
+        <View style={styles.abnCard}>
+          <Text style={styles.abnLabel}>Your ABN</Text>
+          {abnSaved ? (
+            <View style={styles.abnRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.abnValue}>{formatAbn(abnSaved)}</Text>
+                <Text style={styles.abnOk}>✓ Valid format · full ABR check coming</Text>
+              </View>
+              <TouchableOpacity onPress={() => { setAbnInput(abnSaved); setAbnSaved(null); setAbnMsg(''); }}>
+                <Text style={styles.abnEdit}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.abnHint}>
+                Add your 11-digit ABN so you can be paid properly as a contractor. Not sure of it?{' '}
+                <Text style={styles.abnLink} onPress={() => Linking.openURL('https://abr.gov.au')}>Look it up at abr.gov.au</Text>
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={abnInput}
+                onChangeText={(t) => setAbnInput(t.replace(/[^\d ]/g, '').slice(0, 14))}
+                placeholder="12 345 678 901"
+                placeholderTextColor={C.mute2}
+                keyboardType="number-pad"
+              />
+              {normalizeAbn(abnInput).length === 11 && !abnValid(abnInput) ? (
+                <Text style={styles.err}>That ABN doesn’t check out — double-check the number.</Text>
+              ) : null}
+              {!!abnMsg && <Text style={styles.err}>{abnMsg}</Text>}
+              <TouchableOpacity
+                style={[styles.abnSave, (!abnValid(abnInput) || abnBusy) && { opacity: 0.5 }]}
+                disabled={!abnValid(abnInput) || abnBusy}
+                onPress={saveAbn}
+              >
+                <Text style={styles.abnSaveT}>{abnBusy ? 'Saving…' : 'Save ABN'}</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
         {!!msg && <Text style={styles.err}>{msg}</Text>}
         {types.map((t) => {
           const held = heldById[t.id];
@@ -160,6 +217,16 @@ const styles = StyleSheet.create({
   verifyBtn: { backgroundColor: C.indigo, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 7 },
   verifyText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   statusPill: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6 },
+  abnCard: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, ...shadowSm },
+  abnLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 },
+  abnRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  abnValue: { fontSize: 17, fontWeight: '800', color: C.ink, fontFamily: MONO, letterSpacing: 0.5 },
+  abnOk: { fontSize: 12, color: C.green, fontWeight: '700', marginTop: 3 },
+  abnEdit: { fontSize: 13, fontWeight: '700', color: C.indigo },
+  abnHint: { fontSize: 13, color: C.mute, lineHeight: 18, marginBottom: 10 },
+  abnLink: { color: C.indigo, fontWeight: '700' },
+  abnSave: { backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
+  abnSaveT: { color: '#fff', fontWeight: '800', fontSize: 14 },
   capBanner: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, gap: 8, ...shadowSm },
   capRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   capIcon: { fontSize: 15, fontWeight: '800', color: C.mute, width: 18, textAlign: 'center' },

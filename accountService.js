@@ -72,6 +72,41 @@ export async function submitBusinessAbn(abn) {
   return data;
 }
 
+// ── Worker ABN (sole-trader / contractor) ────────────────────────────────────
+// Separate from the hire-side business-ABN gate above. Deterministic format+checksum ONLY,
+// client-side (no key needed). Stored as abn_status='valid' meaning "format checked" — this is
+// NOT register verification. True "verified against the ABR register" is a deferred, server-side
+// step (a free ABR GUID + an Edge Function); it must never be self-granted here. Honest labelling.
+
+export function normalizeAbn(abn) { return String(abn || '').replace(/\D/g, ''); }
+
+// The official ABR ABN validation: 11 digits, subtract 1 from the first, weighted sum mod 89 === 0.
+export function abnValid(abn) {
+  const d = normalizeAbn(abn);
+  if (!/^\d{11}$/.test(d)) return false;
+  const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
+  const nums = d.split('').map(Number);
+  nums[0] -= 1;
+  const sum = nums.reduce((s, n, i) => s + n * weights[i], 0);
+  return sum % 89 === 0;
+}
+
+// Save the worker's own ABN on their profile. Only stores when the checksum passes; status is
+// 'valid' (format checked), never 'verified' — that's the later server-side ABR step.
+export async function setMyAbn(abn) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in.');
+  const clean = normalizeAbn(abn);
+  if (!/^\d{11}$/.test(clean)) throw new Error('An ABN is 11 digits.');
+  if (!abnValid(clean)) throw new Error('That ABN doesn’t check out — double-check the number.');
+  const { error } = await supabase
+    .from('profiles')
+    .update({ abn: clean, abn_status: 'valid' })
+    .eq('id', u.user.id);
+  if (error) throw error;
+  return { abn: clean, abn_status: 'valid' };
+}
+
 // ── Public profile (Stage 1) ────────────────────────────────────────────────
 // The canonical, public-safe reputation profile for any user. Honest by design:
 // verified badges only when real, ratings carry their count, empty history flags is_new.
