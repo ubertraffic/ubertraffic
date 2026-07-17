@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential } from './credentialsService';
 import { getMyProfile } from './operatorService';
-import { setMyAbn, abnValid, normalizeAbn } from './accountService';
+import { setMyAbn, abnValid, normalizeAbn, setMyIdentity } from './accountService';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 import Icon from './Icon';
 
@@ -35,6 +35,21 @@ export default function CredentialsScreen({ onClose }) {
   const [abnInput, setAbnInput] = useState('');
   const [abnBusy, setAbnBusy] = useState(false);
   const [abnMsg, setAbnMsg] = useState('');
+  const [idSaved, setIdSaved] = useState(null);       // { legal_name, date_of_birth } or null
+  const [idEditing, setIdEditing] = useState(false);
+  const [idName, setIdName] = useState('');
+  const [idDob, setIdDob] = useState('');
+  const [idBusy, setIdBusy] = useState(false);
+  const [idMsg, setIdMsg] = useState('');
+
+  async function saveIdentity() {
+    setIdBusy(true); setIdMsg('');
+    try {
+      const r = await setMyIdentity(idName, idDob);
+      setIdSaved({ legal_name: r.legal_name, date_of_birth: r.date_of_birth });
+      setIdEditing(false);
+    } catch (e) { setIdMsg(e.message || String(e)); } finally { setIdBusy(false); }
+  }
 
   async function saveAbn() {
     setAbnBusy(true); setAbnMsg('');
@@ -58,7 +73,11 @@ export default function CredentialsScreen({ onClose }) {
     try {
       const [t, m, p] = await Promise.all([listCredentialTypes(), listMyCredentials(), getMyProfile().catch(() => null)]);
       setTypes(t); setMine(m);
-      if (p) { setCaps({ can_work: p.can_work, can_task: p.can_task }); setAbnSaved(p.abn || null); }
+      if (p) {
+        setCaps({ can_work: p.can_work, can_task: p.can_task });
+        setAbnSaved(p.abn || null);
+        setIdSaved(p.legal_name ? { legal_name: p.legal_name, date_of_birth: p.date_of_birth } : null);
+      }
     } catch (e) { setMsg(e.message || String(e)); setTypes([]); }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
@@ -168,6 +187,34 @@ export default function CredentialsScreen({ onClose }) {
             </View>
           </View>
         )}
+        {/* Identity — legal name + DOB. The anchor a register/DVS check matches against. Sensitive PII. */}
+        <View style={styles.abnCard}>
+          <Text style={styles.abnLabel}>Your identity</Text>
+          {idSaved && !idEditing ? (
+            <View style={styles.abnRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.idDisplayName}>{idSaved.legal_name}</Text>
+                <Text style={styles.abnOk}>DOB {idSaved.date_of_birth || '—'} · on file</Text>
+              </View>
+              <TouchableOpacity onPress={() => { setIdName(idSaved.legal_name || ''); setIdDob(idSaved.date_of_birth || ''); setIdEditing(true); setIdMsg(''); }}>
+                <Text style={styles.abnEdit}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.abnHint}>Your full legal name and date of birth — used only to check your tickets & licences against the registers, never shown publicly.</Text>
+              <Text style={styles.label}>Full legal name</Text>
+              <TextInput style={styles.input} value={idName} onChangeText={setIdName} placeholder="As on your licence / White Card" placeholderTextColor={C.mute2} />
+              <Text style={styles.label}>Date of birth</Text>
+              <TextInput style={styles.input} value={idDob} onChangeText={setIdDob} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+              {!!idMsg && <Text style={styles.err}>{idMsg}</Text>}
+              <TouchableOpacity style={[styles.abnSave, idBusy && { opacity: 0.5 }]} disabled={idBusy} onPress={saveIdentity}>
+                <Text style={styles.abnSaveT}>{idBusy ? 'Saving…' : 'Save identity'}</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
         {/* ABN — contractor status. Format + checksum only (honest: NOT register-verified).
             Non-blocking: a nudge, never a gate. Register verification is a deferred server-side step. */}
         <View style={styles.abnCard}>
@@ -277,6 +324,7 @@ const styles = StyleSheet.create({
   abnValue: { fontSize: 17, fontWeight: '800', color: C.ink, fontFamily: MONO, letterSpacing: 0.5 },
   abnOk: { fontSize: 12, color: C.green, fontWeight: '700', marginTop: 3 },
   abnEdit: { fontSize: 13, fontWeight: '700', color: C.indigo },
+  idDisplayName: { fontSize: 16, fontWeight: '800', color: C.ink },
   abnHint: { fontSize: 13, color: C.mute, lineHeight: 18, marginBottom: 10 },
   abnLink: { color: C.indigo, fontWeight: '700' },
   abnSave: { backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, alignItems: 'center', marginTop: 10 },

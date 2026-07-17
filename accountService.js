@@ -107,6 +107,27 @@ export async function setMyAbn(abn) {
   return { abn: clean, abn_status: 'valid' };
 }
 
+// ── Identity (legal name + DOB) ──────────────────────────────────────────────
+// The anchor a register/DVS check must match against. Sensitive PII — collected with a
+// clear purpose line, used only for verification, never shown publicly. Stored on the profile;
+// if the display full_name isn't set yet, seed it from the legal name so the app still shows a name.
+export async function setMyIdentity(legalName, dob) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in.');
+  const name = (legalName || '').trim();
+  if (name.length < 2) throw new Error('Enter your full legal name.');
+  const d = (dob || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('Enter your date of birth as YYYY-MM-DD.');
+  const parsed = new Date(d + 'T00:00:00');
+  if (isNaN(parsed.getTime()) || parsed > new Date()) throw new Error('Enter a valid date of birth.');
+  const patch = { legal_name: name, date_of_birth: d };
+  const { data: p } = await supabase.from('profiles').select('full_name').eq('id', u.user.id).maybeSingle();
+  if (!p || !p.full_name) patch.full_name = name;   // seed the display name if empty
+  const { error } = await supabase.from('profiles').update(patch).eq('id', u.user.id);
+  if (error) throw error;
+  return { legal_name: name, date_of_birth: d };
+}
+
 // ── Public profile (Stage 1) ────────────────────────────────────────────────
 // The canonical, public-safe reputation profile for any user. Honest by design:
 // verified badges only when real, ratings carry their count, empty history flags is_new.
