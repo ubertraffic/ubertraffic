@@ -13,6 +13,8 @@ import { jobTitle, jobSubtitle, estTotal, RateCard, WorkFeed, AvailableJobCard, 
 import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard } from './components';
 import CredentialsScreen from './CredentialsScreen';
 import BusinessDetailsScreen from './BusinessDetailsScreen';
+import AdminScreen from './AdminScreen';
+import { amIAdmin } from './adminService';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
 import CloseOutCard from './CloseOutCard';
@@ -1267,11 +1269,13 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameMsg, setNameMsg] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);   // server-checked; the panel only appears for admins
 
   useEffect(() => {
     (async () => {
       try { const p = await getMyProfile(); if (p.full_name) { setSavedName(p.full_name); setName(p.full_name); cacheSet('profile-name', p.full_name); } } catch (_) {}
     })();
+    (async () => { try { setIsAdmin(await amIAdmin()); } catch (_) {} })();
   }, []);
 
   async function saveName() {
@@ -1290,6 +1294,9 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   }
   if (screen === 'business') {
     return <BusinessDetailsScreen onClose={() => setScreen(null)} />;
+  }
+  if (screen === 'admin') {
+    return <AdminScreen onClose={() => setScreen(null)} />;
   }
 
   return (
@@ -1333,6 +1340,17 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
           <Text style={S_.viewProfileT}>View my public profile</Text>
         </TouchableOpacity>
       </View>
+
+      {isAdmin && (
+        <TouchableOpacity style={S_.adminCard} onPress={() => setScreen('admin')} activeOpacity={0.9}>
+          <View style={S_.adminIcon}><Icon name="settings" size={20} color="#fff" /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={S_.adminTitle}>Admin panel</Text>
+            <Text style={S_.adminSub}>Reviews · ABNs · users · ops</Text>
+          </View>
+          <Text style={S_.adminChev}>›</Text>
+        </TouchableOpacity>
+      )}
 
       <AccountSection title="Profile" rows={role === 'operator'
         ? [['verified', 'Tickets & expiry', 'Manage', () => setScreen('credentials')], ['insurance', 'Insurance', 'Soon', () => setComingSoon('Insurance')], ['gear', 'Capabilities & rig', 'Soon', () => setComingSoon('Capabilities & rig')], ['pin', 'Service radius', 'Soon', () => setComingSoon('Service radius')]]
