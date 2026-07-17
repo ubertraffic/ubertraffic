@@ -12,6 +12,7 @@ import JobChat from './JobChat';
 import { jobTitle, jobSubtitle, estTotal, RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, PrimaryBtn, tap, Center } from './components2';
 import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard } from './components';
 import CredentialsScreen from './CredentialsScreen';
+import BusinessDetailsScreen from './BusinessDetailsScreen';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
 import CloseOutCard from './CloseOutCard';
@@ -1259,7 +1260,7 @@ export function OperatorEarnings({ session }) {
 
 /* ============================================================ ACCOUNT (both roles) */
 export function Account({ session, role, onNameSaved, onOpenProfile }) {
-  const [screen, setScreen] = useState(null);   // null | 'credentials'
+  const [screen, setScreen] = useState(null);   // null | 'credentials' | 'business'
   const [comingSoon, setComingSoon] = useState(null);  // label of a not-yet-built feature the user tapped
   const [name, setName] = useState(() => cacheGet('profile-name') || '');
   const [savedName, setSavedName] = useState(() => cacheGet('profile-name'));   // instant paint — no email→name flicker
@@ -1286,6 +1287,9 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
 
   if (screen === 'credentials') {
     return <CredentialsScreen onClose={() => setScreen(null)} />;
+  }
+  if (screen === 'business') {
+    return <BusinessDetailsScreen onClose={() => setScreen(null)} />;
   }
 
   return (
@@ -1332,7 +1336,7 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
 
       <AccountSection title="Profile" rows={role === 'operator'
         ? [['verified', 'Tickets & expiry', 'Manage', () => setScreen('credentials')], ['insurance', 'Insurance', 'Soon', () => setComingSoon('Insurance')], ['gear', 'Capabilities & rig', 'Soon', () => setComingSoon('Capabilities & rig')], ['pin', 'Service radius', 'Soon', () => setComingSoon('Service radius')]]
-        : [['company', 'Company & ABN', 'Add', () => setComingSoon('Company & ABN')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
+        : [['company', 'Company & ABN', 'Manage', () => setScreen('business')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
 
       <AccountSection title={role === 'operator' ? 'Payouts' : 'Business'} rows={role === 'operator'
         ? [['payment', 'Bank details', 'Soon', () => setComingSoon('Bank details')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]

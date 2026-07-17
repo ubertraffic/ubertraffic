@@ -125,6 +125,49 @@ export async function verifyMyAbn() {
   return data;
 }
 
+// ── Business details (hire side: company name + business ABN) ─────────────────
+// The client-side mirror of the worker's Identity + ABN cards. Read in ISOLATION (its own
+// query, only from the Business screen) so a not-yet-migrated column can never break the main
+// workspace load the way the profile select did. Verification of the ABN reuses the existing
+// hire gate (submitBusinessAbn → 'pending' → admin/ABR approves → company_verify_status).
+
+// Read only the company fields. Fails soft to {} at the caller if columns are missing.
+export async function getMyBusiness() {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in.');
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('company_name, company_abn, company_verify_status')
+    .eq('id', u.user.id)
+    .maybeSingle();
+  if (error) throw error;
+  return data || {};
+}
+
+// Save the company / trading name (display + on invoices later). No verification — it's a label.
+export async function setMyCompanyName(name) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in.');
+  const n = (name || '').trim();
+  if (n.length < 2) throw new Error('Enter your company or trading name.');
+  const { error } = await supabase.from('profiles').update({ company_name: n }).eq('id', u.user.id);
+  if (error) throw error;
+  return { company_name: n };
+}
+
+// Save the business ABN. Format + checksum ONLY (client-side, honest: NOT register-verified).
+// The verified flip is the existing hire gate (submitBusinessAbn), never self-granted here.
+export async function setMyCompanyAbn(abn) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in.');
+  const clean = normalizeAbn(abn);
+  if (!/^\d{11}$/.test(clean)) throw new Error('An ABN is 11 digits.');
+  if (!abnValid(clean)) throw new Error('That ABN doesn’t check out — double-check the number.');
+  const { error } = await supabase.from('profiles').update({ company_abn: clean }).eq('id', u.user.id);
+  if (error) throw error;
+  return { company_abn: clean };
+}
+
 // ── Identity (legal name + DOB) ──────────────────────────────────────────────
 // The anchor a register/DVS check must match against. Sensitive PII — collected with a
 // clear purpose line, used only for verification, never shown publicly. Stored on the profile;
