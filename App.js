@@ -1269,6 +1269,12 @@ function NeedsYouCard({ r, onOpen }) {
 
 /* ============================================================ CLIENT · REQUESTS (wizard + list) */
 
+// Requests tab: collapse the 7 status buckets into 3 client-facing groups. Each card's pill still
+// shows the exact status (open/filling/filled/…), so nothing is lost — the filter just answers the
+// only question a client asks: is it live, does it need me, or is it done?
+const REQ_GROUP = { open: 'active', filling: 'active', filled: 'active', ready: 'ready', complete: 'past', cancelled: 'past' };
+const reqGroupOf = (r) => REQ_GROUP[statusMeta(r).bucket] || 'active';
+
 // real 2026 AU award-guided rates: [floor, lo, hi] $/hr (task = $/job)
 const RATES = {
   'Excavator': [90, 110, 140], 'Line pump': [150, 180, 240], 'Dozer': [130, 160, 200],
@@ -1282,7 +1288,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
   const [mode, setMode] = useState('list');       // list | new | searching
   const [step, setStep] = useState(1);
   const [searchReq, setSearchReq] = useState(null);   // { id, summary } after a post
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('active');
   const [items, setItems] = useState([]);
   const [picker, setPicker] = useState(false);   // TradePicker open?
   const [loc, setLoc] = useState('');
@@ -1324,7 +1330,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
     if (focusReq) {
       setMode('list');
       const target = (mine || []).find((r) => r.id === focusReq);
-      if (target) setFilter(statusMeta(target).bucket);
+      if (target) setFilter(reqGroupOf(target));
       const t = setTimeout(() => onFocused && onFocused(), 1500);
       return () => clearTimeout(t);
     }
@@ -1486,10 +1492,10 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
   }
 
   // LIST mode
-  const FILTERS = [['all','All'],['open','Open'],['filling','Filling'],['filled','Filled'],['ready','Ready'],['complete','Complete'],['cancelled','Cancelled']];
-  const counts = {};
-  (mine || []).forEach((r) => { const b = statusMeta(r).bucket; counts[b] = (counts[b] || 0) + 1; });
-  const shown = (mine || []).filter((r) => filter === 'all' ? true : statusMeta(r).bucket === filter);
+  const FILTERS = [['active','Active'],['ready','Ready to pay'],['past','Past']];
+  const counts = { active: 0, ready: 0, past: 0 };
+  (mine || []).forEach((r) => { counts[reqGroupOf(r)] += 1; });
+  const shown = (mine || []).filter((r) => reqGroupOf(r) === filter);
 
   return (
     <View style={{ flex: 1 }}>
@@ -1505,7 +1511,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
       {/* filter bar */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
         {FILTERS.map(([key, label]) => {
-          const n = key === 'all' ? (mine || []).length : (counts[key] || 0);
+          const n = counts[key] || 0;
           const on = filter === key;
           return (
             <TouchableOpacity key={key} style={[S_.filterChip, on && S_.filterChipOn]} onPress={() => setFilter(key)} activeOpacity={0.8}>
@@ -1522,7 +1528,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
         </View>
       )}
       {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : shown.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>{filter === 'all' ? 'No requests yet.' : `Nothing ${filter}.`}</Text>
+        : shown.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>{(mine || []).length === 0 ? 'No requests yet.' : filter === 'active' ? 'Nothing live right now.' : filter === 'ready' ? 'Nothing waiting on you.' : 'Nothing here yet.'}</Text>
         : shown.map((r) => <FullReqCard key={r.id} r={r} busy={busyId === r.id} defaultOpen={focusReq === r.id} onApprove={() => openReview(r.id)} onCancel={() => cancel(r.id)} onRepost={() => repost(r.id)} />)}
     </ScrollView>
     <RequestSheet
