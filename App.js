@@ -538,9 +538,9 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       const isBooked = when === 'scheduled';
       const sched = isBooked ? scheduledISO() : null;
       if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
-      await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
+      const newId = await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
       setPhase('sent');
-      setTimeout(() => { onPosted && onPosted(); }, 1100);   // let the "sent" beat land, then drop home
+      setTimeout(() => { onPosted && onPosted(newId); }, 1100);   // let the "sent" beat land, then drop home
     } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
   }
 
@@ -889,6 +889,72 @@ function TrackerContainer({ requestId, onAction, perspective = 'client' }) {
   return <LiveTrackerCard state={state} onAction={onAction} />;
 }
 
+// ── Shared client payment flow (Stripe test mode) ────────────────────────────
+// Post a job → authorise a hold (money isn't taken yet); approve the work → capture + pay the
+// worker. Extracted so EVERY client posting/approval surface (Home map, Requests tab) drives
+// payment through the SAME code. Previously only ClientHome was wired, so the primary "Post a job"
+// action — which routes through goPost() to the Requests tab — silently skipped Stripe entirely.
+//   getReq(id)      → the request object (with request_items + assignments) for estimates/rating
+//   reload()        → refresh the caller's list after a state change
+//   onRateReady(rp) → the caller shows its rating prompt once the pay sheet closes
+//   onError(e, id)  → the caller surfaces + logs an approval failure
+function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
+  const [payReq, setPayReq] = useState(null);        // { id, label, estimateCents, adj?, approve? }
+  const [pendingRate, setPendingRate] = useState(null);
+
+  function estimateCentsFor(req) {
+    const hrs = req?.duration_hours || 4;
+    let cents = 0;
+    for (const it of (req?.request_items || [])) {
+      const rate = Number(it.rate) || 0, qty = Number(it.qty) || 1;
+      cents += Math.round(rate * qty * (it.price_mode === 'job' ? 1 : hrs) * 100);
+    }
+    cents += Number(req?.travel_cents) || 0;   // travel is part of the total the client pays
+    return cents;
+  }
+
+  // Post → open the pay sheet to AUTHORISE a hold (charged only when the client later approves).
+  function payJob(reqId) {
+    const req = getReq(reqId);
+    setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: estimateCentsFor(req) });
+  }
+  // Approve → open the pay sheet in auto-capture mode (secures the hold if needed, then captures).
+  function beginApproval(reqId, adj) {
+    const req = getReq(reqId);
+    setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: estimateCentsFor(req), adj, approve: true });
+  }
+  // Runs after the Stripe capture succeeds — mark the job approved + queue the rating.
+  async function finalizePaidApproval(reqId, adj) {
+    try {
+      await approveRequest(reqId, adj);
+      const req = getReq(reqId);
+      let assignmentId = null, rateeName = null;
+      for (const it of (req?.request_items || [])) {
+        for (const a of (it.assignments || [])) {
+          if (['complete', 'approved'].includes(a.status) && a.operator_id) { assignmentId = a.id; rateeName = a.operator?.full_name || 'the operator'; break; }
+        }
+        if (assignmentId) break;
+      }
+      await reload();
+      if (assignmentId) setPendingRate({ assignmentId, rateeName });
+    } catch (e) { onError && onError(e, reqId); }
+  }
+
+  const PaySheet = (
+    <PayJobSheet
+      visible={!!payReq}
+      requestId={payReq?.id}
+      label={payReq?.label}
+      estimateCents={payReq?.estimateCents}
+      autoCapture={!!payReq?.approve}
+      onPaid={() => { if (payReq?.approve) finalizePaidApproval(payReq.id, payReq.adj); else reload(); }}
+      onClose={() => { setPayReq(null); if (pendingRate) { onRateReady && onRateReady(pendingRate); setPendingRate(null); } }}
+    />
+  );
+
+  return { payReq, payJob, beginApproval, PaySheet };
+}
+
 function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
   const [mine, setMine] = useState(() => cacheGet('client-requests'));   // shared cache → instant paint
   const [mapJobs, setMapJobs] = useState([]);
@@ -902,8 +968,6 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
   const [activeNow, setActiveNow] = useState(null);
   const [coverage, setCoverage] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [payReq, setPayReq] = useState(null);   // { id, label, estimateCents, adj?, approve? } for the pay sheet
-  const [pendingRate, setPendingRate] = useState(null);   // rating to show after the pay sheet closes
   const load = useCallback(async () => {
     try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); } catch (e) { setMine((p) => (p == null ? [] : p)); }
     try { setMapJobs(await getMapJobs()); } catch (_) { /* map just shows empty */ }
@@ -1005,53 +1069,16 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
     if (req) setReviewReq(req);
   }
   // Approval IS the payment: reviewing → confirm opens the pay sheet (auto-captures + pays the
-  // worker), and only once paid do we finalise the approval. Additive — the accept-lock is untouched.
-  function beginApproval(reqId, adj) {
-    const req = (mine || []).find((r) => r.id === reqId);
-    const hrs = req?.duration_hours || 4;
-    let est = 0;
-    for (const it of (req?.request_items || [])) {
-      const rate = Number(it.rate) || 0, qty = Number(it.qty) || 1;
-      est += Math.round(rate * qty * (it.price_mode === 'job' ? 1 : hrs) * 100);
-    }
-    est += Number(req?.travel_cents) || 0;
-    setReviewReq(null);
-    setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: est, adj, approve: true });
-  }
-  // Runs after the Stripe payment succeeds — marks the job approved and queues the rating.
-  async function finalizePaidApproval(reqId, adj) {
-    try {
-      await approveRequest(reqId, adj);
-      const req = (mine || []).find((r) => r.id === reqId);
-      let assignmentId = null, rateeName = null;
-      for (const it of (req?.request_items || [])) {
-        for (const a of (it.assignments || [])) {
-          if (['complete', 'approved'].includes(a.status) && a.operator_id) { assignmentId = a.id; rateeName = a.operator?.full_name || 'the operator'; break; }
-        }
-        if (assignmentId) break;
-      }
-      await load();
-      if (assignmentId) setPendingRate({ assignmentId, rateeName });
-    } catch (e) { setMsg('Approve failed: ' + friendly(e)); logError('approve', e, { correlationId: reqId, appContext: 'client' }); }
-  }
+  // worker). All the Stripe wiring lives in useClientPayFlow so Home and the Requests tab behave
+  // identically. beginApproval opens the sheet; the sheet finalises the approval once captured.
+  const { payJob, beginApproval, PaySheet } = useClientPayFlow({
+    getReq: (id) => (mine || []).find((r) => r.id === id),
+    reload: load,
+    onRateReady: setRatePrompt,
+    onError: (e, id) => { setMsg('Approve failed: ' + friendly(e)); logError('approve', e, { correlationId: id, appContext: 'client' }); },
+  });
 
-  async function approve(reqId, adj) {
-    setBusy(true); setMsg('');
-    try {
-      await approveRequest(reqId, adj);
-      const req = (mine || []).find((r) => r.id === reqId);
-      let assignmentId = null, rateeName = null;
-      for (const it of (req?.request_items || [])) {
-        for (const a of (it.assignments || [])) {
-          if (['complete', 'approved'].includes(a.status) && a.operator_id) { assignmentId = a.id; rateeName = a.operator?.full_name || 'the operator'; break; }
-        }
-        if (assignmentId) break;
-      }
-      setReviewReq(null);
-      await load();
-      if (assignmentId) setRatePrompt({ assignmentId, rateeName });
-    } catch (e) { setMsg('Approve failed: ' + friendly(e)); logError('approve', e, { correlationId: assignmentId, appContext: 'client' }); throw e; } finally { setBusy(false); }
-  }
+  // Approval → Stripe capture runs through useClientPayFlow (beginApproval), same as the Requests tab.
   async function cancel(reqId) {
     setBusy(true); setMsg('');
     try { await cancelRequest(reqId); await load(); } catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); }
@@ -1060,27 +1087,13 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
     setBusy(true); setMsg('');
     try { await repostRequest(reqId); await load(); } catch (e) { setMsg('Re-post failed: ' + friendly(e)); } finally { setBusy(false); }
   }
-  // Stripe payment (test mode): open the polished pay sheet for this job. Additive — does NOT touch
-  // the approve/settlement path yet, so it's safe to test now and integrate at approval later.
-  function payJob(reqId) {
-    const req = (mine || []).find((r) => r.id === reqId);
-    const hrs = req?.duration_hours || 4;
-    let cents = 0;
-    for (const it of (req?.request_items || [])) {
-      const rate = Number(it.rate) || 0, qty = Number(it.qty) || 1;
-      cents += Math.round(rate * qty * (it.price_mode === 'job' ? 1 : hrs) * 100);
-    }
-    cents += Number(req?.travel_cents) || 0;   // travel is part of the total the client pays
-    const label = req?.request_items?.[0]?.type || 'Job';
-    setPayReq({ id: reqId, label, estimateCents: cents });
-  }
   const onHubAction = (j) => messageForRaw(j._raw);
   return (
     <View style={{ flex: 1 }}>
     <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
       <MapHero
         height={240} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
-        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); } else { setSheetOpen(true); } }}
+        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id), 500); } else { setSheetOpen(true); } }}
         commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
         primaryAction={needsYou.length > 0
           ? { label: 'Review & pay', sub: `${needsYou.length} job${needsYou.length > 1 ? 's' : ''} ready`, tone: 'green', icon: '✓', closesMap: true, fn: () => onOpenReq && onOpenReq(needsYou[0].id) }
@@ -1206,18 +1219,10 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={myLoc}
-      onPosted={() => { setSheetOpen(false); load(); }}
+      onPosted={async (id) => { setSheetOpen(false); await load(); if (id) payJob(id); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
-    <PayJobSheet
-      visible={!!payReq}
-      requestId={payReq?.id}
-      label={payReq?.label}
-      estimateCents={payReq?.estimateCents}
-      autoCapture={!!payReq?.approve}
-      onPaid={() => { if (payReq?.approve) finalizePaidApproval(payReq.id, payReq.adj); else load(); }}
-      onClose={() => { setPayReq(null); if (pendingRate) { setRatePrompt(pendingRate); setPendingRate(null); } }}
-    />
+    {PaySheet}
     <JobChat
       visible={!!chat}
       onClose={() => { setChat(null); load(); }}
@@ -1239,7 +1244,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       visible={!!reviewReq}
       request={reviewReq}
       onClose={() => setReviewReq(null)}
-      onConfirm={(adj) => beginApproval(reviewReq.id, adj)}
+      onConfirm={(adj) => { const id = reviewReq.id; setReviewReq(null); beginApproval(id, adj); }}
     />
     </View>
   );
@@ -1297,6 +1302,14 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
   }, []);
   useEffect(() => { load(); }, [load]);
   useRealtime(['assignments', 'requests'], load);
+
+  // Same Stripe flow as Home — posting authorises a hold, approving captures + pays the worker.
+  const { payJob, beginApproval, PaySheet } = useClientPayFlow({
+    getReq: (id) => (mine || []).find((r) => r.id === id),
+    reload: load,
+    onRateReady: setRatePrompt,
+    onError: (e, id) => { setMsg('Approve failed: ' + friendly(e)); logError('approve', e, { correlationId: id, appContext: 'client' }); },
+  });
 
   function startNew() { setItems([]); setLoc(''); setWhen('now'); setStep(1); setMode('new'); }
 
@@ -1357,26 +1370,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
     const req = (mine || []).find((r) => r.id === reqId);
     if (req) setReviewReq(req);
   }
-  async function approve(reqId, adj) {
-    setBusy(true); setBusyId(reqId); setMsg('');
-    try {
-      await approveRequest(reqId, adj);
-      // find the operator on this job so we can offer an honest rating
-      const req = (mine || []).find((r) => r.id === reqId);
-      let assignmentId = null, rateeName = null;
-      for (const it of (req?.request_items || [])) {
-        for (const a of (it.assignments || [])) {
-          if (['complete', 'approved'].includes(a.status) && a.operator_id) { assignmentId = a.id; rateeName = a.operator?.full_name || 'the operator'; break; }
-        }
-        if (assignmentId) break;
-      }
-      setReviewReq(null);
-      await load();
-      if (assignmentId) setRatePrompt({ assignmentId, rateeName });
-      // no inline message — the green "Payment cleared · $X" toast carries the moment
-    }
-    catch (e) { setMsg('Approve failed: ' + friendly(e)); logError('approve', e, { correlationId: assignmentId, appContext: 'client' }); throw e; } finally { setBusy(false); setBusyId(null); }
-  }
+  // Approval → Stripe capture now runs through useClientPayFlow (beginApproval), same as Home.
   async function cancel(reqId) {
     setBusy(true); setBusyId(reqId); setMsg('');
     try { await cancelRequest(reqId); await load(); setMsg('Job cancelled.'); }
@@ -1535,8 +1529,9 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={null}
-      onPosted={() => { setSheetOpen(false); load(); }}
+      onPosted={async (id) => { setSheetOpen(false); await load(); if (id) payJob(id); }}
     />
+    {PaySheet}
     <RateJob
       visible={!!ratePrompt}
       assignmentId={ratePrompt?.assignmentId}
@@ -1547,7 +1542,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
       visible={!!reviewReq}
       request={reviewReq}
       onClose={() => setReviewReq(null)}
-      onConfirm={(adj) => approve(reviewReq.id, adj)}
+      onConfirm={(adj) => { const id = reviewReq.id; setReviewReq(null); beginApproval(id, adj); }}
     />
     </View>
   );

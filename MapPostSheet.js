@@ -119,9 +119,9 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
       // Carry trade_id so the run/compliance layer can resolve the trade (run_style,
       // tier). Without it, map-posted runs wouldn't be detected as runs.
       const item = { kind, type: typeName, trade_id: trade.id || null, qty, rate: rateFor(typeName, kind), priceMode: kind === 'task' ? 'job' : 'hour', hire: null, tickets: kind === 'crew' ? ['White Card'] : [] };
-      await createRequest({ when_type: when, address_text: loc, lat: coords.lat, lng: coords.lng, duration_hours: 4, items: [item], scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0 });
+      const newId = await createRequest({ when_type: when, address_text: loc, lat: coords.lat, lng: coords.lng, duration_hours: 4, items: [item], scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0 });
       setBusy(false);
-      onPosted && onPosted();
+      onPosted && onPosted(newId);
       onClose && onClose(true);
     } catch (e) {
       setBusy(false);

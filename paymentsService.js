@@ -4,40 +4,35 @@
 import { Linking } from 'react-native';
 import { supabase } from './supabaseClient';
 
-// Ask the server to build a Checkout Session for a job (amount computed SERVER-SIDE from the
-// request), then open Stripe's hosted payment page. Returns { url, session_id, amount_cents }.
-export async function startJobCheckout(requestId, tipCents = 0) {
-  const { data, error } = await supabase.functions.invoke('create-checkout', { body: { request_id: requestId, tip_cents: Math.max(0, Math.floor(tipCents || 0)) } });
-  if (error) {
-    let detail = error.message || String(error);
-    try { if (error.context?.json) { const b = await error.context.json(); if (b?.error || b?.detail) detail = b.detail || b.error; } } catch (_) {}
-    throw new Error(detail);
-  }
-  if (!data?.url) throw new Error('Could not start the payment.');
-  await Linking.openURL(data.url);
-  return data;   // { url, session_id, amount_cents }
-}
-
-// After the client returns from the hosted page, confirm whether it was paid. Returns
-// { status: 'paid'|'pending'|'cancelled', paid: bool }.
-export async function checkJobPayment(sessionId) {
-  const { data, error } = await supabase.functions.invoke('checkout-status', { body: { session_id: sessionId } });
-  if (error) {
-    let detail = error.message || String(error);
-    try { if (error.context?.json) { const b = await error.context.json(); if (b?.error || b?.detail) detail = b.detail || b.error; } } catch (_) {}
-    throw new Error(detail);
-  }
-  return data || { status: 'pending', paid: false };
-}
-
+// Invoke an Edge Function WITH the user's access token explicitly attached. supabase.functions.invoke
+// doesn't always forward the session (it can fall back to the anon key → the function sees no user
+// and 401s 'not_authenticated'), so we pass the token by hand — the reliable fix.
 async function invoke(fn, body) {
-  const { data, error } = await supabase.functions.invoke(fn, { body: body || {} });
+  const { data: { session } } = await supabase.auth.getSession();
+  const { data, error } = await supabase.functions.invoke(fn, {
+    body: body || {},
+    headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined,
+  });
   if (error) {
     let detail = error.message || String(error);
     try { if (error.context?.json) { const b = await error.context.json(); if (b?.error || b?.detail) detail = b.detail || b.error; } } catch (_) {}
     throw new Error(detail);
   }
   return data;
+}
+
+// Ask the server to build a Checkout Session for a job (amount computed SERVER-SIDE from the
+// request), then open Stripe's hosted payment page. Returns { url, session_id, amount_cents }.
+export async function startJobCheckout(requestId, tipCents = 0) {
+  const data = await invoke('create-checkout', { request_id: requestId, tip_cents: Math.max(0, Math.floor(tipCents || 0)) });
+  if (!data?.url) throw new Error('Could not start the payment.');
+  await Linking.openURL(data.url);
+  return data;   // { url, session_id, amount_cents }
+}
+
+// After the client returns from the hosted page, confirm the payment state.
+export async function checkJobPayment(sessionId) {
+  return (await invoke('checkout-status', { session_id: sessionId })) || { status: 'pending' };
 }
 
 // Client approves the work → capture the held funds and pay out the worker(s).
