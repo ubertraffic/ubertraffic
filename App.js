@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, PanResponder,
-  Animated, Dimensions, Pressable, Keyboard, Modal, Easing, Alert,
+  Animated, Dimensions, Pressable, Keyboard, Modal, Easing,
 } from 'react-native';
 import { supabase } from './supabaseClient';
-import { startJobCheckout, checkJobPayment } from './paymentsService';
+import PayJobSheet from './PayJobSheet';
 import { createRequest, listMyRequests } from './requestsService';
 import { submitRating, myRatingForAssignment } from './ratingsService';
 import { searchAddress, reverseGeocode } from './geocodeService';
@@ -898,6 +898,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
   const [activeNow, setActiveNow] = useState(null);
   const [coverage, setCoverage] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [payReq, setPayReq] = useState(null);   // { id, label, estimateCents } for the pay sheet
   const load = useCallback(async () => {
     try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); } catch (e) { setMine((p) => (p == null ? [] : p)); }
     try { setMapJobs(await getMapJobs()); } catch (_) { /* map just shows empty */ }
@@ -977,7 +978,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
         actions: [
           isReady ? { label: 'Review & pay', tone: 'green', fn: () => openReview(j.requestId) } : null,
           j.assignedName ? { label: j.crewSize > 1 ? 'Message crew' : `Message ${j.assignedName.split(' ')[0]}`, tone: 'ready', closesMap: true, fn: () => messageForRaw(j) } : null,
-          { label: 'Pay securely (test)', tone: 'ready', fn: () => payJob(j.requestId) },
+          { label: 'Pay securely', tone: 'ready', fn: () => payJob(j.requestId) },
           j.status !== 'done' ? { label: 'Re-post to pool', tone: 'ghost', fn: () => repost(j.requestId) } : null,
           j.status !== 'done' ? { label: 'Cancel job', tone: 'danger', fn: () => cancel(j.requestId) } : null,
         ].filter(Boolean),
@@ -1023,23 +1024,18 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
     setBusy(true); setMsg('');
     try { await repostRequest(reqId); await load(); } catch (e) { setMsg('Re-post failed: ' + friendly(e)); } finally { setBusy(false); }
   }
-  // Stripe test payment (increment 1): opens the hosted Checkout for this job, then confirms.
-  // Additive — does NOT touch the approve/settlement path yet. Amount is computed server-side.
-  async function payJob(reqId) {
-    try {
-      const { session_id } = await startJobCheckout(reqId);
-      Alert.alert('Secure payment opened', 'Finish paying on the Stripe page, then come back and tap “I’ve paid”.', [
-        { text: 'Not yet', style: 'cancel' },
-        { text: 'I’ve paid', onPress: async () => {
-          try {
-            const r = await checkJobPayment(session_id);
-            Alert.alert(r.paid ? 'Payment received ✓' : 'Not paid yet',
-              r.paid ? 'The test payment went through.' : 'We didn’t see it as paid yet — if you completed it, try again in a moment.');
-            load();
-          } catch (e) { Alert.alert('Couldn’t confirm', e.message || String(e)); }
-        } },
-      ]);
-    } catch (e) { Alert.alert('Payment error', e.message || String(e)); }
+  // Stripe payment (test mode): open the polished pay sheet for this job. Additive — does NOT touch
+  // the approve/settlement path yet, so it's safe to test now and integrate at approval later.
+  function payJob(reqId) {
+    const req = (mine || []).find((r) => r.id === reqId);
+    const hrs = req?.duration_hours || 4;
+    let cents = 0;
+    for (const it of (req?.request_items || [])) {
+      const rate = Number(it.rate) || 0, qty = Number(it.qty) || 1;
+      cents += Math.round(rate * qty * (it.price_mode === 'job' ? 1 : hrs) * 100);
+    }
+    const label = req?.request_items?.[0]?.type || 'Job';
+    setPayReq({ id: reqId, label, estimateCents: cents });
   }
   const onHubAction = (j) => messageForRaw(j._raw);
   return (
@@ -1176,6 +1172,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
       onPosted={() => { setSheetOpen(false); load(); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
+    <PayJobSheet visible={!!payReq} requestId={payReq?.id} label={payReq?.label} estimateCents={payReq?.estimateCents} onClose={() => setPayReq(null)} onPaid={() => load()} />
     <JobChat
       visible={!!chat}
       onClose={() => { setChat(null); load(); }}
