@@ -130,3 +130,36 @@ export async function submitSignoff(assignmentId, signer, typedName = null, lat 
   if (error) throw error;
   return true;
 }
+
+// ---- safety record (read helper) -------------------------------------------
+
+// Parse the job_events already embedded on an assignment (from listMyRequestsFull) into a
+// display-ready safety record for the client sign-off screen. Pure/read-only — no new fetch.
+// This is a SHARED RECORD of what was captured on site; it is NOT a safety guarantee.
+export function safetyRecordFromEvents(events) {
+  const evs = Array.isArray(events) ? events : [];
+  const prestartEv = evs.find((e) => e.kind === 'prestart');
+  const photos = evs
+    .filter((e) => e.kind === 'photo' && e.context && e.context.photo_url)
+    .map((e) => ({ path: e.context.photo_url, kind: e.context.photo_kind || null, at: e.created_at }));
+  const signoffs = evs.filter((e) => e.kind === 'signoff');
+  const workerSignoff = signoffs.find((e) => e.context && e.context.signer === 'worker') || null;
+  const clientSignoff = signoffs.find((e) => e.context && e.context.signer === 'client') || null;
+  const checkin = evs.find((e) => e.kind === 'checkin');
+  return {
+    prestart: prestartEv ? {
+      triggers: (prestartEv.context && prestartEv.context.triggers) || {},
+      hrcw: !!(prestartEv.context && prestartEv.context.hrcw),
+      swmsAck: !!(prestartEv.context && prestartEv.context.swms_ack),
+      at: prestartEv.created_at,
+    } : null,
+    photos,
+    checkin: checkin ? {
+      flagged: !!(checkin.context && checkin.context.flagged),
+      gpsOverride: !!(checkin.context && checkin.context.override),
+      at: checkin.created_at,
+    } : null,
+    workerSignoff: workerSignoff ? { name: (workerSignoff.context && workerSignoff.context.typed_name) || null, at: workerSignoff.created_at } : null,
+    clientSignoff: clientSignoff ? { name: (clientSignoff.context && clientSignoff.context.typed_name) || null, at: clientSignoff.created_at } : null,
+  };
+}

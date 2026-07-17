@@ -9,6 +9,7 @@ import { supabase } from './supabaseClient';
 import { submitRating, setRatingExtras } from './ratingsService';
 import { GOOD_UNIT_TAGS } from './reputation';
 import { coworkersOnJob, vouchForPeer } from './communityService';
+import SafetyRecordCard from './SafetyRecordCard';
 import { logError } from './errorService';
 import { listMaterialClaims, resolveMaterialClaim, submitMaterialClaim } from './completionService';
 import { verifiedCredentialsFor } from './credentialsService';
@@ -51,6 +52,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
           status: a.status,
           done,
           pay: done ? perItem : 0,
+          events: a.job_events || [],   // embedded from listMyRequestsFull — feeds the safety record
         });
         if (done) base += perItem;
       }
@@ -196,6 +198,17 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
               </>
             )}
           </View>
+
+          {/* SAFETY RECORD — what was captured on site + the client's own sign-off. A shared
+              record and an acknowledgement, not a safety guarantee (honest-language rule). */}
+          {info?.crew?.some((m) => m.done) && (
+            <View style={S_.revTickets}>
+              <Text style={S_.revTicketsLabel}>Safety record</Text>
+              {info.crew.filter((m) => m.done).map((m) => (
+                <SafetyRecordCard key={m.assignment_id} member={m} />
+              ))}
+            </View>
+          )}
 
           {/* amount breakdown — reflects adjustments live */}
           <View style={S_.revMoney}>
