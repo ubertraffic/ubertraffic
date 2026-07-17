@@ -42,16 +42,22 @@ Deno.serve(async (req) => {
     const requestId = (body?.request_id || "").toString();
     if (!requestId) return json({ error: "missing_request_id" }, 400);
 
-    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!serviceKey) return json({ error: "server_misconfigured", detail: "SUPABASE_SERVICE_ROLE_KEY is not set on this function — it can't read the job. Add it in the function's secrets." }, 500);
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
 
     // The request must exist AND belong to the caller — never let someone pay against a job they don't own.
-    const { data: request } = await admin
+    // NB: we surface the real DB error instead of swallowing it — a swallowed error here used to masquerade
+    // as "request_not_found" (e.g. a missing column, or a non-service-role key hitting RLS).
+    const { data: request, error: reqErr } = await admin
       .from("requests").select("id, client_id, duration_hours, address_text, travel_cents").eq("id", requestId).maybeSingle();
-    if (!request) return json({ error: "request_not_found" }, 404);
-    if ((request as any).client_id !== user.id) return json({ error: "not_your_request" }, 403);
+    if (reqErr) return json({ error: "request_lookup_failed", detail: `${reqErr.message}${reqErr.hint ? ` — ${reqErr.hint}` : ""}`, request_id: requestId }, 500);
+    if (!request) return json({ error: "request_not_found", detail: `No job row matches id ${requestId}. If this job clearly exists, the function is likely reading a different project or its SUPABASE_SERVICE_ROLE_KEY isn't a true service-role key (so RLS hides the row).`, request_id: requestId }, 404);
+    if ((request as any).client_id !== user.id) return json({ error: "not_your_request", detail: "This job belongs to a different account." }, 403);
 
-    const { data: items } = await admin
+    const { data: items, error: itemsErr } = await admin
       .from("request_items").select("type, rate, qty, price_mode").eq("request_id", requestId);
+    if (itemsErr) return json({ error: "items_lookup_failed", detail: itemsErr.message, request_id: requestId }, 500);
     const list = (items as any[]) || [];
 
     // FEE MODEL (must mirror capture-payment):
