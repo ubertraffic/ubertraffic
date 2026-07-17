@@ -2,7 +2,8 @@
 // Self-contained. Props: onClose()
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
-import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential } from './credentialsService';
+import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential, isAutoVerifiable } from './credentialsService';
+import CredentialEvidence from './CredentialEvidence';
 import { getMyProfile } from './operatorService';
 import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn } from './accountService';
 import { formatDMY, dmyToISO, isoToDMY } from './dateFormat';
@@ -32,6 +33,7 @@ export default function CredentialsScreen({ onClose }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
+  const [evidenceFor, setEvidenceFor] = useState(null);   // credential_type id whose photo panel is open
   const [abnSaved, setAbnSaved] = useState(null);     // stored ABN (digits) or null
   const [abnStatus, setAbnStatus] = useState(null);   // 'valid' | 'verified' | null
   const [abnInput, setAbnInput] = useState('');
@@ -288,41 +290,63 @@ export default function CredentialsScreen({ onClose }) {
         {!!msg && <Text style={styles.err}>{msg}</Text>}
         {types.map((t) => {
           const held = heldById[t.id];
+          const ds = displayStatus(held);
+          const autoVerify = isAutoVerifiable(t);
+          // Photo-evidence path: held, not yet verified, and NO free register check (driver's
+          // licence, HRWL, insurance, trade licences). The honest interim for those.
+          const canEvidence = held && ds !== 'verified' && !autoVerify;
           return (
-            <View key={t.id} style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{t.name}</Text>
-                <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${isoToDMY(held.expires_at)}` : ''}</Text>
-              </View>
-              {held ? (
-                <View style={styles.heldRight}>
-                  {/* self-declared cover (insurance/licence) isn't register-verified in this build */}
-                  {held.status !== 'verified' && !t.self_declared && (
-                    <TouchableOpacity
-                      style={styles.verifyBtn}
-                      onPress={() => verify(held.id)}
-                      disabled={verifying === held.id}
-                    >
-                      <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Verify'}</Text>
-                    </TouchableOpacity>
-                  )}
-                  {(() => {
-                    const ds = displayStatus(held);
-                    const selfDecl = !!t.self_declared;
-                    const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
-                    const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
-                    return (
-                      <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
-                        <Text style={[styles.statusText, { color }]}>{label}</Text>
-                      </View>
-                    );
-                  })()}
-                  <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
+            <View key={t.id}>
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.name}>{t.name}</Text>
+                  <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${isoToDMY(held.expires_at)}` : ''}</Text>
                 </View>
-              ) : (
-                <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(t)}>
-                  <Text style={styles.addText}>+ Add</Text>
-                </TouchableOpacity>
+                {held ? (
+                  <View style={styles.heldRight}>
+                    {/* register check only where we actually have a live register (White Card etc.) */}
+                    {held.status !== 'verified' && autoVerify && (
+                      <TouchableOpacity
+                        style={styles.verifyBtn}
+                        onPress={() => verify(held.id)}
+                        disabled={verifying === held.id}
+                      >
+                        <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Verify'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {/* photo ID toggle for the no-register interim */}
+                    {canEvidence && (
+                      <TouchableOpacity
+                        style={styles.photoBtn}
+                        onPress={() => setEvidenceFor(evidenceFor === t.id ? null : t.id)}
+                      >
+                        <Text style={styles.photoBtnT}>{held.evidence_url ? '📷 ✓' : '📷 ID'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {(() => {
+                      const selfDecl = !!t.self_declared;
+                      const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
+                      const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
+                      return (
+                        <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
+                          <Text style={[styles.statusText, { color }]}>{label}</Text>
+                        </View>
+                      );
+                    })()}
+                    <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(t)}>
+                    <Text style={styles.addText}>+ Add</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {canEvidence && evidenceFor === t.id && (
+                <CredentialEvidence
+                  credentialId={t.id}
+                  existingPath={held.evidence_url}
+                  onDone={() => refresh()}
+                />
               )}
             </View>
           );
@@ -345,6 +369,8 @@ const styles = StyleSheet.create({
   heldRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   verifyBtn: { backgroundColor: C.indigo, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 7 },
   verifyText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  photoBtn: { borderWidth: 1.5, borderColor: C.line, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7 },
+  photoBtnT: { color: C.indigo, fontWeight: '700', fontSize: 12 },
   statusPill: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6 },
   abnCard: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, ...shadowSm },
   abnLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 },
