@@ -62,6 +62,10 @@ Applied through **0063**. Notable recent:
 ## 🐞 Known issues / open
 1. **`submit_abn` drops the ABN digits** — sets `company_verify_status = pending` but leaves
    `company_abn` null. The number the user types isn't saved.
+1a. **ABN verification is not real yet (MUST fix before live)** — the same ABN was accepted on a
+   second account and approved manually. In production: (a) verify against the real ABR (the
+   `verify-abn` function), (b) enforce **one verified business per ABN** (reject/flag duplicates),
+   and (c) no blanket manual approve. Fine for test only.
 2. **Hire gate needs manual approval** — no auto-verify. For testing, `can_hire` is unlocked
    by SQL (or the admin Approve button). Test accounts currently unlocked via SQL.
 3. **PR #24** (the core payment wiring fix) is **open, not merged**.
