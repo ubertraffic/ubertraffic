@@ -21,6 +21,7 @@ import CloseOutCard from './CloseOutCard';
 import PrestartCard from './PrestartCard';
 import RunCloseOutCard from './RunCloseOutCard';
 import RunBrief from './RunBrief';
+import AcceptCelebration from './AcceptCelebration';
 import { complianceReady } from './complianceService';
 
 // A run = a task whose trade carries a run_style (set in migration 0045). The open
@@ -336,6 +337,7 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [expandedBios, setExpandedBios] = useState({});  // job cards whose full duties/bio is expanded
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState(null);   // which job/spot is acting (per-button spinner)
+  const [celebrate, setCelebrate] = useState(null);   // "it's a match" payload after a successful accept
   const [msg, setMsg] = useState('');
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
@@ -444,7 +446,15 @@ export function OperatorHome({ session, onOpenProfile }) {
   }
   async function accept(itemId) {
     setBusy(true); setBusyId(itemId); setMsg('');
-    try { await acceptSpot(itemId); tap('success'); setMsg('✓ Spot accepted'); await refresh(); }
+    // capture the job's details BEFORE refresh clears the feed, for the celebration
+    const d = (jobs || []).find((x) => x.request_item?.id === itemId);
+    const it = d?.request_item; const r = it?.request;
+    try {
+      await acceptSpot(itemId); tap('success');
+      // the accept-lock has already succeeded server-side — THIS is just the celebration
+      setCelebrate({ type: it?.type, rate: it?.rate, suburb: suburbOf(r?.address_text), urgent: r?.when_type === 'now' });
+      await refresh();
+    }
     catch (e) { setMsg('Accept failed: ' + friendly(e)); logError('accept', e, { correlationId: itemId, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
   }
   // Pass — soft, session-local. Tidies your list; job stays live for others.
@@ -808,6 +818,7 @@ export function OperatorHome({ session, onOpenProfile }) {
       peerId={chat?.a?.request_item?.request?.client_id}
       onOpenProfile={onOpenProfile}
     />
+    <AcceptCelebration data={celebrate} onDone={() => setCelebrate(null)} />
     <CloseOutSheet
       assignmentId={closeOut}
       onComplete={async () => { const id = closeOut; setCloseOut(null); await mapComplete(id); }}
