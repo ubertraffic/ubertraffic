@@ -1,13 +1,20 @@
 // CredentialsScreen.js — operator manages their tickets & licences (Pillar 2).
 // Self-contained. Props: onClose()
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential } from './credentialsService';
 import { getMyProfile } from './operatorService';
+import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn } from './accountService';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 import Icon from './Icon';
 
-const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Licence', induction: 'Induction' };
+const formatAbn = (clean) => (clean || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4');
+
+const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Licence', induction: 'Induction', licence: 'Trade licence', insurance: 'Insurance' };
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T00:00:00').getTime());
+// display status: self-declared cover expired past its date shows Expired even when 'unverified'.
+const displayStatus = (held) => (held && held.expires_at && held.expires_at < todayISO()) ? 'expired' : (held ? held.status : 'none');
 const STATUS_COLOR = { verified: C.green, unverified: C.amber, expired: C.red, suspended: C.red, review: C.amber, none: C.mute };
 const STATUS_LABEL = { verified: '✓ Verified', unverified: 'Unverified', expired: 'Expired', suspended: 'Suspended', review: 'In review' };
 
@@ -18,9 +25,49 @@ export default function CredentialsScreen({ onClose }) {
   const [adding, setAdding] = useState(null);   // credential_type being added
   const [number, setNumber] = useState('');
   const [expiry, setExpiry] = useState('');
+  const [provider, setProvider] = useState('');   // insurer/provider (only for needs_provider types)
+  const [cardNumber, setCardNumber] = useState('');   // card number (licences: separate from licence number)
+  const [credState, setCredState] = useState('NSW');  // issuing state/jurisdiction (licences)
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
+  const [abnSaved, setAbnSaved] = useState(null);     // stored ABN (digits) or null
+  const [abnStatus, setAbnStatus] = useState(null);   // 'valid' | 'verified' | null
+  const [abnInput, setAbnInput] = useState('');
+  const [abnBusy, setAbnBusy] = useState(false);
+  const [abnMsg, setAbnMsg] = useState('');
+
+  async function verifyAbn() {
+    setAbnBusy(true); setAbnMsg('');
+    try {
+      const r = await verifyMyAbn();
+      if (r && r.status === 'verified') { setAbnStatus('verified'); setAbnMsg('✓ Verified against the ABR.'); }
+      else setAbnMsg(r && r.detail ? `Needs a check: ${r.detail}` : 'Sent for manual review.');
+    } catch (e) { setAbnMsg('Verify failed: ' + (e.message || String(e))); } finally { setAbnBusy(false); }
+  }
+  const [idSaved, setIdSaved] = useState(null);       // { legal_name, date_of_birth } or null
+  const [idEditing, setIdEditing] = useState(false);
+  const [idName, setIdName] = useState('');
+  const [idDob, setIdDob] = useState('');
+  const [idBusy, setIdBusy] = useState(false);
+  const [idMsg, setIdMsg] = useState('');
+
+  async function saveIdentity() {
+    setIdBusy(true); setIdMsg('');
+    try {
+      const r = await setMyIdentity(idName, idDob);
+      setIdSaved({ legal_name: r.legal_name, date_of_birth: r.date_of_birth });
+      setIdEditing(false);
+    } catch (e) { setIdMsg(e.message || String(e)); } finally { setIdBusy(false); }
+  }
+
+  async function saveAbn() {
+    setAbnBusy(true); setAbnMsg('');
+    try {
+      const r = await setMyAbn(abnInput);
+      setAbnSaved(r.abn); setAbnInput('');
+    } catch (e) { setAbnMsg(e.message || String(e)); } finally { setAbnBusy(false); }
+  }
 
   async function verify(id) {
     setVerifying(id); setMsg('');
@@ -36,7 +83,12 @@ export default function CredentialsScreen({ onClose }) {
     try {
       const [t, m, p] = await Promise.all([listCredentialTypes(), listMyCredentials(), getMyProfile().catch(() => null)]);
       setTypes(t); setMine(m);
-      if (p) setCaps({ can_work: p.can_work, can_task: p.can_task });
+      if (p) {
+        setCaps({ can_work: p.can_work, can_task: p.can_task });
+        setAbnSaved(p.abn || null);
+        setAbnStatus(p.abn_status || null);
+        setIdSaved(p.legal_name ? { legal_name: p.legal_name, date_of_birth: p.date_of_birth } : null);
+      }
     } catch (e) { setMsg(e.message || String(e)); setTypes([]); }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
@@ -44,12 +96,24 @@ export default function CredentialsScreen({ onClose }) {
   const heldById = {};
   mine.forEach((c) => { heldById[c.credential_id] = c; });
 
+  function resetAddForm() { setAdding(null); setNumber(''); setExpiry(''); setProvider(''); setCardNumber(''); setCredState('NSW'); setMsg(''); }
   async function save() {
     if (!adding) return;
+    // field-aware validation
+    if (adding.requires_card_no && !cardNumber.trim()) { setMsg('This licence needs a card number.'); return; }
+    if (adding.expiry_rule === 'required' && !expiry.trim()) { setMsg('This credential needs an expiry date.'); return; }
+    if (expiry.trim() && !validDate(expiry.trim())) { setMsg('Enter the expiry as YYYY-MM-DD.'); return; }
     setBusy(true); setMsg('');
     try {
-      await addMyCredential({ credential_id: adding.id, number, expires_at: expiry || null });
-      setAdding(null); setNumber(''); setExpiry('');
+      await addMyCredential({
+        credential_id: adding.id,
+        number,
+        card_number: adding.requires_card_no ? cardNumber : null,
+        expires_at: adding.expiry_rule === 'none' ? null : (expiry.trim() || null),
+        state: adding.requires_card_no ? credState : null,
+        provider,
+      });
+      resetAddForm();
       await refresh();
     } catch (e) { setMsg(e.message || String(e)); } finally { setBusy(false); }
   }
@@ -65,16 +129,42 @@ export default function CredentialsScreen({ onClose }) {
     return (
       <View style={styles.screen}>
         <View style={styles.head}>
-          <TouchableOpacity onPress={() => { setAdding(null); setNumber(''); setExpiry(''); }}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+          <TouchableOpacity onPress={resetAddForm}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
           <Text style={styles.h1}>{adding.name}</Text>
-          <Text style={styles.tier}>{TIER_LABEL[adding.tier]}{adding.renews_years ? ` · renews every ${adding.renews_years}yr` : ''}</Text>
+          <Text style={styles.tier}>{adding.needs_provider ? 'Insurance' : adding.self_declared ? 'Trade licence' : (TIER_LABEL[adding.tier] || adding.tier)}{adding.renews_years ? ` · renews every ${adding.renews_years}yr` : ''}</Text>
         </View>
         <ScrollView contentContainerStyle={{ padding: S.xl }}>
-          <Text style={styles.label}>Card / licence number</Text>
-          <TextInput style={styles.input} value={number} onChangeText={setNumber} placeholder="e.g. 1234-5678" placeholderTextColor={C.mute2} autoCapitalize="characters" />
-          <Text style={styles.label}>Expiry date (optional)</Text>
-          <TextInput style={styles.input} value={expiry} onChangeText={setExpiry} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} />
-          <Text style={styles.hint}>You'll be able to upload a photo of the card and get it verified. For now it's saved as unverified — verified tickets unlock high-risk jobs.</Text>
+          {adding.needs_provider && (
+            <>
+              <Text style={styles.label}>Insurer / provider</Text>
+              <TextInput style={styles.input} value={provider} onChangeText={setProvider} placeholder="e.g. Allianz, CGU" placeholderTextColor={C.mute2} />
+            </>
+          )}
+          <Text style={styles.label}>{adding.needs_provider ? 'Policy number' : adding.requires_card_no ? 'Licence number' : 'Card / ticket number'}</Text>
+          <TextInput style={styles.input} value={number} onChangeText={setNumber} placeholder={adding.needs_provider ? 'e.g. POL-12345678' : 'e.g. 1234 5678'} placeholderTextColor={C.mute2} autoCapitalize="characters" />
+          {adding.requires_card_no && (
+            <>
+              <Text style={styles.label}>Card number</Text>
+              <TextInput style={styles.input} value={cardNumber} onChangeText={setCardNumber} placeholder="the number printed on the card" placeholderTextColor={C.mute2} autoCapitalize="characters" />
+              <Text style={styles.label}>Issuing state</Text>
+              <View style={styles.stateRow}>
+                {['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'].map((st) => (
+                  <TouchableOpacity key={st} style={[styles.stateChip, credState === st && styles.stateChipOn]} onPress={() => setCredState(st)}>
+                    <Text style={[styles.stateChipT, credState === st && styles.stateChipTOn]}>{st}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+          {adding.expiry_rule !== 'none' && (
+            <>
+              <Text style={styles.label}>Expiry date{adding.expiry_rule === 'required' ? '' : ' (optional)'}</Text>
+              <TextInput style={styles.input} value={expiry} onChangeText={setExpiry} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+            </>
+          )}
+          <Text style={styles.hint}>{adding.self_declared
+            ? "Saved as self-declared — we record what you enter and flag it as expired past its date. We don't verify it against a register."
+            : "You'll be able to upload a photo of the card and get it verified. For now it's saved as unverified — verified tickets unlock high-risk jobs."}</Text>
           {!!msg && <Text style={styles.err}>{msg}</Text>}
           <TouchableOpacity style={[styles.primary, busy && { opacity: 0.6 }]} onPress={save} disabled={busy}>
             <Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save credential'}</Text>
@@ -108,6 +198,86 @@ export default function CredentialsScreen({ onClose }) {
             </View>
           </View>
         )}
+        {/* Identity — legal name + DOB. The anchor a register/DVS check matches against. Sensitive PII. */}
+        <View style={styles.abnCard}>
+          <Text style={styles.abnLabel}>Your identity</Text>
+          {idSaved && !idEditing ? (
+            <View style={styles.abnRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.idDisplayName}>{idSaved.legal_name}</Text>
+                <Text style={styles.abnOk}>DOB {idSaved.date_of_birth || '—'} · on file</Text>
+              </View>
+              <TouchableOpacity onPress={() => { setIdName(idSaved.legal_name || ''); setIdDob(idSaved.date_of_birth || ''); setIdEditing(true); setIdMsg(''); }}>
+                <Text style={styles.abnEdit}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.abnHint}>Your full legal name and date of birth — used only to check your tickets & licences against the registers, never shown publicly.</Text>
+              <Text style={styles.label}>Full legal name</Text>
+              <TextInput style={styles.input} value={idName} onChangeText={setIdName} placeholder="As on your licence / White Card" placeholderTextColor={C.mute2} />
+              <Text style={styles.label}>Date of birth</Text>
+              <TextInput style={styles.input} value={idDob} onChangeText={setIdDob} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+              {!!idMsg && <Text style={styles.err}>{idMsg}</Text>}
+              <TouchableOpacity style={[styles.abnSave, idBusy && { opacity: 0.5 }]} disabled={idBusy} onPress={saveIdentity}>
+                <Text style={styles.abnSaveT}>{idBusy ? 'Saving…' : 'Save identity'}</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
+        {/* ABN — contractor status. Format + checksum only (honest: NOT register-verified).
+            Non-blocking: a nudge, never a gate. Register verification is a deferred server-side step. */}
+        <View style={styles.abnCard}>
+          <Text style={styles.abnLabel}>Your ABN</Text>
+          {abnSaved ? (
+            <>
+              <View style={styles.abnRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.abnValue}>{formatAbn(abnSaved)}</Text>
+                  <Text style={[styles.abnOk, abnStatus !== 'verified' && { color: C.mute }]}>
+                    {abnStatus === 'verified' ? '✓ Verified against the ABR' : 'Valid format · not yet register-checked'}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => { setAbnInput(abnSaved); setAbnSaved(null); setAbnMsg(''); }}>
+                  <Text style={styles.abnEdit}>Edit</Text>
+                </TouchableOpacity>
+              </View>
+              {abnStatus !== 'verified' && (
+                <TouchableOpacity style={[styles.abnSave, abnBusy && { opacity: 0.5 }]} disabled={abnBusy} onPress={verifyAbn}>
+                  <Text style={styles.abnSaveT}>{abnBusy ? 'Checking…' : 'Verify against the ABR'}</Text>
+                </TouchableOpacity>
+              )}
+              {!!abnMsg && <Text style={[styles.hint, { marginTop: 8 }]}>{abnMsg}</Text>}
+            </>
+          ) : (
+            <>
+              <Text style={styles.abnHint}>
+                Add your 11-digit ABN so you can be paid properly as a contractor. Not sure of it?{' '}
+                <Text style={styles.abnLink} onPress={() => Linking.openURL('https://abr.gov.au')}>Look it up at abr.gov.au</Text>
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={abnInput}
+                onChangeText={(t) => setAbnInput(t.replace(/[^\d ]/g, '').slice(0, 14))}
+                placeholder="12 345 678 901"
+                placeholderTextColor={C.mute2}
+                keyboardType="number-pad"
+              />
+              {normalizeAbn(abnInput).length === 11 && !abnValid(abnInput) ? (
+                <Text style={styles.err}>That ABN doesn’t check out — double-check the number.</Text>
+              ) : null}
+              {!!abnMsg && <Text style={styles.err}>{abnMsg}</Text>}
+              <TouchableOpacity
+                style={[styles.abnSave, (!abnValid(abnInput) || abnBusy) && { opacity: 0.5 }]}
+                disabled={!abnValid(abnInput) || abnBusy}
+                onPress={saveAbn}
+              >
+                <Text style={styles.abnSaveT}>{abnBusy ? 'Saving…' : 'Save ABN'}</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
         {!!msg && <Text style={styles.err}>{msg}</Text>}
         {types.map((t) => {
           const held = heldById[t.id];
@@ -115,11 +285,12 @@ export default function CredentialsScreen({ onClose }) {
             <View key={t.id} style={styles.row}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.name}>{t.name}</Text>
-                <Text style={styles.sub}>{TIER_LABEL[t.tier]}{held && held.expires_at ? ` · exp ${held.expires_at}` : ''}</Text>
+                <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${held.expires_at}` : ''}</Text>
               </View>
               {held ? (
                 <View style={styles.heldRight}>
-                  {held.status !== 'verified' && (
+                  {/* self-declared cover (insurance/licence) isn't register-verified in this build */}
+                  {held.status !== 'verified' && !t.self_declared && (
                     <TouchableOpacity
                       style={styles.verifyBtn}
                       onPress={() => verify(held.id)}
@@ -128,9 +299,17 @@ export default function CredentialsScreen({ onClose }) {
                       <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Verify'}</Text>
                     </TouchableOpacity>
                   )}
-                  <View style={[styles.statusPill, { backgroundColor: (STATUS_COLOR[held.status] || C.mute) + '1A' }]}>
-                    <Text style={[styles.statusText, { color: STATUS_COLOR[held.status] || C.mute }]}>{STATUS_LABEL[held.status] || held.status}</Text>
-                  </View>
+                  {(() => {
+                    const ds = displayStatus(held);
+                    const selfDecl = !!t.self_declared;
+                    const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
+                    const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
+                    return (
+                      <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
+                        <Text style={[styles.statusText, { color }]}>{label}</Text>
+                      </View>
+                    );
+                  })()}
                   <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
                 </View>
               ) : (
@@ -160,6 +339,22 @@ const styles = StyleSheet.create({
   verifyBtn: { backgroundColor: C.indigo, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 7 },
   verifyText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   statusPill: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6 },
+  abnCard: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, ...shadowSm },
+  abnLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 },
+  abnRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  abnValue: { fontSize: 17, fontWeight: '800', color: C.ink, fontFamily: MONO, letterSpacing: 0.5 },
+  abnOk: { fontSize: 12, color: C.green, fontWeight: '700', marginTop: 3 },
+  abnEdit: { fontSize: 13, fontWeight: '700', color: C.indigo },
+  idDisplayName: { fontSize: 16, fontWeight: '800', color: C.ink },
+  abnHint: { fontSize: 13, color: C.mute, lineHeight: 18, marginBottom: 10 },
+  abnLink: { color: C.indigo, fontWeight: '700' },
+  abnSave: { backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
+  abnSaveT: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  stateRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  stateChip: { borderWidth: 1.5, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
+  stateChipOn: { borderColor: C.indigo, backgroundColor: C.indigo + '12' },
+  stateChipT: { fontSize: 13, fontWeight: '700', color: C.mute },
+  stateChipTOn: { color: C.indigo },
   capBanner: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, gap: 8, ...shadowSm },
   capRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   capIcon: { fontSize: 15, fontWeight: '800', color: C.mute, width: 18, textAlign: 'center' },

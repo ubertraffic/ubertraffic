@@ -72,6 +72,80 @@ export async function submitBusinessAbn(abn) {
   return data;
 }
 
+// ── Worker ABN (sole-trader / contractor) ────────────────────────────────────
+// Separate from the hire-side business-ABN gate above. Deterministic format+checksum ONLY,
+// client-side (no key needed). Stored as abn_status='valid' meaning "format checked" — this is
+// NOT register verification. True "verified against the ABR register" is a deferred, server-side
+// step (a free ABR GUID + an Edge Function); it must never be self-granted here. Honest labelling.
+
+export function normalizeAbn(abn) { return String(abn || '').replace(/\D/g, ''); }
+
+// The official ABR ABN validation: 11 digits, subtract 1 from the first, weighted sum mod 89 === 0.
+export function abnValid(abn) {
+  const d = normalizeAbn(abn);
+  if (!/^\d{11}$/.test(d)) return false;
+  const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
+  const nums = d.split('').map(Number);
+  nums[0] -= 1;
+  const sum = nums.reduce((s, n, i) => s + n * weights[i], 0);
+  return sum % 89 === 0;
+}
+
+// Save the worker's own ABN on their profile. Only stores when the checksum passes; status is
+// 'valid' (format checked), never 'verified' — that's the later server-side ABR step.
+export async function setMyAbn(abn) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in.');
+  const clean = normalizeAbn(abn);
+  if (!/^\d{11}$/.test(clean)) throw new Error('An ABN is 11 digits.');
+  if (!abnValid(clean)) throw new Error('That ABN doesn’t check out — double-check the number.');
+  const { error } = await supabase
+    .from('profiles')
+    .update({ abn: clean, abn_status: 'valid' })
+    .eq('id', u.user.id);
+  if (error) throw error;
+  return { abn: clean, abn_status: 'valid' };
+}
+
+// Verify the caller's stored ABN against the free ABR ABN Lookup register (server-side Edge
+// Function 'verify-abn' — the GUID lives there, never in the app). Flips abn_status to 'verified'
+// on a real match. Returns { status: 'verified' | 'review', detail? }. Mirrors verifyMyCredential.
+export async function verifyMyAbn() {
+  const { data, error } = await supabase.functions.invoke('verify-abn', { body: {} });
+  if (error) {
+    let detail = error.message || String(error);
+    try {
+      if (error.context && typeof error.context.json === 'function') {
+        const body = await error.context.json();
+        if (body && (body.error || body.detail)) detail = body.error || body.detail;
+      }
+    } catch (_) {}
+    throw new Error(detail);
+  }
+  return data;
+}
+
+// ── Identity (legal name + DOB) ──────────────────────────────────────────────
+// The anchor a register/DVS check must match against. Sensitive PII — collected with a
+// clear purpose line, used only for verification, never shown publicly. Stored on the profile;
+// if the display full_name isn't set yet, seed it from the legal name so the app still shows a name.
+export async function setMyIdentity(legalName, dob) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in.');
+  const name = (legalName || '').trim();
+  if (name.length < 2) throw new Error('Enter your full legal name.');
+  const d = (dob || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('Enter your date of birth as YYYY-MM-DD.');
+  const parsed = new Date(d + 'T00:00:00');
+  if (isNaN(parsed.getTime()) || parsed > new Date()) throw new Error('Enter a valid date of birth.');
+  const patch = { legal_name: name, date_of_birth: d };
+  const { data: p } = await supabase.from('profiles').select('full_name').eq('id', u.user.id).maybeSingle();
+  if (!p || !p.full_name) patch.full_name = name;   // seed the display name if empty
+  const { error } = await supabase.from('profiles').update(patch).eq('id', u.user.id);
+  if (error) throw error;
+  return { legal_name: name, date_of_birth: d };
+}
+
 // ── Public profile (Stage 1) ────────────────────────────────────────────────
 // The canonical, public-safe reputation profile for any user. Honest by design:
 // verified badges only when real, ratings carry their count, empty history flags is_new.

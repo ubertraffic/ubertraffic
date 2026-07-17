@@ -60,7 +60,7 @@ export async function getMyProfile() {
   const { data: u } = await supabase.auth.getUser();
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, role, is_online, vehicle_type, rating, rating_count, full_name, account_type, can_work, can_task, can_hire, worker_verify_status, company_verify_status')
+    .select('id, role, is_online, vehicle_type, rating, rating_count, full_name, account_type, can_work, can_task, can_hire, worker_verify_status, company_verify_status, abn, abn_status, legal_name, date_of_birth')
     .eq('id', u.user.id)
     .single();
   if (error) throw error;

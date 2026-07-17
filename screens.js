@@ -51,6 +51,7 @@ function statusWords(s) {
 import { useRealtime } from './useRealtime';
 import { cacheGet, cacheSet, cacheClearAll } from './screenCache';
 import { setRole, setOnline, setVehicle, getMyProfile, updateMyName, setMyOperatorLocation, addCapability, listMyCapabilities, removeCapability, listMyDispatches, acceptSpot, listMyAssignments, getDemandHeat } from './operatorService';
+import { setMyIdentity } from './accountService';
 import { getPosition, watchPosition } from './location';
 import { getUnreadCounts } from './messagesService';
 import { readinessForTrades } from './credentialsService';
@@ -335,6 +336,8 @@ export function OperatorHome({ session, onOpenProfile }) {
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
   const [capsOpen, setCapsOpen] = useState(false);     // "What I supply" expanded to the full editor (collapsed by default — the home stays calm)
+  const [idName, setIdName] = useState('');            // onboarding identity: full legal name
+  const [idDob, setIdDob] = useState('');              // onboarding identity: date of birth (YYYY-MM-DD)
   const [readiness, setReadiness] = useState({});      // trade_id -> { ready, missing[] }
   const [myLoc, setMyLoc] = useState(null);            // operator's own location for the map
   const [opMapJobs, setOpMapJobs] = useState([]);      // operator's assigned job sites
@@ -407,8 +410,12 @@ export function OperatorHome({ session, onOpenProfile }) {
   useRealtime(['dispatches', 'assignments'], refresh);
 
   async function becomeOperator() {
+    // Capture identity first — the anchor a register check needs (Phase 2). Validated in setMyIdentity.
+    const name = (idName || '').trim();
+    if (name.length < 2) { setMsg('Enter your full legal name.'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test((idDob || '').trim())) { setMsg('Enter your date of birth as YYYY-MM-DD.'); return; }
     setBusy(true); setMsg('');
-    try { await setRole('operator'); await addCapability('crew', 'Traffic control', 'traffic_controller'); await setVehicle('ute'); await refresh(); }
+    try { await setMyIdentity(name, idDob.trim()); await setRole('operator'); await addCapability('crew', 'Traffic control', 'traffic_controller'); await setVehicle('ute'); await refresh(); }
     catch (e) { setMsg(friendly(e)); } finally { setBusy(false); }
   }
   async function toggleOnline() {
@@ -524,6 +531,11 @@ export function OperatorHome({ session, onOpenProfile }) {
       <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
         <Text style={T.eyebrow}>Start working</Text>
         <Text style={[T.body, { marginTop: 8, marginBottom: 18 }]}>Set yourself up to receive jobs — verified, online, and matched to work near you.</Text>
+        <Text style={[T.label, { marginBottom: 6 }]}>Full legal name</Text>
+        <TextInput style={S_.input} value={idName} onChangeText={setIdName} placeholder="As it appears on your licence / White Card" placeholderTextColor={C.mute2} />
+        <Text style={[T.label, { marginBottom: 6, marginTop: 12 }]}>Date of birth</Text>
+        <TextInput style={S_.input} value={idDob} onChangeText={setIdDob} placeholder="YYYY-MM-DD" placeholderTextColor={C.mute2} keyboardType="numbers-and-punctuation" />
+        <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 18 }]}>Used only to check your tickets and licences against the registers — never shown publicly.</Text>
         <PrimaryBtn label="Set me up to work" onPress={becomeOperator} busy={busy} />
         {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
       </ScrollView>
