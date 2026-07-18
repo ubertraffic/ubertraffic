@@ -1149,16 +1149,17 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
       />
     </View>
     {/* floating content sheet — the map breathes above it */}
-    <View style={{ position: 'absolute', left: 0, right: 0, top: '52%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 26, borderTopRightRadius: 26, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: -8 }, elevation: 12 }}>
+    <View style={{ position: 'absolute', left: 0, right: 0, top: '61%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
       <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128, paddingHorizontal: 16, paddingTop: 16 }}>
-      {/* request bar — the loud hero when idle; recedes to a quiet bar when a job needs paying */}
-      <TouchableOpacity style={[S_.askDock, payMode && S_.askDockQuiet]} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
+      {/* primary post action — clean white card (the mockup style), not a heavy black bar */}
+      <TouchableOpacity onPress={() => setSheetOpen(true)} activeOpacity={0.9}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
         <View style={{ flex: 1 }}>
-          <Text style={[S_.askDockLabel, payMode && S_.askDockLabelQuiet]}>NEED SOMEONE ON SITE?</Text>
-          <Text style={[S_.askDockT, payMode ? S_.askDockTQuiet : S_.askDockTLg]}>Post a job — get help now</Text>
+          <Text style={{ fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3, color: C.ink }}>Who do you need on site?</Text>
+          <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3 }}>Post a job — crews nearby are notified instantly</Text>
         </View>
-        <View style={[S_.askDockPlus, payMode && S_.askDockPlusQuiet]}>
-          <Text style={[S_.askDockPlusT, payMode && S_.askDockPlusTQuiet]}>＋</Text>
+        <View style={{ width: 50, height: 50, borderRadius: 15, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', shadowColor: C.indigo, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } }}>
+          <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
         </View>
       </TouchableOpacity>
       {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job.
@@ -1214,9 +1215,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
             // single obvious action is the post bar above; then the live Pulse as proof.
             return (
               <>
-                <Text style={S_.homeEmptyHero}>Who do you need on site?</Text>
-                <Text style={S_.homeEmptySub}>Post a job above — the nearest crews see it in seconds.</Text>
-                <View style={[S_.rowBetween, { marginTop: 32 }]}>
+                <View style={[S_.rowBetween, { marginTop: 20 }]}>
                   <Text style={T.eyebrow}>Happening now</Text>
                   <LiveTag />
                 </View>
