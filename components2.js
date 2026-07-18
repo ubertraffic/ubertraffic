@@ -130,7 +130,7 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
         )}
       </View>
       {jobs === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : jobs.length === 0 ? <EmptyState icon="crew" title="No jobs nearby right now" sub="New work near you appears here the moment it's posted. Stay online to catch it first." />
+        : jobs.length === 0 ? <EmptyState icon="crew" title="You're first in line" sub="You're visible to sites nearby. New work drops here the moment it's posted — you'll see it before anyone else." />
         : visible.length === 0 ? <EmptyState icon="crew" title="You're all caught up" sub="You've passed on the jobs nearby for now. New ones will appear here as they're posted." />
         : visible.map((d, i) => (
           <AvailableJobCard
@@ -468,7 +468,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
     const per = it.price_mode === 'job' ? rate : rate * hours;
     (it.assignments || []).filter((a) => ['complete', 'approved'].includes(a.status)).forEach(() => { payTotal += per; workers += 1; });
   });
-  const payNet = Math.round(payTotal * 0.88); // after 12% platform fee
+  const payNet = Math.round(payTotal * 0.90); // after 10% platform fee (labour); tasks/tips/travel are 100% to worker
   const payLabel = payNet > 0 ? `Approve — pay $${payNet.toLocaleString()} to ${workers} ${workers === 1 ? 'worker' : 'workers'}` : 'Approve & settle';
 
   const stalled = requestHasStall(r);
@@ -595,7 +595,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
             <View style={S_.settle}>
               <Text style={[T.label, { color: C.green, marginBottom: 10 }]}>✓ Settled</Text>
               <View style={S_.reviewRow}><Text style={T.small}>Job total</Text><Text style={T.data}>${Number(r.settle_total).toLocaleString()}</Text></View>
-              <View style={S_.reviewRow}><Text style={T.small}>Platform fee (12%)</Text><Text style={T.data}>−${Number(r.settle_fee).toLocaleString()}</Text></View>
+              <View style={S_.reviewRow}><Text style={T.small}>Platform fee</Text><Text style={T.data}>−${Number(r.settle_fee).toLocaleString()}</Text></View>
               <View style={[S_.reviewRow, { borderTopWidth: 1, borderTopColor: C.line, marginTop: 7, paddingTop: 11 }]}>
                 <Text style={T.bodyStrong}>Paid to worker</Text><Text style={[T.money, { color: C.ink }]}>${Number(r.settle_net).toLocaleString()}</Text>
               </View>
@@ -621,11 +621,17 @@ export function AccountSection({ title, rows }) {
       <Text style={[T.eyebrow, { marginTop: 8 }]}>{title}</Text>
       <View style={[S_.card, { paddingVertical: 4 }]}>
         {rows.map(([icon, label, val, onPress], i) => {
+          // A not-yet feature ('Soon') should read as a quiet tag, not an active indigo action —
+          // otherwise the whole screen looks half-built. 'Active' reads as a live green state.
+          const isSoon = val === 'Soon';
+          const isActive = val === 'Active';
           const content = (
             <View style={[S_.acctRow, i < rows.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.line2 }]}>
-              <View style={{ width: 30 }}><Icon name={icon} size={19} color={C.mute} strokeWidth={1.9} /></View>
-              <Text style={[T.body, { flex: 1, color: C.ink }]}>{label}</Text>
-              <Text style={[T.data, { color: onPress ? C.indigo : C.mute }]}>{val}</Text>
+              <View style={{ width: 30 }}><Icon name={icon} size={19} color={isSoon ? C.mute2 : C.mute} strokeWidth={1.9} /></View>
+              <Text style={[T.body, { flex: 1, color: isSoon ? C.mute : C.ink }]}>{label}</Text>
+              {isSoon
+                ? <View style={{ backgroundColor: C.panel2, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3 }}><Text style={[T.tiny, { color: C.mute2, fontWeight: '700', letterSpacing: 0.3 }]}>Soon</Text></View>
+                : <Text style={[T.data, { color: isActive ? C.green : (onPress ? C.indigo : C.mute) }]}>{val}</Text>}
             </View>
           );
           return onPress

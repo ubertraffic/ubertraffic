@@ -126,6 +126,10 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   const hasClientSide = p?.jobs_posted > 0;
   const clientHasRating = p?.client_rating != null && p?.client_rating_count > 0;
   const hasCompletion = p?.completion_rate != null;
+  // jobs_done is a stored counter that isn't reliably maintained (it can read 0 while the worker
+  // clearly has ratings + resolved jobs). Trust the real figure: the higher of the counter and the
+  // computed resolved-jobs count, so the number never contradicts the ratings/completion shown.
+  const jobsDone = Math.max(Number(p?.jobs_done) || 0, Number(p?.resolved_jobs) || 0);
 
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
@@ -219,8 +223,8 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
               </View>
               <View style={styles.statDivider} />
               <View style={styles.stat}>
-                <Text style={styles.statNum}>{p.jobs_done}</Text>
-                <Text style={styles.statLabel}>job{p.jobs_done === 1 ? '' : 's'} done</Text>
+                <Text style={styles.statNum}>{jobsDone}</Text>
+                <Text style={styles.statLabel}>job{jobsDone === 1 ? '' : 's'} done</Text>
               </View>
               {p.vehicle ? (
                 <>

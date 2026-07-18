@@ -125,6 +125,9 @@ export default function Pulse() {
 
   if (!stats) return null;
 
+  const paid = Number(stats.paid_to_workers_today || 0);
+  const active = Number(stats.active_now || 0);
+
   return (
     <View style={st.wrap}>
       <View style={st.head}>
@@ -132,12 +135,28 @@ export default function Pulse() {
           <PulseDot />
           <Text style={st.title}>Live on SiteCall</Text>
         </View>
-        <Text style={st.active}>{stats.active_now} active now</Text>
+        <Text style={st.active}>{paid > 0 ? `${active} active now` : 'updated live'}</Text>
       </View>
 
-      {/* HERO number — the dopamine. One big confident figure that ticks up. */}
-      <CountUp value={Number(stats.paid_to_workers_today || 0)} style={st.heroNum} />
-      <Text style={st.heroLbl}>paid to workers today · {stats.jobs_completed_today || 0} jobs done</Text>
+      {/* HERO — adapts so it's never a dead "$0". Money leads when there's money to celebrate;
+          otherwise the network's live pulse (crews active) leads; and if all-quiet, an honest,
+          aspirational line — never a hollow zero. */}
+      {paid > 0 ? (
+        <>
+          <CountUp value={paid} style={st.heroNum} />
+          <Text style={st.heroLbl}>paid to workers today · {stats.jobs_completed_today || 0} jobs done</Text>
+        </>
+      ) : active > 0 ? (
+        <>
+          <Text style={st.heroNum}>{active}</Text>
+          <Text style={st.heroLbl}>crew{active === 1 ? '' : 's'} active on SiteCall right now</Text>
+        </>
+      ) : (
+        <>
+          <Text style={st.heroLive}>Live in your area</Text>
+          <Text style={st.heroLbl}>New jobs post here in real time — you’ll catch them the moment they drop.</Text>
+        </>
+      )}
 
       {/* a glimpse of live motion — just 3 recent events, clean single lines */}
       <View style={st.feed}>
@@ -157,7 +176,8 @@ const st = StyleSheet.create({
   title: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3, color: C.ink },
   active: { fontSize: 12, fontWeight: '600', color: C.mute },
   heroNum: { fontSize: 38, fontWeight: '800', letterSpacing: -1.4, color: C.ink },
-  heroLbl: { fontSize: 13, color: C.mute, marginTop: 2, marginBottom: 18 },
+  heroLive: { fontSize: 27, fontWeight: '800', letterSpacing: -0.8, color: C.ink, marginTop: 2 },
+  heroLbl: { fontSize: 13, color: C.mute, marginTop: 2, marginBottom: 18, lineHeight: 18 },
   feed: { gap: 0 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 11, borderTopWidth: 1, borderTopColor: C.line2 },
   rowDot: { width: 7, height: 7, borderRadius: 4 },

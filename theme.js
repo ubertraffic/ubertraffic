@@ -21,6 +21,11 @@ export const C = {
   greenSoft:'rgba(14,122,82,0.10)',
   amber:    '#B87514',
   amberSoft:'rgba(184,117,20,0.12)',
+  // hi-vis signal amber — the ONE "live / now" accent. Site/traffic identity. Used sparingly:
+  // live indicators, "happening now" pulses, urgent moments. Never as a general-purpose colour.
+  hiviz:    '#FFB020',
+  hivizSoft:'rgba(255,176,32,0.15)',
+  hivizGlow:'rgba(255,176,32,0.55)',
   red:      '#B23A2E',
   redSoft:  'rgba(178,58,46,0.09)',
   scrim:    'rgba(10,10,14,0.45)',

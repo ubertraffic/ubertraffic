@@ -258,6 +258,12 @@ function Shell({ session, pushDeepLink }) {
   cacheBindUser(session?.user?.id);
   const [role, setRoleSide] = useState('client');  // client | operator — VIEW side only
   const [tab, setTab] = useState('home');
+  // Floating island tab bar: track scroll to hide it on the way down, reveal on the way up.
+  // diffClamp accumulates the scroll delta and clamps it, so a direction change flips it instantly.
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const tabHide = Animated.diffClamp(scrollY, 0, 70).interpolate({ inputRange: [0, 70], outputRange: [0, 130], extrapolate: 'clamp' });
+  const onHomeScroll = Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true });
+  const changeTab = (k) => { scrollY.setValue(0); setTab(k); };
   const [wantNew, setWantNew] = useState(false);   // signal: open new-request flow on Requests
   const [focusReq, setFocusReq] = useState(null);  // signal: open a specific request on Requests
   const [myName, setMyName] = useState(null);      // personalisation: first name in the header
@@ -322,10 +328,10 @@ function Shell({ session, pushDeepLink }) {
           // unmounts/reloads when switching Hire<->Work. Seamless, no page flash.
           <View style={{ flex: 1 }}>
             <View style={[S_.homeLayer, role !== 'client' && S_.homeHidden]} pointerEvents={role === 'client' ? 'auto' : 'none'}>
-              <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} />
+              <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
             </View>
             <View style={[S_.homeLayer, role !== 'operator' && S_.homeHidden]} pointerEvents={role === 'operator' ? 'auto' : 'none'}>
-              <OperatorHome session={session} onOpenProfile={setProfileId} />
+              <OperatorHome session={session} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
             </View>
           </View>
         ) : role === 'client' ? (
@@ -339,7 +345,7 @@ function Shell({ session, pushDeepLink }) {
         )}
       </View>
 
-      <TabBar tabs={tabs} active={tab} onChange={setTab} />
+      <TabBar tabs={tabs} active={tab} onChange={changeTab} translateY={tabHide} accent={role === 'client' ? C.indigo : C.green} />
       {/* MomentToasts retired: the Live Tracker card now covers lifecycle moments calmly and
           persistently, so the popping toasts were redundant (competing peers). Kept the import
           so it's a one-line re-enable if we ever want it for events the tracker doesn't cover. */}
@@ -539,8 +545,12 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       const sched = isBooked ? scheduledISO() : null;
       if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
       const newId = await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
+      // estimate for the pay sheet (server still computes the authoritative charge) — mirrors the
+      // fee math: hourly items × 4h, job-priced as-is, + travel. Passed through so the sheet never flashes $0.
+      const estCents = items.reduce((s, it) => s + Math.round((Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : 4) * 100), 0) + Math.round((parseFloat(travel) || 0) * 100);
+      const estLabel = items[0]?.type || 'Job';
       setPhase('sent');
-      setTimeout(() => { onPosted && onPosted(newId); }, 1100);   // let the "sent" beat land, then drop home
+      setTimeout(() => { onPosted && onPosted(newId, estCents, estLabel); }, 1100);   // let the "sent" beat land, then drop home
     } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
   }
 
@@ -631,7 +641,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
           </View>
           )}
 
-          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="none" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: phase === 'where' ? 320 : 24, paddingTop: 4 }} style={{ height: SHEET_SCREEN_H * (phase === 'where' ? 0.56 : 0.44) }}>
+          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="none" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: phase === 'where' ? 320 : phase === 'review' ? 300 : 24, paddingTop: 4 }} style={{ height: SHEET_SCREEN_H * (phase === 'where' ? 0.56 : phase === 'review' ? 0.62 : 0.44) }}>
 
             <StepFade phase={phase}>
             {phase === 'door' && (
@@ -914,9 +924,14 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
   }
 
   // Post → open the pay sheet to AUTHORISE a hold (charged only when the client later approves).
-  function payJob(reqId) {
+  // estOverride/labelOverride let a fresh post pass its own numbers, since the just-created job
+  // isn't in `mine` yet (that's why the sheet used to flash $0). The final charge is always the
+  // server-computed amount either way.
+  function payJob(reqId, estOverride, labelOverride) {
     const req = getReq(reqId);
-    setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: estimateCentsFor(req) });
+    const est = Number(estOverride) > 0 ? Number(estOverride) : estimateCentsFor(req);
+    const label = labelOverride || req?.request_items?.[0]?.type || 'Job';
+    setPayReq({ id: reqId, label, estimateCents: est });
   }
   // Approve → open the pay sheet in auto-capture mode (secures the hold if needed, then captures).
   function beginApproval(reqId, adj) {
@@ -955,7 +970,7 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
   return { payReq, payJob, beginApproval, PaySheet };
 }
 
-function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
+function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
   const [mine, setMine] = useState(() => cacheGet('client-requests'));   // shared cache → instant paint
   const [mapJobs, setMapJobs] = useState([]);
   const [myLoc, setMyLoc] = useState(null);
@@ -1090,14 +1105,12 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
   const onHubAction = (j) => messageForRaw(j._raw);
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+    {/* IMMERSIVE HOME — full-bleed living map behind a floating content sheet */}
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
       <MapHero
-        height={240} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
-        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id), 500); } else { setSheetOpen(true); } }}
+        height={Dimensions.get('window').height} framed={false} markers={mapJobs} me={myLoc} activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
+        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id, r.est, r.label), 500); } else { setSheetOpen(true); } }}
         commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
-        primaryAction={needsYou.length > 0
-          ? { label: 'Review & pay', sub: `${needsYou.length} job${needsYou.length > 1 ? 's' : ''} ready`, tone: 'green', icon: '✓', closesMap: true, fn: () => onOpenReq && onOpenReq(needsYou[0].id) }
-          : { label: 'Post a job', sub: 'Get help on site now', tone: 'ready', icon: '＋', mapPost: true }}
         chatBubble={match ? { unread: 0, fn: () => { const trav = (match.crew || []).find((x) => x.a.status === 'en_route') || (match.crew || [])[0]; if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: `${suburbOf(match.r.address_text)}`, info: buildJobInfo({ a: trav.a, it: trav.it, r: match.r }) }); } } : null}
         onWorkerTap={(requestId) => {
           // Solo job → tapping the worker's badge opens a direct chat with them (makes sense).
@@ -1118,8 +1131,12 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           if (onOpenReq) onOpenReq(requestId);
         }}
       />
-      {/* request bar docked to the map's bottom edge — one connected card. It's the loud hero
-          when idle; when a job needs paying it recedes to a quiet bar so the pay card can lead. */}
+    </View>
+    {/* floating content sheet — the map breathes above it */}
+    <View style={{ position: 'absolute', left: 0, right: 0, top: '52%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 26, borderTopRightRadius: 26, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: -8 }, elevation: 12 }}>
+      <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: C.line, alignSelf: 'center', marginTop: 9, marginBottom: 4 }} />
+      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128, paddingHorizontal: 16, paddingTop: 6 }}>
+      {/* request bar — the loud hero when idle; recedes to a quiet bar when a job needs paying */}
       <TouchableOpacity style={[S_.askDock, payMode && S_.askDockQuiet]} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
         <View style={{ flex: 1 }}>
           <Text style={[S_.askDockLabel, payMode && S_.askDockLabelQuiet]}>NEED SOMEONE ON SITE?</Text>
@@ -1146,7 +1163,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           else if (action === 'open_help') setHelpOpen(true);
         }} />;
       })()}
-      <View style={{ padding: 24, paddingTop: 24 }}>
+      <View style={{ paddingTop: 12 }}>
 
         {/* THE MATCH — the whole job, filling up, crew inside. The Uber moment. */}
         {match && (
@@ -1214,12 +1231,13 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           );
         })()}
       </View>
-    </ScrollView>
+    </Animated.ScrollView>
+    </View>
     <RequestSheet
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={myLoc}
-      onPosted={async (id) => { setSheetOpen(false); await load(); if (id) payJob(id); }}
+      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); if (id) payJob(id, est, label); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     {PaySheet}
@@ -1499,7 +1517,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
 
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <View style={S_.rowBetween}>
         <Text style={T.eyebrow}>My requests</Text>
         <LiveTag />
@@ -1535,7 +1553,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={null}
-      onPosted={async (id) => { setSheetOpen(false); await load(); if (id) payJob(id); }}
+      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); if (id) payJob(id, est, label); }}
     />
     {PaySheet}
     <RateJob
@@ -1564,7 +1582,7 @@ function ClientActivity({ session }) {
   const done = (mine || []).filter((r) => r.status === 'complete');
   const spent = done.reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
   return (
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <Text style={T.eyebrow}>Activity</Text>
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 24 }]}>
         <Text style={T.label}>Total spent · completed jobs</Text>

@@ -29,8 +29,12 @@ export default function SkillDiscoverySheet({ skill, excludeUserId, onClose, onO
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}><Text style={s.close}>✕</Text></TouchableOpacity>
           </View>
           <Text style={s.sub}>Verified workers who do this</Text>
+          {/* Reserve a stable height so the sheet doesn't jump taller when the list loads in after
+              the slide-up — that resize was the "glitch". Loading, empty, and short lists now open
+              at the same size. */}
+          <View style={{ minHeight: 220 }}>
           {list == null ? (
-            <View style={{ paddingVertical: 30 }}><ActivityIndicator color={C.indigo} /></View>
+            <View style={{ paddingVertical: 40 }}><ActivityIndicator color={C.indigo} /></View>
           ) : list.length === 0 ? (
             <Text style={s.empty}>No one else listed yet — you could be the first they see.</Text>
           ) : (
@@ -49,6 +53,7 @@ export default function SkillDiscoverySheet({ skill, excludeUserId, onClose, onO
               ))}
             </ScrollView>
           )}
+          </View>
         </View>
       </View>
     </Modal>

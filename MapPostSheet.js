@@ -120,8 +120,9 @@ export default function MapPostSheet({ visible, onClose, onPosted, myLoc }) {
       // tier). Without it, map-posted runs wouldn't be detected as runs.
       const item = { kind, type: typeName, trade_id: trade.id || null, qty, rate: rateFor(typeName, kind), priceMode: kind === 'task' ? 'job' : 'hour', hire: null, tickets: kind === 'crew' ? ['White Card'] : [] };
       const newId = await createRequest({ when_type: when, address_text: loc, lat: coords.lat, lng: coords.lng, duration_hours: 4, items: [item], scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0 });
+      const estCents = Math.round((Number(item.rate) || 0) * (Number(qty) || 1) * (item.priceMode === 'job' ? 1 : 4) * 100);
       setBusy(false);
-      onPosted && onPosted(newId);
+      onPosted && onPosted(newId, estCents, typeName);
       onClose && onClose(true);
     } catch (e) {
       setBusy(false);
