@@ -999,7 +999,10 @@ export function OperatorJobs({ session, onOpenProfile }) {
                   <Text style={{ color: st.color, fontWeight: '800', fontSize: 11.5, letterSpacing: 0.2 }}>{st.label}</Text>
                 </View>
               </View>
-              <Text style={[T.data, { color: C.mute, marginTop: 6 }]}>📍 {a.request_item?.request?.address_text}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 }}>
+                <Icon name="pin" size={13} color={C.mute2} strokeWidth={2} />
+                <Text style={[T.data, { color: C.mute, flex: 1 }]} numberOfLines={1}>{a.request_item?.request?.address_text}</Text>
+              </View>
 
               {/* JOB BRIEF — what the worker accepted: pay, timing, client, materials, and the
                   duties the client wrote. Previously a worker committed with no way to re-read any

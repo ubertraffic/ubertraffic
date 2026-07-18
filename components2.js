@@ -621,11 +621,17 @@ export function AccountSection({ title, rows }) {
       <Text style={[T.eyebrow, { marginTop: 8 }]}>{title}</Text>
       <View style={[S_.card, { paddingVertical: 4 }]}>
         {rows.map(([icon, label, val, onPress], i) => {
+          // A not-yet feature ('Soon') should read as a quiet tag, not an active indigo action —
+          // otherwise the whole screen looks half-built. 'Active' reads as a live green state.
+          const isSoon = val === 'Soon';
+          const isActive = val === 'Active';
           const content = (
             <View style={[S_.acctRow, i < rows.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.line2 }]}>
-              <View style={{ width: 30 }}><Icon name={icon} size={19} color={C.mute} strokeWidth={1.9} /></View>
-              <Text style={[T.body, { flex: 1, color: C.ink }]}>{label}</Text>
-              <Text style={[T.data, { color: onPress ? C.indigo : C.mute }]}>{val}</Text>
+              <View style={{ width: 30 }}><Icon name={icon} size={19} color={isSoon ? C.mute2 : C.mute} strokeWidth={1.9} /></View>
+              <Text style={[T.body, { flex: 1, color: isSoon ? C.mute : C.ink }]}>{label}</Text>
+              {isSoon
+                ? <View style={{ backgroundColor: C.panel2, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3 }}><Text style={[T.tiny, { color: C.mute2, fontWeight: '700', letterSpacing: 0.3 }]}>Soon</Text></View>
+                : <Text style={[T.data, { color: isActive ? C.green : (onPress ? C.indigo : C.mute) }]}>{val}</Text>}
             </View>
           );
           return onPress
