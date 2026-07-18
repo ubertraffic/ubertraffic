@@ -78,7 +78,10 @@ export const SH = StyleSheet.create({
 export const S_ = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.canvas },
   homeLayer: { ...StyleSheet.absoluteFillObject },
-  homeHidden: { opacity: 0 },
+  // Fully remove the inactive home from the render tree (not just opacity:0) — with full-bleed
+  // maps, two live WebView maps compositing at once caused jank. display:none stops the hidden
+  // map from rendering; the component stays mounted so switching sides is still instant.
+  homeHidden: { display: 'none' },
   rateScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 28 },
   rateCard: { backgroundColor: C.panel, borderRadius: 22, padding: 24 },
   rateTitle: { fontSize: 19, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
