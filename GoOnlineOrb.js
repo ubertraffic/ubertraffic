@@ -79,16 +79,18 @@ export default function GoOnlineOrb({ online, busy, onConfirm, onGoOffline, subu
     );
   }
 
-  const haloScale = halo.interpolate({ inputRange: [0, 1], outputRange: [1, 1.42] });
-  const haloOpacity = halo.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.42, 0.16, 0] });
+  const haloScale = halo.interpolate({ inputRange: [0, 1], outputRange: [1, 1.6] });
+  const haloOpacity = halo.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0.5, 0.18, 0] });
   const orbScale = press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.95] });
   const fillScale = fill.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] });
 
   return (
     <View style={styles.wrap} pointerEvents="box-none">
       <View style={styles.orbBox}>
-        {/* breathing halo */}
-        <Animated.View style={[styles.halo, { transform: [{ scale: haloScale }], opacity: haloOpacity }]} pointerEvents="none" />
+        {/* soft ambient glow — a static lit base */}
+        <View style={styles.glow} pointerEvents="none" />
+        {/* breathing ripple ring */}
+        <Animated.View style={[styles.ring, { transform: [{ scale: haloScale }], opacity: haloOpacity }]} pointerEvents="none" />
         <Pressable onPressIn={startHold} onPressOut={cancelHold} disabled={busy}>
           <Animated.View style={[styles.orb, { transform: [{ scale: orbScale }] }]}>
             {/* charge fill — grows from the centre as you hold */}
@@ -107,18 +109,19 @@ export default function GoOnlineOrb({ online, busy, onConfirm, onGoOffline, subu
 const ORB = 94;
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center' },
-  orbBox: { width: ORB + 40, height: ORB + 40, alignItems: 'center', justifyContent: 'center' },
-  halo: { position: 'absolute', width: ORB, height: ORB, borderRadius: ORB / 2, backgroundColor: C.green },
+  orbBox: { width: ORB + 56, height: ORB + 56, alignItems: 'center', justifyContent: 'center' },
+  glow: { position: 'absolute', width: ORB + 44, height: ORB + 44, borderRadius: (ORB + 44) / 2, backgroundColor: C.green, opacity: 0.12 },
+  ring: { position: 'absolute', width: ORB, height: ORB, borderRadius: ORB / 2, borderWidth: 2.5, borderColor: C.green },
   orb: {
     width: ORB, height: ORB, borderRadius: ORB / 2, backgroundColor: C.green,
     alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-    borderWidth: 2, borderColor: 'rgba(255,255,255,0.28)',
-    shadowColor: C.green, shadowOpacity: 0.55, shadowRadius: 22, shadowOffset: { width: 0, height: 10 }, elevation: 12,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)',
+    shadowColor: C.green, shadowOpacity: 0.7, shadowRadius: 30, shadowOffset: { width: 0, height: 12 }, elevation: 16,
   },
   fill: { position: 'absolute', width: ORB, height: ORB, borderRadius: ORB / 2, backgroundColor: 'rgba(255,255,255,0.34)' },
-  gloss: { position: 'absolute', top: 6, left: 14, right: 14, height: ORB * 0.42, borderRadius: ORB / 2, backgroundColor: 'rgba(255,255,255,0.18)' },
-  go: { color: '#fff', fontSize: 30, fontWeight: '900', letterSpacing: 1.5 },
-  hint: { color: 'rgba(255,255,255,0.9)', fontSize: 12.5, fontWeight: '700', letterSpacing: 0.3, marginTop: 2, textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 6 },
+  gloss: { position: 'absolute', top: 5, left: 13, right: 13, height: ORB * 0.44, borderRadius: ORB / 2, backgroundColor: 'rgba(255,255,255,0.22)' },
+  go: { color: '#fff', fontSize: 31, fontWeight: '900', letterSpacing: 1.5, textShadowColor: 'rgba(0,0,0,0.18)', textShadowRadius: 4, textShadowOffset: { width: 0, height: 1 } },
+  hint: { color: C.mute, fontSize: 12.5, fontWeight: '800', letterSpacing: 0.3, marginTop: 8, textTransform: 'uppercase' },
   // online status pill
   pill: {
     flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'rgba(19,24,21,0.94)',

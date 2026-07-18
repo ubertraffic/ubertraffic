@@ -9,37 +9,53 @@ import { tap } from './components2';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
-// A drag-the-thumb-to-confirm track. onComplete fires once the thumb passes ~78%.
+// A drag-the-thumb-to-confirm track. A green fill grows behind the thumb; the label shimmers as a
+// directional hint; onComplete fires once the thumb passes ~72%. All non-native so the fill width
+// animates in lock-step with the thumb.
 function SlideToConfirm({ label, onComplete }) {
-  const [w, setW] = useState(SCREEN_W - 80);
-  const THUMB = 52;
+  const [w, setW] = useState(SCREEN_W - 96);
+  const THUMB = 56;
+  const PAD = 4;
   const x = useRef(new Animated.Value(0)).current;
+  const shimmer = useRef(new Animated.Value(0)).current;
   const done = useRef(false);
-  const max = Math.max(0, w - THUMB - 6);
+  const max = Math.max(1, w - THUMB - PAD * 2);
+
+  useEffect(() => {
+    const l = Animated.loop(Animated.timing(shimmer, { toValue: 1, duration: 1700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }));
+    l.start();
+    return () => l.stop();
+  }, []);
+
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: (_e, g) => {
-        const nx = Math.min(Math.max(0, g.dx), max);
-        x.setValue(nx);
-      },
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 2,
+      onPanResponderMove: (_e, g) => { x.setValue(Math.min(Math.max(0, g.dx), max)); },
       onPanResponderRelease: (_e, g) => {
         const nx = Math.min(Math.max(0, g.dx), max);
-        if (nx >= max * 0.78 && !done.current) {
+        if (nx >= max * 0.72 && !done.current) {
           done.current = true;
           tap('success');
-          Animated.timing(x, { toValue: max, duration: 120, useNativeDriver: true }).start(() => onComplete && onComplete());
+          Animated.timing(x, { toValue: max, duration: 140, easing: Easing.out(Easing.quad), useNativeDriver: false })
+            .start(() => onComplete && onComplete());
         } else {
-          Animated.spring(x, { toValue: 0, useNativeDriver: true, damping: 16, stiffness: 220 }).start();
+          Animated.spring(x, { toValue: 0, useNativeDriver: false, damping: 15, stiffness: 200 }).start();
         }
       },
     })
   ).current;
-  const trackOpacity = x.interpolate({ inputRange: [0, Math.max(1, max)], outputRange: [1, 0.3] });
+
+  const fillW = x.interpolate({ inputRange: [0, max], outputRange: [THUMB + PAD * 2, w], extrapolate: 'clamp' });
+  const labelOpacity = x.interpolate({ inputRange: [0, max * 0.6], outputRange: [1, 0], extrapolate: 'clamp' });
+  const shimmerX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-40, 40] });
+
   return (
     <View style={styles.track} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
-      <Animated.Text style={[styles.trackLabel, { opacity: trackOpacity }]}>{label}</Animated.Text>
+      <Animated.View style={[styles.fill, { width: fillW }]} pointerEvents="none" />
+      <Animated.Text style={[styles.trackLabel, { opacity: labelOpacity, transform: [{ translateX: shimmerX }] }]} pointerEvents="none">
+        {label}  ›››
+      </Animated.Text>
       <Animated.View style={[styles.thumb, { transform: [{ translateX: x }] }]} {...pan.panHandlers}>
         <Text style={styles.thumbArrow}>›</Text>
       </Animated.View>
@@ -94,6 +110,11 @@ export default function EndShiftSheet({ visible, onClose, onConfirmOffline, summ
               <Text style={styles.statLabel}>Online</Text>
             </View>
           </View>
+          {s.pending > 0 && (
+            <View style={styles.pendingNote}>
+              <Text style={styles.pendingT}>{s.pending} job{s.pending > 1 ? 's' : ''} awaiting approval — your pay lands once the client approves.</Text>
+            </View>
+          )}
           <SlideToConfirm label="Slide to go offline" onComplete={() => { onConfirmOffline && onConfirmOffline(); onClose && onClose(); }} />
           <TouchableOpacity onPress={onClose} style={styles.stay} activeOpacity={0.8}>
             <Text style={styles.stayT}>Stay online</Text>
@@ -114,10 +135,16 @@ const styles = StyleSheet.create({
   stat: { flex: 1, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 18, alignItems: 'center', borderWidth: 1, borderColor: C.line },
   statNum: { fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5 },
   statLabel: { fontSize: 11.5, fontWeight: '700', color: C.mute, letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 5 },
-  track: { height: 58, borderRadius: 16, backgroundColor: '#1B1B22', justifyContent: 'center', overflow: 'hidden' },
-  trackLabel: { textAlign: 'center', color: 'rgba(255,255,255,0.7)', fontSize: 14.5, fontWeight: '800', letterSpacing: 0.3 },
-  thumb: { position: 'absolute', left: 3, top: 3, width: 52, height: 52, borderRadius: 13, backgroundColor: C.ink, alignItems: 'center', justifyContent: 'center' },
-  thumbArrow: { color: '#fff', fontSize: 24, fontWeight: '900', marginTop: -2 },
+  track: { height: 64, borderRadius: 18, backgroundColor: '#17171E', justifyContent: 'center', overflow: 'hidden' },
+  fill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: C.green, borderRadius: 18, opacity: 0.9 },
+  trackLabel: { textAlign: 'center', color: 'rgba(255,255,255,0.62)', fontSize: 14.5, fontWeight: '800', letterSpacing: 0.4 },
+  thumb: {
+    position: 'absolute', left: 4, top: 4, width: 56, height: 56, borderRadius: 15, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 5,
+  },
+  thumbArrow: { color: C.ink, fontSize: 26, fontWeight: '900', marginTop: -2 },
+  pendingNote: { backgroundColor: 'rgba(214,158,46,0.12)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 16 },
+  pendingT: { color: C.amber, fontSize: 12.5, fontWeight: '700', lineHeight: 18 },
   stay: { alignItems: 'center', paddingVertical: 14, marginTop: 6 },
   stayT: { color: C.mute, fontSize: 14, fontWeight: '700' },
 });

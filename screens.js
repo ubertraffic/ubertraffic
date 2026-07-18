@@ -926,6 +926,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
         today: opEarn.today,
         jobs: (myAssigns || []).filter((a) => ['complete', 'approved'].includes(a.status) && (Date.now() - new Date(a.paid_at || a.completed_at || a.accepted_at || 0).getTime()) < 86400000).length,
         minutes: onlineSince ? Math.max(0, Math.floor((Date.now() - onlineSince) / 60000)) : 0,
+        pending: (myAssigns || []).filter((a) => a.status === 'complete').length,   // done, not yet approved → why "earned" can read $0
       }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
