@@ -377,7 +377,10 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
           {expanded ? null
             : coverage && coverage.n > 0 && mode !== 'hire' ? (
             <View style={styles.ambientChip}><View style={styles.ambientDot} /><Text style={styles.ambientT}>{coverage.n} worker{coverage.n === 1 ? '' : 's'} available near you</Text></View>
-          ) : activeNow != null && activeNow > 0 ? (
+          ) : mode !== 'hire' && activeNow != null && activeNow > 0 ? (
+            // Strangers' network activity ("N jobs live on SiteCall") is proof-of-life for the WORK
+            // side (a worker wants to see demand). On the HIRE side it's filler — the "workers
+            // nearby" label already carries the honest liveness signal, so we don't show it.
             <View style={styles.ambientChip}><LivePulse size={8} /><Text style={styles.ambientT}>{activeNow} jobs live on SiteCall right now</Text></View>
           ) : (!coverage || coverage.n === 0) ? (
             <Text style={styles.emptyT}>{mode === 'hire'

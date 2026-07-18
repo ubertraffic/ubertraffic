@@ -8,7 +8,7 @@ import {
   MapPin, Navigation, Radio, Check, ChevronRight, ChevronLeft,
   ChevronDown, ChevronUp, Plus, Minus, X, Circle, CircleDot,
   Zap, Calendar, Search, Settings, LogOut, Building2, CreditCard,
-  BadgeCheck, ShieldCheck, TrendingUp, Bell, Star, Users, Signal,
+  BadgeCheck, ShieldCheck, TrendingUp, Bell, Star, Users, Signal, RotateCcw,
 } from 'lucide-react-native';
 import { C } from './theme';
 
@@ -61,6 +61,7 @@ const MAP = {
   star: Star,
   users: Users,
   signal: Signal,
+  refresh: RotateCcw,
 };
 
 export default function Icon({ name, size = 20, color = C.ink, strokeWidth = 2, fill = 'none' }) {

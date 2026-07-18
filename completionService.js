@@ -152,7 +152,7 @@ export async function listMyRequestsFull() {
       id, status, when_type, address_text, duration_hours, created_at,
       approved_at, settle_total, settle_fee, settle_net,
       request_items (
-        id, kind, type, qty, rate, rate_offered, price_mode,
+        id, kind, type, qty, rate, rate_offered, price_mode, trade_id,
         assignments (
           id, status, operator_id, spot_index, accepted_at, journey_started_at, eta_baseline_min, start_dist_m, live_dist_m, live_at,
           job_events ( kind, to_status, distance_m, context, created_at )

@@ -258,12 +258,28 @@ function Shell({ session, pushDeepLink }) {
   cacheBindUser(session?.user?.id);
   const [role, setRoleSide] = useState('client');  // client | operator — VIEW side only
   const [tab, setTab] = useState('home');
-  // Floating island tab bar: track scroll to hide it on the way down, reveal on the way up.
-  // diffClamp accumulates the scroll delta and clamps it, so a direction change flips it instantly.
-  const scrollY = useRef(new Animated.Value(0)).current;
-  const tabHide = Animated.diffClamp(scrollY, 0, 70).interpolate({ inputRange: [0, 70], outputRange: [0, 130], extrapolate: 'clamp' });
-  const onHomeScroll = Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true });
-  const changeTab = (k) => { scrollY.setValue(0); setTab(k); };
+  // Floating island tab bar visibility. A robust, predictable show/hide — NOT diffClamp (which was
+  // recreated every render and got stuck off-screen). barTY animates 0 (shown) <-> 116 (hidden),
+  // created ONCE. Rule: hide only on a real downward scroll; ALWAYS reveal on any upward scroll or
+  // near the top; and force it shown whenever the tab or the Hire/Work side changes, so it can
+  // never get stranded hidden.
+  const barTY = useRef(new Animated.Value(0)).current;
+  const barHidden = useRef(false);
+  const lastScrollY = useRef(0);
+  const setBar = (hide) => {
+    if (barHidden.current === hide) return;
+    barHidden.current = hide;
+    Animated.timing(barTY, { toValue: hide ? 116 : 0, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  };
+  const onHomeScroll = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const dy = y - lastScrollY.current;
+    lastScrollY.current = y;
+    if (y <= 8 || dy < -3) setBar(false);       // near the top OR any upward scroll -> reveal
+    else if (dy > 4 && y > 24) setBar(true);    // a real downward scroll -> hide
+  };
+  const revealBar = () => { lastScrollY.current = 0; setBar(false); };
+  const changeTab = (k) => { revealBar(); setTab(k); };
   const [wantNew, setWantNew] = useState(false);   // signal: open new-request flow on Requests
   const [focusReq, setFocusReq] = useState(null);  // signal: open a specific request on Requests
   const [myName, setMyName] = useState(null);      // personalisation: first name in the header
@@ -294,10 +310,10 @@ function Shell({ session, pushDeepLink }) {
   function switchRole(r) {
     if (r === 'client' && !canHire) { setGate({ side: 'hire' }); return; }
     if (r === 'operator' && !canWork) { setGate({ side: 'work' }); return; }
-    setRoleSide(r); setTab('home');
+    setRoleSide(r); setTab('home'); revealBar();
   }
-  function goPost() { setWantNew(true); setTab('requests'); }
-  function goOpen(reqId) { setFocusReq(reqId); setTab('requests'); }
+  function goPost() { setWantNew(true); setTab('requests'); revealBar(); }
+  function goOpen(reqId) { setFocusReq(reqId); setTab('requests'); revealBar(); }
 
   // A tapped push notification deep-links to its job (open the request on the Requests tab).
   useEffect(() => {
@@ -345,7 +361,7 @@ function Shell({ session, pushDeepLink }) {
         )}
       </View>
 
-      <TabBar tabs={tabs} active={tab} onChange={changeTab} translateY={tabHide} accent={role === 'client' ? C.indigo : C.green} />
+      <TabBar tabs={tabs} active={tab} onChange={changeTab} translateY={barTY} accent={role === 'client' ? C.indigo : C.green} />
       {/* MomentToasts retired: the Live Tracker card now covers lifecycle moments calmly and
           persistently, so the popping toasts were redundant (competing peers). Kept the import
           so it's a one-line re-enable if we ever want it for events the tracker doesn't cover. */}
@@ -467,7 +483,7 @@ const pk = StyleSheet.create({
   folderChev: { fontSize: 22, color: C.mute2, fontWeight: '300' },
 });
 
-function RequestSheet({ visible, onClose, myLoc, onPosted }) {
+function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   const y = useRef(new Animated.Value(SHEET_SCREEN_H)).current;
   const dim = useRef(new Animated.Value(0)).current;
   const [tax, setTax] = useState(null);
@@ -516,6 +532,16 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
     }
   }, [visible]);
+
+  // "Post again" — a repeat client's one-tap re-post. Seed the trades from a past job and jump
+  // straight to WHERE (location is re-confirmed every time so the geofence coords are fresh and
+  // the site can change). Skips the whole trade+rate picker, which is the tedious part.
+  useEffect(() => {
+    if (visible && prefill && Array.isArray(prefill.items) && prefill.items.length) {
+      setItems(prefill.items);
+      setPhase('where');
+    }
+  }, [visible, prefill]);
 
   function pickTrade(t) {
     tap('medium');
@@ -1036,6 +1062,38 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     if (crew.length > 0) { match = { r, crew, needed, it: primaryItem }; break; }
   }
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [prefill, setPrefill] = useState(null);   // "Post again" template seeded into RequestSheet
+  // POST AGAIN — a repeat client's own history as one-tap re-posts (Instacart "Buy It Again" /
+  // DoorDash reorder). Dedupe finished jobs by their trade signature, newest first, take a few.
+  // Only jobs whose items all carry a trade_id qualify (so the re-post seeds faithfully).
+  const postAgain = (() => {
+    const done = (mine || []).filter((r) => r.status === 'complete'
+      && (r.request_items || []).length && r.request_items.every((it) => it.trade_id));
+    const seen = new Set(); const out = [];
+    for (const r of done) {
+      const its = r.request_items;
+      const sig = its.map((i) => `${i.trade_id}:${i.qty}:${i.rate}:${i.price_mode}`).sort().join('|');
+      if (seen.has(sig)) continue; seen.add(sig);
+      const heads = its.reduce((s, i) => s + (i.qty || 1), 0);
+      const extra = its.length - 1;
+      out.push({
+        key: sig,
+        label: its[0].type + (its[0].qty > 1 ? ` ×${its[0].qty}` : '') + (extra > 0 ? ` +${extra}` : ''),
+        chip: its[0].type + (heads > 1 ? ` · ${heads}` : '') + (extra > 0 ? ` +${extra}` : ''),
+        sub: `${heads} ${heads === 1 ? 'person' : 'people'}`,
+        items: its.map((it) => ({
+          trade_id: it.trade_id, kind: it.kind, type: it.type, qty: it.qty || 1,
+          rate: it.rate != null ? Number(it.rate) : 0,
+          priceMode: it.price_mode || (it.kind === 'task' ? 'job' : 'hour'),
+          tickets: it.kind === 'crew' ? ['White Card'] : [], run: false,
+        })),
+      });
+      if (out.length >= 4) break;
+    }
+    return out;
+  })();
+  const openPost = () => { setPrefill(null); setSheetOpen(true); };
+  const openPostAgain = (tpl) => { setPrefill({ items: tpl.items }); setSheetOpen(true); };
   // When a job is waiting to be paid, THAT is the hero — so the post CTA recedes to a quiet
   // bar (only one loud element at a time). Otherwise "Post a job" is the loud hero.
   const payMode = needsYou.length > 0;
@@ -1132,22 +1190,40 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         }}
       />
     </View>
-    {/* floating content sheet — the map breathes above it */}
-    <View style={{ position: 'absolute', left: 0, right: 0, top: '52%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 26, borderTopRightRadius: 26, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: -8 }, elevation: 12 }}>
-      <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: C.line, alignSelf: 'center', marginTop: 9, marginBottom: 4 }} />
-      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128, paddingHorizontal: 16, paddingTop: 6 }}>
-      {/* request bar — the loud hero when idle; recedes to a quiet bar when a job needs paying */}
-      <TouchableOpacity style={[S_.askDock, payMode && S_.askDockQuiet]} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
-        <View style={{ flex: 1 }}>
-          <Text style={[S_.askDockLabel, payMode && S_.askDockLabelQuiet]}>NEED SOMEONE ON SITE?</Text>
-          <Text style={[S_.askDockT, payMode ? S_.askDockTQuiet : S_.askDockTLg]}>Post a job — get help now</Text>
-        </View>
-        <View style={[S_.askDockPlus, payMode && S_.askDockPlusQuiet]}>
-          <Text style={[S_.askDockPlusT, payMode && S_.askDockPlusTQuiet]}>＋</Text>
-        </View>
-      </TouchableOpacity>
-      {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job.
-          Renders BELOW the docked post-bar so it doesn't break the map+dock connected card. */}
+    {/* floating content sheet — the map breathes above it. PINNED header (post bar + recent chips)
+        never scrolls; the body below reveals active work as you pull up. */}
+    <View style={{ position: 'absolute', left: 0, right: 0, top: '60%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
+      {/* ── PINNED ANCHOR — always visible, the one thing that never moves ── */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: postAgain.length > 0 ? 12 : 6 }}>
+        {/* primary post action — clean white card, the permanent hero */}
+        <TouchableOpacity onPress={openPost} activeOpacity={0.9}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3, color: C.ink }}>Who do you need on site?</Text>
+            <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3 }}>Post a job — crews nearby are notified instantly</Text>
+          </View>
+          <View style={{ width: 50, height: 50, borderRadius: 15, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', shadowColor: C.indigo, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } }}>
+            <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
+          </View>
+        </TouchableOpacity>
+        {/* POST AGAIN — compact chip row, the quiet helper under the hero (not big cards) */}
+        {postAgain.length > 0 && (
+          <View style={{ marginTop: 12 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 4 }} keyboardShouldPersistTaps="handled">
+              {postAgain.map((tpl) => (
+                <TouchableOpacity key={tpl.key} onPress={() => openPostAgain(tpl)} activeOpacity={0.85}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.panel, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: C.line }}>
+                  <Icon name="refresh" size={14} color={C.indigo} strokeWidth={2.4} />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: C.ink }} numberOfLines={1}>{tpl.chip}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+      </View>
+      {/* ── SCROLL BODY — active work + context, revealed on pull-up ── */}
+      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 130, paddingHorizontal: 16, paddingTop: 4 }}>
+      {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job. */}
       {(() => {
         const trackedId = (match && match.r.id) || (active[0] && active[0].id);
         if (!trackedId) return null;
@@ -1163,7 +1239,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
           else if (action === 'open_help') setHelpOpen(true);
         }} />;
       })()}
-      <View style={{ paddingTop: 12 }}>
+      <View style={{ paddingTop: 8 }}>
 
         {/* THE MATCH — the whole job, filling up, crew inside. The Uber moment. */}
         {match && (
@@ -1192,41 +1268,63 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
           </View>
         )}
 
-        {(() => {
-          const isEmpty = mine !== null && progressing.length === 0 && needsYou.length === 0;
-          if (isEmpty) {
-            // EMPTY (new client — first impression): a warm display headline, one line, the
-            // single obvious action is the post bar above; then the live Pulse as proof.
-            return (
-              <>
-                <Text style={S_.homeEmptyHero}>Who do you need on site?</Text>
-                <Text style={S_.homeEmptySub}>Post a job above — the nearest crews see it in seconds.</Text>
-                <View style={[S_.rowBetween, { marginTop: 32 }]}>
-                  <Text style={T.eyebrow}>Happening now</Text>
-                  <LiveTag />
-                </View>
-                <View style={{ height: 16 }} />
-                <Pulse />
-              </>
-            );
-          }
+        {mine === null ? (
+          <ActivityIndicator color={C.indigo} style={{ marginTop: 20 }} />
+        ) : (() => {
+          // The home sheet now shows the CLIENT'S OWN world — never a feed of strangers' jobs.
+          // Order (research: Uber/DoorDash/Instacart/Airtasker): their live work → one-tap
+          // re-post of their common jobs → (brand-new only) liveness + starters → calm end cap.
+          const rest = progressing.filter((r) => !match || r.id !== match.r.id);
+          const brandNew = (mine || []).length === 0;
+          const anythingOwn = !!match || needsYou.length > 0 || rest.length > 0;
           return (
             <>
-              <View style={S_.rowBetween}>
-                <Text style={T.eyebrow}>Active now</Text>
-                <LiveTag />
-              </View>
-              {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-                : (() => {
-                    // don't repeat the job that's already shown as the MatchCard hero
-                    const rest = progressing.filter((r) => !match || r.id !== match.r.id);
-                    if (rest.length === 0) return match
-                      ? null
-                      : <Text style={[T.small, { marginTop: 8, color: C.mute }]}>All caught up — nothing else in progress.</Text>;
-                    return rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />);
-                  })()}
-              <View style={{ height: 16 }} />
-              <Pulse />
+              {/* OWN ACTIVE WORK — the returning user's centre of gravity */}
+              {rest.length > 0 && (
+                <>
+                  <View style={S_.rowBetween}>
+                    <Text style={T.eyebrow}>Active now</Text>
+                    <LiveTag />
+                  </View>
+                  {rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
+                </>
+              )}
+
+              {/* BRAND-NEW — no history yet: prove the network is live + seed the first post */}
+              {brandNew && (
+                <View style={{ marginTop: 4 }}>
+                  <View style={S_.rowBetween}>
+                    <Text style={T.eyebrow}>Ready when you are</Text>
+                    <LiveTag />
+                  </View>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: C.ink, marginTop: 10, letterSpacing: -0.2 }}>
+                    {coverage && coverage.n > 0
+                      ? `${coverage.n} ${coverage.n === 1 ? 'crew' : 'crews'} available near you right now`
+                      : 'Crews across Sydney, ready to mobilise'}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: C.mute, fontWeight: '600', marginTop: 4 }}>Post your first job — nearby crews are notified instantly.</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginTop: 14 }}>
+                    {['Traffic control', 'Labourers', 'Trades'].map((k) => (
+                      <TouchableOpacity key={k} onPress={openPost} activeOpacity={0.85}
+                        style={{ backgroundColor: C.panel, borderRadius: 999, paddingVertical: 10, paddingHorizontal: 16, borderWidth: 1, borderColor: C.line, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 13.5, fontWeight: '700', color: C.ink }}>{k}</Text>
+                        <Text style={{ fontSize: 15, color: C.indigo, fontWeight: '800', marginTop: -1 }}>＋</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* CALM END CAP — only when there's active work to close off (caught up), or when the
+                  client has no work AND no re-post chips (then a gentle nudge). A quiet client who
+                  DOES have re-post chips pinned above needs nothing here — the sheet just rests. */}
+              {!brandNew && (anythingOwn || postAgain.length === 0) && (
+                <View style={{ alignItems: 'center', marginTop: anythingOwn ? 28 : 20, paddingVertical: 8 }}>
+                  <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', letterSpacing: 0.2 }}>
+                    {anythingOwn ? "You're all caught up" : 'Nothing on right now — post a job above'}
+                  </Text>
+                </View>
+              )}
             </>
           );
         })()}
@@ -1235,9 +1333,10 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     </View>
     <RequestSheet
       visible={sheetOpen}
-      onClose={() => setSheetOpen(false)}
+      onClose={() => { setSheetOpen(false); setPrefill(null); }}
       myLoc={myLoc}
-      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); if (id) payJob(id, est, label); }}
+      prefill={prefill}
+      onPosted={async (id, est, label) => { setSheetOpen(false); setPrefill(null); await load(); if (id) payJob(id, est, label); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     {PaySheet}
