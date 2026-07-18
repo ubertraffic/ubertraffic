@@ -57,13 +57,9 @@ Deno.serve(async (req) => {
     const piId = (pay as any).stripe_payment_intent;
     if (!piId) return json({ error: "no_payment_intent" }, 400);
 
-    // 1) Capture the hold — money moves to the platform now.
-    const cap = await stripe(`payment_intents/${piId}/capture`, secret);
-    if (!cap.ok) return json({ error: "capture_failed", detail: cap.body?.error?.message || "capture error" }, 502);
-    const chargeId = cap.body?.latest_charge;
-    await admin.from("payments").update({ status: "captured", updated_at: new Date().toISOString() }).eq("id", (pay as any).id);
-
-    // 2) Pay out each assigned worker their share (skip anyone not onboarded for payouts).
+    // 0) SAFETY GATE — resolve who gets paid BEFORE we capture a cent. If no worker has completed
+    // this job, we must NOT capture: capturing with nobody to pay would charge the client and leave
+    // the platform holding funds for work that never happened. Refuse instead.
     const { data: req0 } = await admin.from("requests").select("duration_hours").eq("id", requestId).maybeSingle();
     const hours = Number((req0 as any)?.duration_hours) || 4;
     const { data: items } = await admin.from("request_items").select("id, rate, price_mode").eq("request_id", requestId);
@@ -75,6 +71,17 @@ Deno.serve(async (req) => {
       .in("request_item_id", Object.keys(itemById))
       .in("status", ["complete", "approved"]);
     const paid = ((assigns as any[]) || []).filter((a) => a.operator_id && itemById[a.request_item_id]);
+    if (paid.length === 0) {
+      return json({ error: "no_worker_to_pay", detail: "No worker has completed this job yet — nothing to capture or pay." }, 409);
+    }
+
+    // 1) Capture the hold — money moves to the platform now (only reached with a worker to pay).
+    const cap = await stripe(`payment_intents/${piId}/capture`, secret);
+    if (!cap.ok) return json({ error: "capture_failed", detail: cap.body?.error?.message || "capture error" }, 502);
+    const chargeId = cap.body?.latest_charge;
+    await admin.from("payments").update({ status: "captured", updated_at: new Date().toISOString() }).eq("id", (pay as any).id);
+
+    // 2) Pay out each assigned worker their share (skip anyone not onboarded for payouts).
 
     // travel + tip go 100% to the worker(s), split evenly across everyone being paid.
     const tipCents = Math.max(0, Number((pay as any).tip_cents) || 0);

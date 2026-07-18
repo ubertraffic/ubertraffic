@@ -963,19 +963,26 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
     return cents;
   }
 
-  // Post → open the pay sheet to AUTHORISE a hold (charged only when the client later approves).
-  // estOverride/labelOverride let a fresh post pass its own numbers, since the just-created job
-  // isn't in `mine` yet (that's why the sheet used to flash $0). The final charge is always the
-  // server-computed amount either way.
+  // Guard: never open a payment for a job no worker is on. A request must have at least one
+  // assignment in a live/finished state before any money can move (matches the server settle rule).
+  const WORKER_STATES = ['committed', 'accepted', 'en_route', 'on_site', 'complete', 'approved'];
+  const DONE_STATES = ['complete', 'approved'];
+  function reqHasWorker(req, states) {
+    return (req?.request_items || []).some((it) => (it.assignments || []).some((a) => a.operator_id && states.includes(a.status)));
+  }
+
+  // Pay → open the pay sheet. Only valid once a worker is actually on the job (never on a fresh post).
   function payJob(reqId, estOverride, labelOverride) {
     const req = getReq(reqId);
+    if (!reqHasWorker(req, WORKER_STATES)) { onError && onError(new Error('No one has taken this job yet — you pay once a worker has done the work.'), reqId); return; }
     const est = Number(estOverride) > 0 ? Number(estOverride) : estimateCentsFor(req);
     const label = labelOverride || req?.request_items?.[0]?.type || 'Job';
     setPayReq({ id: reqId, label, estimateCents: est });
   }
-  // Approve → open the pay sheet in auto-capture mode (secures the hold if needed, then captures).
+  // Approve → open the pay sheet in auto-capture mode. Only valid once a worker has COMPLETED the job.
   function beginApproval(reqId, adj) {
     const req = getReq(reqId);
+    if (!reqHasWorker(req, DONE_STATES)) { onError && onError(new Error('You can approve & pay once a worker has completed the job.'), reqId); return; }
     setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: estimateCentsFor(req), adj, approve: true });
   }
   // Runs after the Stripe capture succeeds — mark the job approved + queue the rating.
@@ -1154,7 +1161,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
       <MapHero
         height={Dimensions.get('window').height} framed={false} markers={mapJobs} me={myLoc} activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
-        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id, r.est, r.label), 500); } else { setSheetOpen(true); } }}
+        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); } else { setSheetOpen(true); } }}
         commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
         chatBubble={match ? { unread: 0, fn: () => { const trav = (match.crew || []).find((x) => x.a.status === 'en_route') || (match.crew || [])[0]; if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: `${suburbOf(match.r.address_text)}`, info: buildJobInfo({ a: trav.a, it: trav.it, r: match.r }) }); } } : null}
         onWorkerTap={(requestId) => {
@@ -1291,7 +1298,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
       onClose={() => { setSheetOpen(false); setPrefill(null); }}
       myLoc={myLoc}
       prefill={prefill}
-      onPosted={async (id, est, label) => { setSheetOpen(false); setPrefill(null); await load(); if (id) payJob(id, est, label); }}
+      onPosted={async (id, est, label) => { setSheetOpen(false); setPrefill(null); await load(); setMsg('Job posted — crews nearby are being notified. You pay only once the work is done.'); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     {PaySheet}
@@ -1607,7 +1614,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={null}
-      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); if (id) payJob(id, est, label); }}
+      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); setMsg('Job posted — crews nearby are being notified. You pay only once the work is done.'); }}
     />
     {PaySheet}
     <RateJob
