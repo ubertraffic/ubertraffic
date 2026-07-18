@@ -691,7 +691,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                   <>
                     {/* Search — the escape hatch: type and every matching job surfaces, no folder-hunting */}
                     <View style={pk.searchWrap}>
-                      <Text style={pk.searchIcon}>🔍</Text>
+                      <Icon name="search" size={16} color={C.mute} strokeWidth={2.2} />
                       <TextInput
                         style={pk.searchInput}
                         value={pickQ}

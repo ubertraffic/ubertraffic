@@ -1226,7 +1226,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
                   activeOpacity={0.9}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, paddingHorizontal: 14, marginTop: 12 }}
                 >
-                  <Text style={{ fontSize: 16 }}>{'💬'}</Text>
+                  <Icon name="chat" size={17} color="#fff" strokeWidth={2.2} />
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14.5 }}>Not sure what's wanted?</Text>
                     <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12, marginTop: 1 }}>Message the client before you buy</Text>
