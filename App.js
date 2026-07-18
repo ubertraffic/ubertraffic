@@ -483,7 +483,7 @@ const pk = StyleSheet.create({
   folderChev: { fontSize: 22, color: C.mute2, fontWeight: '300' },
 });
 
-function RequestSheet({ visible, onClose, myLoc, onPosted }) {
+function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   const y = useRef(new Animated.Value(SHEET_SCREEN_H)).current;
   const dim = useRef(new Animated.Value(0)).current;
   const [tax, setTax] = useState(null);
@@ -532,6 +532,16 @@ function RequestSheet({ visible, onClose, myLoc, onPosted }) {
       ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
     }
   }, [visible]);
+
+  // "Post again" — a repeat client's one-tap re-post. Seed the trades from a past job and jump
+  // straight to WHERE (location is re-confirmed every time so the geofence coords are fresh and
+  // the site can change). Skips the whole trade+rate picker, which is the tedious part.
+  useEffect(() => {
+    if (visible && prefill && Array.isArray(prefill.items) && prefill.items.length) {
+      setItems(prefill.items);
+      setPhase('where');
+    }
+  }, [visible, prefill]);
 
   function pickTrade(t) {
     tap('medium');
@@ -1052,6 +1062,37 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     if (crew.length > 0) { match = { r, crew, needed, it: primaryItem }; break; }
   }
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [prefill, setPrefill] = useState(null);   // "Post again" template seeded into RequestSheet
+  // POST AGAIN — a repeat client's own history as one-tap re-posts (Instacart "Buy It Again" /
+  // DoorDash reorder). Dedupe finished jobs by their trade signature, newest first, take a few.
+  // Only jobs whose items all carry a trade_id qualify (so the re-post seeds faithfully).
+  const postAgain = (() => {
+    const done = (mine || []).filter((r) => r.status === 'complete'
+      && (r.request_items || []).length && r.request_items.every((it) => it.trade_id));
+    const seen = new Set(); const out = [];
+    for (const r of done) {
+      const its = r.request_items;
+      const sig = its.map((i) => `${i.trade_id}:${i.qty}:${i.rate}:${i.price_mode}`).sort().join('|');
+      if (seen.has(sig)) continue; seen.add(sig);
+      const heads = its.reduce((s, i) => s + (i.qty || 1), 0);
+      const extra = its.length - 1;
+      out.push({
+        key: sig,
+        label: its[0].type + (its[0].qty > 1 ? ` ×${its[0].qty}` : '') + (extra > 0 ? ` +${extra}` : ''),
+        sub: `${heads} ${heads === 1 ? 'person' : 'people'}`,
+        items: its.map((it) => ({
+          trade_id: it.trade_id, kind: it.kind, type: it.type, qty: it.qty || 1,
+          rate: it.rate != null ? Number(it.rate) : 0,
+          priceMode: it.price_mode || (it.kind === 'task' ? 'job' : 'hour'),
+          tickets: it.kind === 'crew' ? ['White Card'] : [], run: false,
+        })),
+      });
+      if (out.length >= 4) break;
+    }
+    return out;
+  })();
+  const openPost = () => { setPrefill(null); setSheetOpen(true); };
+  const openPostAgain = (tpl) => { setPrefill({ items: tpl.items }); setSheetOpen(true); };
   // When a job is waiting to be paid, THAT is the hero — so the post CTA recedes to a quiet
   // bar (only one loud element at a time). Otherwise "Post a job" is the loud hero.
   const payMode = needsYou.length > 0;
@@ -1152,7 +1193,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     <View style={{ position: 'absolute', left: 0, right: 0, top: '61%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
       <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128, paddingHorizontal: 16, paddingTop: 16 }}>
       {/* primary post action — clean white card (the mockup style), not a heavy black bar */}
-      <TouchableOpacity onPress={() => setSheetOpen(true)} activeOpacity={0.9}
+      <TouchableOpacity onPress={openPost} activeOpacity={0.9}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3, color: C.ink }}>Who do you need on site?</Text>
@@ -1208,39 +1249,80 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
           </View>
         )}
 
-        {(() => {
-          const isEmpty = mine !== null && progressing.length === 0 && needsYou.length === 0;
-          if (isEmpty) {
-            // EMPTY (new client — first impression): a warm display headline, one line, the
-            // single obvious action is the post bar above; then the live Pulse as proof.
-            return (
-              <>
-                <View style={[S_.rowBetween, { marginTop: 20 }]}>
-                  <Text style={T.eyebrow}>Happening now</Text>
-                  <LiveTag />
-                </View>
-                <View style={{ height: 16 }} />
-                <Pulse />
-              </>
-            );
-          }
+        {mine === null ? (
+          <ActivityIndicator color={C.indigo} style={{ marginTop: 20 }} />
+        ) : (() => {
+          // The home sheet now shows the CLIENT'S OWN world — never a feed of strangers' jobs.
+          // Order (research: Uber/DoorDash/Instacart/Airtasker): their live work → one-tap
+          // re-post of their common jobs → (brand-new only) liveness + starters → calm end cap.
+          const rest = progressing.filter((r) => !match || r.id !== match.r.id);
+          const brandNew = (mine || []).length === 0;
+          const anythingOwn = !!match || needsYou.length > 0 || rest.length > 0;
           return (
             <>
-              <View style={S_.rowBetween}>
-                <Text style={T.eyebrow}>Active now</Text>
-                <LiveTag />
-              </View>
-              {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-                : (() => {
-                    // don't repeat the job that's already shown as the MatchCard hero
-                    const rest = progressing.filter((r) => !match || r.id !== match.r.id);
-                    if (rest.length === 0) return match
-                      ? null
-                      : <Text style={[T.small, { marginTop: 8, color: C.mute }]}>All caught up — nothing else in progress.</Text>;
-                    return rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />);
-                  })()}
-              <View style={{ height: 16 }} />
-              <Pulse />
+              {/* OWN ACTIVE WORK — the returning user's centre of gravity */}
+              {rest.length > 0 && (
+                <>
+                  <View style={S_.rowBetween}>
+                    <Text style={T.eyebrow}>Active now</Text>
+                    <LiveTag />
+                  </View>
+                  {rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
+                </>
+              )}
+
+              {/* POST AGAIN — one-tap re-post of the client's common jobs (their real history) */}
+              {postAgain.length > 0 && (
+                <View style={{ marginTop: anythingOwn ? 24 : 4 }}>
+                  <Text style={[T.eyebrow, { marginBottom: 10 }]}>Post again</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 4 }}>
+                    {postAgain.map((tpl) => (
+                      <TouchableOpacity key={tpl.key} onPress={() => openPostAgain(tpl)} activeOpacity={0.85}
+                        style={{ width: 168, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 2 }}>
+                        <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: C.indigoSoft || 'rgba(79,70,229,0.10)', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+                          <Icon name="refresh" size={17} color={C.indigo} strokeWidth={2.4} />
+                        </View>
+                        <Text numberOfLines={1} style={{ fontSize: 14.5, fontWeight: '800', color: C.ink, letterSpacing: -0.2 }}>{tpl.label}</Text>
+                        <Text style={{ fontSize: 12, color: C.mute, fontWeight: '600', marginTop: 3 }}>{tpl.sub} · tap to re-post</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* BRAND-NEW — no history yet: prove the network is live + seed the first post */}
+              {brandNew && (
+                <View style={{ marginTop: 4 }}>
+                  <View style={S_.rowBetween}>
+                    <Text style={T.eyebrow}>Ready when you are</Text>
+                    <LiveTag />
+                  </View>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: C.ink, marginTop: 10, letterSpacing: -0.2 }}>
+                    {coverage && coverage.n > 0
+                      ? `${coverage.n} ${coverage.n === 1 ? 'crew' : 'crews'} available near you right now`
+                      : 'Crews across Sydney, ready to mobilise'}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: C.mute, fontWeight: '600', marginTop: 4 }}>Post your first job — nearby crews are notified instantly.</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginTop: 14 }}>
+                    {['Traffic control', 'Labourers', 'Trades'].map((k) => (
+                      <TouchableOpacity key={k} onPress={openPost} activeOpacity={0.85}
+                        style={{ backgroundColor: C.panel, borderRadius: 999, paddingVertical: 10, paddingHorizontal: 16, borderWidth: 1, borderColor: C.line, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 13.5, fontWeight: '700', color: C.ink }}>{k}</Text>
+                        <Text style={{ fontSize: 15, color: C.indigo, fontWeight: '800', marginTop: -1 }}>＋</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* CALM END CAP — a deliberate close instead of dead trailing space */}
+              {!brandNew && (
+                <View style={{ alignItems: 'center', marginTop: anythingOwn || postAgain.length > 0 ? 28 : 20, paddingVertical: 8 }}>
+                  <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', letterSpacing: 0.2 }}>
+                    {anythingOwn ? "You're all caught up" : 'Nothing on right now — post a job above'}
+                  </Text>
+                </View>
+              )}
             </>
           );
         })()}
@@ -1249,9 +1331,10 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     </View>
     <RequestSheet
       visible={sheetOpen}
-      onClose={() => setSheetOpen(false)}
+      onClose={() => { setSheetOpen(false); setPrefill(null); }}
       myLoc={myLoc}
-      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); if (id) payJob(id, est, label); }}
+      prefill={prefill}
+      onPosted={async (id, est, label) => { setSheetOpen(false); setPrefill(null); await load(); if (id) payJob(id, est, label); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     {PaySheet}
