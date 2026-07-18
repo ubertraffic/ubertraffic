@@ -258,12 +258,28 @@ function Shell({ session, pushDeepLink }) {
   cacheBindUser(session?.user?.id);
   const [role, setRoleSide] = useState('client');  // client | operator — VIEW side only
   const [tab, setTab] = useState('home');
-  // Floating island tab bar: track scroll to hide it on the way down, reveal on the way up.
-  // diffClamp accumulates the scroll delta and clamps it, so a direction change flips it instantly.
-  const scrollY = useRef(new Animated.Value(0)).current;
-  const tabHide = Animated.diffClamp(scrollY, 0, 70).interpolate({ inputRange: [0, 70], outputRange: [0, 130], extrapolate: 'clamp' });
-  const onHomeScroll = Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true });
-  const changeTab = (k) => { scrollY.setValue(0); setTab(k); };
+  // Floating island tab bar visibility. A robust, predictable show/hide — NOT diffClamp (which was
+  // recreated every render and got stuck off-screen). barTY animates 0 (shown) <-> 116 (hidden),
+  // created ONCE. Rule: hide only on a real downward scroll; ALWAYS reveal on any upward scroll or
+  // near the top; and force it shown whenever the tab or the Hire/Work side changes, so it can
+  // never get stranded hidden.
+  const barTY = useRef(new Animated.Value(0)).current;
+  const barHidden = useRef(false);
+  const lastScrollY = useRef(0);
+  const setBar = (hide) => {
+    if (barHidden.current === hide) return;
+    barHidden.current = hide;
+    Animated.timing(barTY, { toValue: hide ? 116 : 0, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  };
+  const onHomeScroll = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const dy = y - lastScrollY.current;
+    lastScrollY.current = y;
+    if (y <= 8 || dy < -3) setBar(false);       // near the top OR any upward scroll -> reveal
+    else if (dy > 4 && y > 24) setBar(true);    // a real downward scroll -> hide
+  };
+  const revealBar = () => { lastScrollY.current = 0; setBar(false); };
+  const changeTab = (k) => { revealBar(); setTab(k); };
   const [wantNew, setWantNew] = useState(false);   // signal: open new-request flow on Requests
   const [focusReq, setFocusReq] = useState(null);  // signal: open a specific request on Requests
   const [myName, setMyName] = useState(null);      // personalisation: first name in the header
@@ -294,10 +310,10 @@ function Shell({ session, pushDeepLink }) {
   function switchRole(r) {
     if (r === 'client' && !canHire) { setGate({ side: 'hire' }); return; }
     if (r === 'operator' && !canWork) { setGate({ side: 'work' }); return; }
-    setRoleSide(r); setTab('home');
+    setRoleSide(r); setTab('home'); revealBar();
   }
-  function goPost() { setWantNew(true); setTab('requests'); }
-  function goOpen(reqId) { setFocusReq(reqId); setTab('requests'); }
+  function goPost() { setWantNew(true); setTab('requests'); revealBar(); }
+  function goOpen(reqId) { setFocusReq(reqId); setTab('requests'); revealBar(); }
 
   // A tapped push notification deep-links to its job (open the request on the Requests tab).
   useEffect(() => {
@@ -345,7 +361,7 @@ function Shell({ session, pushDeepLink }) {
         )}
       </View>
 
-      <TabBar tabs={tabs} active={tab} onChange={changeTab} translateY={tabHide} accent={role === 'client' ? C.indigo : C.green} />
+      <TabBar tabs={tabs} active={tab} onChange={changeTab} translateY={barTY} accent={role === 'client' ? C.indigo : C.green} />
       {/* MomentToasts retired: the Live Tracker card now covers lifecycle moments calmly and
           persistently, so the popping toasts were redundant (competing peers). Kept the import
           so it's a one-line re-enable if we ever want it for events the tracker doesn't cover. */}
@@ -1134,8 +1150,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     </View>
     {/* floating content sheet — the map breathes above it */}
     <View style={{ position: 'absolute', left: 0, right: 0, top: '52%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 26, borderTopRightRadius: 26, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: -8 }, elevation: 12 }}>
-      <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: C.line, alignSelf: 'center', marginTop: 9, marginBottom: 4 }} />
-      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128, paddingHorizontal: 16, paddingTop: 6 }}>
+      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128, paddingHorizontal: 16, paddingTop: 16 }}>
       {/* request bar — the loud hero when idle; recedes to a quiet bar when a job needs paying */}
       <TouchableOpacity style={[S_.askDock, payMode && S_.askDockQuiet]} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
         <View style={{ flex: 1 }}>
