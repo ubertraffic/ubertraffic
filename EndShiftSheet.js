@@ -3,43 +3,47 @@
 // SLIDE-to-go-offline (Instacart's model) so a stray tap never ends a shift. Going online is a
 // joyful commitment; going offline is a considered, rewarding close.
 import React, { useRef, useState, useEffect } from 'react';
-import { Modal, View, Text, TouchableOpacity, Animated, PanResponder, StyleSheet, Dimensions } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, Animated, PanResponder, StyleSheet, Dimensions, Easing } from 'react-native';
 import { C } from './theme';
 import { tap } from './components2';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
-// A drag-the-thumb-to-confirm track. onComplete fires once the thumb passes ~78%.
+// A drag-the-thumb-to-confirm track. One clear thumb at the far left; the label stays PUT and just
+// fades as you drag (research: static label + one recognizable handle). Native-driven so it's smooth.
+// onComplete fires once the thumb passes ~70%; releases short spring back.
 function SlideToConfirm({ label, onComplete }) {
-  const [w, setW] = useState(SCREEN_W - 80);
-  const THUMB = 52;
+  const [w, setW] = useState(SCREEN_W - 96);
+  const THUMB = 54;
+  const PAD = 5;
   const x = useRef(new Animated.Value(0)).current;
   const done = useRef(false);
-  const max = Math.max(0, w - THUMB - 6);
+  const max = Math.max(1, w - THUMB - PAD * 2);
+
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: (_e, g) => {
-        const nx = Math.min(Math.max(0, g.dx), max);
-        x.setValue(nx);
-      },
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 2,
+      onPanResponderMove: (_e, g) => { x.setValue(Math.min(Math.max(0, g.dx), max)); },
       onPanResponderRelease: (_e, g) => {
         const nx = Math.min(Math.max(0, g.dx), max);
-        if (nx >= max * 0.78 && !done.current) {
+        if (nx >= max * 0.7 && !done.current) {
           done.current = true;
           tap('success');
-          Animated.timing(x, { toValue: max, duration: 120, useNativeDriver: true }).start(() => onComplete && onComplete());
+          Animated.timing(x, { toValue: max, duration: 130, easing: Easing.out(Easing.quad), useNativeDriver: true })
+            .start(() => onComplete && onComplete());
         } else {
           Animated.spring(x, { toValue: 0, useNativeDriver: true, damping: 16, stiffness: 220 }).start();
         }
       },
     })
   ).current;
-  const trackOpacity = x.interpolate({ inputRange: [0, Math.max(1, max)], outputRange: [1, 0.3] });
+
+  const labelOpacity = x.interpolate({ inputRange: [0, max * 0.5], outputRange: [1, 0], extrapolate: 'clamp' });
+
   return (
     <View style={styles.track} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
-      <Animated.Text style={[styles.trackLabel, { opacity: trackOpacity }]}>{label}</Animated.Text>
+      <Animated.Text style={[styles.trackLabel, { opacity: labelOpacity }]} pointerEvents="none">{label}</Animated.Text>
       <Animated.View style={[styles.thumb, { transform: [{ translateX: x }] }]} {...pan.panHandlers}>
         <Text style={styles.thumbArrow}>›</Text>
       </Animated.View>
@@ -94,6 +98,11 @@ export default function EndShiftSheet({ visible, onClose, onConfirmOffline, summ
               <Text style={styles.statLabel}>Online</Text>
             </View>
           </View>
+          {s.pending > 0 && (
+            <View style={styles.pendingNote}>
+              <Text style={styles.pendingT}>{s.pending} job{s.pending > 1 ? 's' : ''} awaiting approval — your pay lands once the client approves.</Text>
+            </View>
+          )}
           <SlideToConfirm label="Slide to go offline" onComplete={() => { onConfirmOffline && onConfirmOffline(); onClose && onClose(); }} />
           <TouchableOpacity onPress={onClose} style={styles.stay} activeOpacity={0.8}>
             <Text style={styles.stayT}>Stay online</Text>
@@ -114,10 +123,15 @@ const styles = StyleSheet.create({
   stat: { flex: 1, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 18, alignItems: 'center', borderWidth: 1, borderColor: C.line },
   statNum: { fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5 },
   statLabel: { fontSize: 11.5, fontWeight: '700', color: C.mute, letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 5 },
-  track: { height: 58, borderRadius: 16, backgroundColor: '#1B1B22', justifyContent: 'center', overflow: 'hidden' },
-  trackLabel: { textAlign: 'center', color: 'rgba(255,255,255,0.7)', fontSize: 14.5, fontWeight: '800', letterSpacing: 0.3 },
-  thumb: { position: 'absolute', left: 3, top: 3, width: 52, height: 52, borderRadius: 13, backgroundColor: C.ink, alignItems: 'center', justifyContent: 'center' },
-  thumbArrow: { color: '#fff', fontSize: 24, fontWeight: '900', marginTop: -2 },
+  track: { height: 64, borderRadius: 18, backgroundColor: '#191921', justifyContent: 'center' },
+  trackLabel: { textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 14.5, fontWeight: '800', letterSpacing: 0.4 },
+  thumb: {
+    position: 'absolute', left: 5, top: 5, width: 54, height: 54, borderRadius: 14, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 6,
+  },
+  thumbArrow: { color: C.ink, fontSize: 27, fontWeight: '900', marginTop: -2 },
+  pendingNote: { backgroundColor: 'rgba(214,158,46,0.12)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 16 },
+  pendingT: { color: C.amber, fontSize: 12.5, fontWeight: '700', lineHeight: 18 },
   stay: { alignItems: 'center', paddingVertical: 14, marginTop: 6 },
   stayT: { color: C.mute, fontSize: 14, fontWeight: '700' },
 });

@@ -807,7 +807,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                       } finally { setLocBusy(false); }
                     }}>
                     {locBusy ? <ActivityIndicator color={C.indigo} size="small" />
-                      : <><Text style={SH.useLocPin}>◎</Text><Text style={SH.useLocT}>Use my current location</Text><Text style={SH.useLocSub}>you're on site</Text></>}
+                      : <><Text style={SH.useLocPin}>◎</Text><Text style={SH.useLocT}>Use my current location</Text><Text style={SH.useLocSub}>if you're at the site</Text></>}
                   </TouchableOpacity>
                 )}
                 {myLoc && <Text style={SH.orType}>or type an address</Text>}
@@ -963,19 +963,26 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
     return cents;
   }
 
-  // Post → open the pay sheet to AUTHORISE a hold (charged only when the client later approves).
-  // estOverride/labelOverride let a fresh post pass its own numbers, since the just-created job
-  // isn't in `mine` yet (that's why the sheet used to flash $0). The final charge is always the
-  // server-computed amount either way.
+  // Guard: never open a payment for a job no worker is on. A request must have at least one
+  // assignment in a live/finished state before any money can move (matches the server settle rule).
+  const WORKER_STATES = ['committed', 'accepted', 'en_route', 'on_site', 'complete', 'approved'];
+  const DONE_STATES = ['complete', 'approved'];
+  function reqHasWorker(req, states) {
+    return (req?.request_items || []).some((it) => (it.assignments || []).some((a) => a.operator_id && states.includes(a.status)));
+  }
+
+  // Pay → open the pay sheet. Only valid once a worker is actually on the job (never on a fresh post).
   function payJob(reqId, estOverride, labelOverride) {
     const req = getReq(reqId);
+    if (!reqHasWorker(req, WORKER_STATES)) { onError && onError(new Error('No one has taken this job yet — you pay once a worker has done the work.'), reqId); return; }
     const est = Number(estOverride) > 0 ? Number(estOverride) : estimateCentsFor(req);
     const label = labelOverride || req?.request_items?.[0]?.type || 'Job';
     setPayReq({ id: reqId, label, estimateCents: est });
   }
-  // Approve → open the pay sheet in auto-capture mode (secures the hold if needed, then captures).
+  // Approve → open the pay sheet in auto-capture mode. Only valid once a worker has COMPLETED the job.
   function beginApproval(reqId, adj) {
     const req = getReq(reqId);
+    if (!reqHasWorker(req, DONE_STATES)) { onError && onError(new Error('You can approve & pay once a worker has completed the job.'), reqId); return; }
     setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: estimateCentsFor(req), adj, approve: true });
   }
   // Runs after the Stripe capture succeeds — mark the job approved + queue the rating.
@@ -1154,7 +1161,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
       <MapHero
         height={Dimensions.get('window').height} framed={false} markers={mapJobs} me={myLoc} activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
-        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id, r.est, r.label), 500); } else { setSheetOpen(true); } }}
+        hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); } else { setSheetOpen(true); } }}
         commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
         chatBubble={match ? { unread: 0, fn: () => { const trav = (match.crew || []).find((x) => x.a.status === 'en_route') || (match.crew || [])[0]; if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: `${suburbOf(match.r.address_text)}`, info: buildJobInfo({ a: trav.a, it: trav.it, r: match.r }) }); } } : null}
         onWorkerTap={(requestId) => {
@@ -1177,6 +1184,11 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         }}
       />
     </View>
+    {/* subtle "?" help button floating on the map (replaces the sheet pill — keeps the sheet tight) */}
+    <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.8}
+      style={{ position: 'absolute', top: 14, left: 16, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(18,18,26,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}>
+      <Icon name="help" size={19} color="rgba(255,255,255,0.9)" strokeWidth={2.2} />
+    </TouchableOpacity>
     {/* floating content sheet — HUGS its content when quiet (sits just above the tab bar, no dead
         gap, map fills the rest) and rises into a scrollable panel when there's active work. */}
     {(() => {
@@ -1196,14 +1208,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
               <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
             </View>
           </TouchableOpacity>
-          {/* one centred helper pill — learn the ropes */}
-          <View style={{ marginTop: 12, alignItems: 'center' }}>
-            <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.85}
-              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.panel, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 30, borderWidth: 1, borderColor: C.line }}>
-              <Icon name="help" size={16} color={C.mute} strokeWidth={2.3} />
-              <Text style={{ fontSize: 14, fontWeight: '700', color: C.ink }}>How it works</Text>
-            </TouchableOpacity>
-          </View>
+          {/* "How it works" moved to a subtle ? button ON the map (see below) — the sheet stays tight. */}
           {brandNew && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 14 }}>
               <LiveTag />
@@ -1220,7 +1225,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
       }
       // ACTIVE — a taller panel with a scrollable body holding the live work.
       return (
-        <View style={[sheetChrome, { top: '54%' }]}>
+        <View style={[sheetChrome, { top: '42%' }]}>
           {pinnedHeader}
           <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 130, paddingHorizontal: 16, paddingTop: 2 }}>
             {(() => {
@@ -1291,7 +1296,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
       onClose={() => { setSheetOpen(false); setPrefill(null); }}
       myLoc={myLoc}
       prefill={prefill}
-      onPosted={async (id, est, label) => { setSheetOpen(false); setPrefill(null); await load(); if (id) payJob(id, est, label); }}
+      onPosted={async (id, est, label) => { setSheetOpen(false); setPrefill(null); await load(); setMsg('Job posted — crews nearby are being notified. You pay only once the work is done.'); }}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="client" />
     {PaySheet}
@@ -1607,7 +1612,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
       myLoc={null}
-      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); if (id) payJob(id, est, label); }}
+      onPosted={async (id, est, label) => { setSheetOpen(false); await load(); setMsg('Job posted — crews nearby are being notified. You pay only once the work is done.'); }}
     />
     {PaySheet}
     <RateJob
