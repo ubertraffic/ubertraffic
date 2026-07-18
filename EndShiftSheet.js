@@ -3,7 +3,7 @@
 // SLIDE-to-go-offline (Instacart's model) so a stray tap never ends a shift. Going online is a
 // joyful commitment; going offline is a considered, rewarding close.
 import React, { useRef, useState, useEffect } from 'react';
-import { Modal, View, Text, TouchableOpacity, Animated, PanResponder, StyleSheet, Dimensions } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, Animated, PanResponder, StyleSheet, Dimensions, Easing } from 'react-native';
 import { C } from './theme';
 import { tap } from './components2';
 
