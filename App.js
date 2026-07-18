@@ -265,6 +265,22 @@ function Shell({ session, pushDeepLink }) {
   const onHomeScroll = () => {};   // static tab bar — no hide-on-scroll
   const revealBar = () => {};
   const changeTab = (k) => { setTab(k); };
+  // TAB TRANSITIONS — the Home map is a PERMANENT base layer (mounted once, never reloads). The
+  // other tabs (Requests/Activity/Account/Jobs/Earnings) are opaque overlays that cross-fade + slide
+  // in over it. `activeOverlay` holds the visible non-home tab and lingers through the fade-OUT so
+  // the exit animates before it unmounts. Home↔overlay cross-fades; overlay↔overlay swaps instantly.
+  const overlayAnim = useRef(new Animated.Value(0)).current;
+  const [activeOverlay, setActiveOverlay] = useState(null);
+  useEffect(() => {
+    if (tab === 'home') {
+      Animated.timing(overlayAnim, { toValue: 0, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true })
+        .start(({ finished }) => { if (finished) setActiveOverlay(null); });
+    } else {
+      setActiveOverlay(tab);
+      Animated.timing(overlayAnim, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [wantNew, setWantNew] = useState(false);   // signal: open new-request flow on Requests
   const [focusReq, setFocusReq] = useState(null);  // signal: open a specific request on Requests
   const [myName, setMyName] = useState(null);      // personalisation: first name in the header
@@ -324,25 +340,33 @@ function Shell({ session, pushDeepLink }) {
 
       {/* tab content */}
       <View style={{ flex: 1 }}>
-        {tab === 'home' ? (
-          // BOTH homes stay mounted — we toggle visibility so the map never
-          // unmounts/reloads when switching Hire<->Work. Seamless, no page flash.
-          <View style={{ flex: 1 }}>
-            <View style={[S_.homeLayer, role !== 'client' && S_.homeHidden]} pointerEvents={role === 'client' ? 'auto' : 'none'}>
-              <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
-            </View>
-            <View style={[S_.homeLayer, role !== 'operator' && S_.homeHidden]} pointerEvents={role === 'operator' ? 'auto' : 'none'}>
-              <OperatorHome session={session} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
-            </View>
+        {/* PERSISTENT HOME BASE — mounted once, forever. Both Hire/Work homes stay mounted (toggled by
+            visibility) so the map never reloads, whether switching Hire↔Work OR leaving to another
+            tab and coming back. Non-home tabs render as fading overlays ON TOP of this. */}
+        <View style={StyleSheet.absoluteFill} pointerEvents={tab === 'home' ? 'auto' : 'none'}>
+          <View style={[S_.homeLayer, role !== 'client' && S_.homeHidden]} pointerEvents={role === 'client' ? 'auto' : 'none'}>
+            <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
           </View>
-        ) : role === 'client' ? (
-          tab === 'requests' ? <ClientRequests session={session} openNew={wantNew} onOpenedNew={() => setWantNew(false)} focusReq={focusReq} onFocused={() => setFocusReq(null)} />
-          : tab === 'activity' ? <ClientActivity session={session} />
-          : <Account session={session} role="client" onNameSaved={loadName} onOpenProfile={setProfileId} />
-        ) : (
-          tab === 'jobs' ? <OperatorJobs session={session} onOpenProfile={setProfileId} />
-          : tab === 'earnings' ? <OperatorEarnings session={session} />
-          : <Account session={session} role="operator" onNameSaved={loadName} onOpenProfile={setProfileId} />
+          <View style={[S_.homeLayer, role !== 'operator' && S_.homeHidden]} pointerEvents={role === 'operator' ? 'auto' : 'none'}>
+            <OperatorHome session={session} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
+          </View>
+        </View>
+        {/* OVERLAY TABS — cross-fade + subtle slide over the map. Kept mounted through the fade-out. */}
+        {activeOverlay && (
+          <Animated.View
+            style={[StyleSheet.absoluteFill, { backgroundColor: C.canvas, opacity: overlayAnim, transform: [{ translateY: overlayAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }]}
+            pointerEvents={tab === 'home' ? 'none' : 'auto'}
+          >
+            {role === 'client' ? (
+              activeOverlay === 'requests' ? <ClientRequests session={session} openNew={wantNew} onOpenedNew={() => setWantNew(false)} focusReq={focusReq} onFocused={() => setFocusReq(null)} />
+              : activeOverlay === 'activity' ? <ClientActivity session={session} />
+              : <Account session={session} role="client" onNameSaved={loadName} onOpenProfile={setProfileId} />
+            ) : (
+              activeOverlay === 'jobs' ? <OperatorJobs session={session} onOpenProfile={setProfileId} />
+              : activeOverlay === 'earnings' ? <OperatorEarnings session={session} />
+              : <Account session={session} role="operator" onNameSaved={loadName} onOpenProfile={setProfileId} />
+            )}
+          </Animated.View>
         )}
       </View>
 
