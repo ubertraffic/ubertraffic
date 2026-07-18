@@ -1105,14 +1105,12 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
   const onHubAction = (j) => messageForRaw(j._raw);
   return (
     <View style={{ flex: 1 }}>
-    <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128 }}>
+    {/* IMMERSIVE HOME — full-bleed living map behind a floating content sheet */}
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
       <MapHero
-        height={240} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
+        height={Dimensions.get('window').height} framed={false} markers={mapJobs} me={myLoc} activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
         hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id, r.est, r.label), 500); } else { setSheetOpen(true); } }}
         commandSummary={active.length > 0 ? `${active.length} active${needsYou.length ? ` · ${needsYou.length} needs you` : ''}` : (coverage && coverage.n > 0 ? `${coverage.n} worker${coverage.n === 1 ? '' : 's'} nearby` : 'All clear')}
-        primaryAction={needsYou.length > 0
-          ? { label: 'Review & pay', sub: `${needsYou.length} job${needsYou.length > 1 ? 's' : ''} ready`, tone: 'green', icon: '✓', closesMap: true, fn: () => onOpenReq && onOpenReq(needsYou[0].id) }
-          : { label: 'Post a job', sub: 'Get help on site now', tone: 'ready', icon: '＋', mapPost: true }}
         chatBubble={match ? { unread: 0, fn: () => { const trav = (match.crew || []).find((x) => x.a.status === 'en_route') || (match.crew || [])[0]; if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: `${suburbOf(match.r.address_text)}`, info: buildJobInfo({ a: trav.a, it: trav.it, r: match.r }) }); } } : null}
         onWorkerTap={(requestId) => {
           // Solo job → tapping the worker's badge opens a direct chat with them (makes sense).
@@ -1133,8 +1131,12 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
           if (onOpenReq) onOpenReq(requestId);
         }}
       />
-      {/* request bar docked to the map's bottom edge — one connected card. It's the loud hero
-          when idle; when a job needs paying it recedes to a quiet bar so the pay card can lead. */}
+    </View>
+    {/* floating content sheet — the map breathes above it */}
+    <View style={{ position: 'absolute', left: 0, right: 0, top: '52%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 26, borderTopRightRadius: 26, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: -8 }, elevation: 12 }}>
+      <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: C.line, alignSelf: 'center', marginTop: 9, marginBottom: 4 }} />
+      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128, paddingHorizontal: 16, paddingTop: 6 }}>
+      {/* request bar — the loud hero when idle; recedes to a quiet bar when a job needs paying */}
       <TouchableOpacity style={[S_.askDock, payMode && S_.askDockQuiet]} onPress={() => setSheetOpen(true)} activeOpacity={0.92}>
         <View style={{ flex: 1 }}>
           <Text style={[S_.askDockLabel, payMode && S_.askDockLabelQuiet]}>NEED SOMEONE ON SITE?</Text>
@@ -1161,7 +1163,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
           else if (action === 'open_help') setHelpOpen(true);
         }} />;
       })()}
-      <View style={{ padding: 24, paddingTop: 24 }}>
+      <View style={{ paddingTop: 12 }}>
 
         {/* THE MATCH — the whole job, filling up, crew inside. The Uber moment. */}
         {match && (
@@ -1230,6 +1232,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         })()}
       </View>
     </Animated.ScrollView>
+    </View>
     <RequestSheet
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
