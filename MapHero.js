@@ -149,15 +149,28 @@ function shellHtml() {
 + 'map.addLayer({id:"jobline-glow",type:"line",source:"jobline",paint:{"line-color":"'+MC.blue+'","line-width":8,"line-opacity":.25,"line-blur":4}});'
 + 'map.addLayer({id:"jobline-core",type:"line",source:"jobline",paint:{"line-color":"'+MC.blue2+'","line-width":3,"line-opacity":.95}});'
 + 'map.addSource("coverage",{type:"geojson",data:{type:"FeatureCollection",features:[]}});'
-+ 'map.addLayer({id:"coverage-heat",type:"heatmap",source:"coverage",paint:{"heatmap-color":["interpolate",["linear"],["heatmap-density"],0,"rgba(14,122,82,0)",0.3,"rgba(14,122,82,0.5)",0.6,"rgba(16,140,94,0.75)",1,"rgba(18,160,108,0.95)"],"heatmap-radius":52,"heatmap-opacity":0.8,"heatmap-intensity":1.05}});'
++ 'map.addLayer({id:"coverage-heat",type:"heatmap",source:"coverage",paint:{"heatmap-color":["interpolate",["linear"],["heatmap-density"],0,"rgba(14,122,82,0)",0.3,"rgba(14,122,82,0.5)",0.6,"rgba(16,140,94,0.75)",1,"rgba(18,160,108,0.95)"],"heatmap-radius":["interpolate",["linear"],["zoom"],9,20,12,42,15,66,17,95],"heatmap-opacity":0.8,"heatmap-intensity":1.05}});'
 + 'map.addSource("demand",{type:"geojson",data:{type:"FeatureCollection",features:[]}});'
-+ 'map.addLayer({id:"demand-heat",type:"heatmap",source:"demand",paint:{"heatmap-color":["interpolate",["linear"],["heatmap-density"],0,"rgba(178,58,46,0)",0.3,"rgba(178,58,46,0.45)",0.6,"rgba(196,64,52,0.7)",1,"rgba(210,70,58,0.9)"],"heatmap-radius":55,"heatmap-opacity":0.72,"heatmap-intensity":1.1}});'
++ 'map.addLayer({id:"demand-heat",type:"heatmap",source:"demand",paint:{"heatmap-color":["interpolate",["linear"],["heatmap-density"],0,"rgba(178,58,46,0)",0.3,"rgba(178,58,46,0.45)",0.6,"rgba(196,64,52,0.7)",1,"rgba(210,70,58,0.9)"],"heatmap-radius":["interpolate",["linear"],["zoom"],9,22,12,44,15,70,17,100],"heatmap-opacity":0.72,"heatmap-intensity":1.1}});'
 // breathing pulse for the heat layers
 + 'var bt0=Date.now();S.hasHeat=false;S.breatheLast=0;function breathe(ts){'
 + 'if(S.hasHeat&&(ts-S.breatheLast>60)){S.breatheLast=ts;var e=0.5+0.5*Math.sin((Date.now()-bt0)/1400);'
 + 'try{map.setPaintProperty("coverage-heat","heatmap-opacity",0.8*(0.72+0.28*e));}catch(_){}'
 + 'try{map.setPaintProperty("demand-heat","heatmap-opacity",0.72*(0.72+0.28*e));}catch(_){}}'
 + 'requestAnimationFrame(breathe);}requestAnimationFrame(breathe);'
+// DEMO HEAT — Uber-style surge zones spread across greater Sydney. Seeded once at real metro centres;
+// each blob drifts on a slow sine so the whole field FLOWS continuously (driven off rAF, ~30fps —
+// not the old 5fps stepping). Only shows when idle (no live jobs); real activity takes over.
++ 'var SYD=[[151.2093,-33.8688],[151.0000,-33.8150],[150.9200,-33.9200],[150.6940,-33.7510],[150.7510,-33.6000],[151.1800,-33.7970],[150.9060,-33.7710],[150.8140,-34.0730],[151.1000,-33.7040],[151.0350,-33.9170],[151.1520,-34.0490],[151.2850,-33.7970],[151.1080,-33.8830],[150.9990,-33.7480],[150.8570,-33.7600]];'
++ 'function seedHeat(){S.heat=[];for(var i=0;i<SYD.length;i++){var b=SYD[i];var n=1+Math.floor(Math.random()*2);for(var j=0;j<n;j++){S.heat.push({bx:b[0]+(Math.random()-0.5)*0.05,by:b[1]+(Math.random()-0.5)*0.05,ax:0.004+Math.random()*0.008,ay:0.004+Math.random()*0.008,sx:0.12+Math.random()*0.35,sy:0.12+Math.random()*0.35,ph:Math.random()*6.283,kind:(Math.random()<0.6?"dem":"cov")});}}}'
++ 'var ht0=Date.now();S.heatLast=0;function heatTick(){'
++ 'if(S.demoOn&&!S.liveJobs){if(!S.heat)seedHeat();'
++ 'if(Date.now()-S.heatLast>32){S.heatLast=Date.now();var t=(Date.now()-ht0)/1000,cov=[],dem=[];'
++ 'S.heat.forEach(function(b){var x=b.bx+Math.sin(t*b.sx+b.ph)*b.ax,y=b.by+Math.cos(t*b.sy+b.ph)*b.ay;'
++ 'var f={type:"Feature",geometry:{type:"Point",coordinates:[x,y]}};(b.kind==="dem"?dem:cov).push(f);});'
++ 'try{map.getSource("coverage").setData({type:"FeatureCollection",features:cov});}catch(_){}'
++ 'try{map.getSource("demand").setData({type:"FeatureCollection",features:dem});}catch(_){}'
++ 'S.hasHeat=true;}}requestAnimationFrame(heatTick);}requestAnimationFrame(heatTick);'
 + 'S.ready=true;if(window.__pending){apply(window.__pending);window.__pending=null;}'
 + 'function __sendReady(){if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({type:"map_ready"}));}'
 + '__sendReady();map.once("idle",__sendReady);'
@@ -171,6 +184,7 @@ function shellHtml() {
 + 'el.innerHTML="<div class=\\"glow\\" style=\\"background:"+meta.color+"\\"></div>"+((p.pulse||p.status==="on_site")?"<div class=\\"ring\\" style=\\"background:"+meta.color+"55\\"></div>":"")+"<div class=\\"dot\\" style=\\"background:"+meta.color+"\\">"+inner+"</div>";}'
 // ---- the LIVE updater: diff state, move things, ease camera. NO rebuild. ----
 + 'function apply(st){if(!S.ready){window.__pending=st;return;}'
++ 'S.demoOn=!!st.demoHeat;S.liveJobs=(st.markers||[]).length>0;if(st.me)S.me=st.me;'
 + 'var META={getting_ready:{color:"'+MC.grey+'",label:"Getting ready"},on_the_way:{color:"'+MC.blue+'",label:"On the way"},on_site:{color:"'+MC.green+'",label:"On site"},waiting:{color:"'+MC.red+'",label:"Finding workers"},done:{color:"'+MC.green+'",label:"Complete"}};'
 // you marker
 + 'if(st.me){var yl=[st.me.lng,st.me.lat];if(!S.youMk){var yEl=document.createElement("div");yEl.className="you-wrap";yEl.innerHTML="<div class=\\"halo\\"></div><div class=\\"you\\"></div>";S.youMk=new maplibregl.Marker({element:yEl,anchor:"center"}).setLngLat(yl).addTo(map);}else{S.youMk.setLngLat(yl);}}'
@@ -196,12 +210,15 @@ function shellHtml() {
 + 'else{glide(S.worker,target);}'
 + 'map.getSource("jobline").setData({type:"FeatureCollection",features:[{type:"Feature",geometry:{type:"LineString",coordinates:[target,[trav.lng,trav.lat]]}}]});'
 + '}else{if(S.worker.mk){S.worker.mk.remove();S.worker.mk=null;S.worker.pos=null;}map.getSource("jobline").setData({type:"FeatureCollection",features:[]});}'
-// coverage + demand heat (idle only; cleared when a job is active)
+// coverage + demand heat (idle only; cleared when a job is active). When the demo animation owns the
+// heat (idle + demoHeat), skip the static real-data write so the two don't fight.
++ 'if(!(S.demoOn&&!S.liveJobs)){'
 + 'var covF=(st.coverage||[]).map(function(c){return {type:"Feature",geometry:{type:"Point",coordinates:[c.lng,c.lat]}};});'
 + 'var demF=(st.demand||[]).map(function(c){return {type:"Feature",geometry:{type:"Point",coordinates:[c.lng,c.lat]}};});'
 + 'map.getSource("coverage").setData({type:"FeatureCollection",features:covF});'
 + 'map.getSource("demand").setData({type:"FeatureCollection",features:demF});'
 + 'S.hasHeat=(covF.length>0||demF.length>0);'
++ '}'
 // badge (docked bottom bar)
 + 'updateBadge(st,META,trav);'
 // camera — ease to the story, but never fight the user right after they touch
@@ -308,6 +325,9 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
       mode,
       coverage: !hasJobs && coverage && coverage.points ? coverage.points : [],
       demand: !hasJobs ? landDemand : [],
+      // DEMO HEAT — when idle (no live jobs), the map animates drifting red/green heat so it always
+      // feels alive. Fake, but only ever shows when there's no real job activity to display.
+      demoHeat: true,
     });
     const js = 'window.__apply && window.__apply(' + JSON.stringify(state) + '); true;';
     // only feed the VISIBLE map — when fullscreen is open the small map is hidden,
@@ -328,8 +348,9 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
 
   const overlays = (expanded) => (
     <>
-      {/* mode identity — soft accent + label, so users always know Hire vs Work */}
-      {!expanded && <View pointerEvents="none" style={[styles.modeTint, { borderColor: mode === 'work' ? 'rgba(14,122,82,0.28)' : 'rgba(70,54,232,0.26)' }]} />}
+      {/* mode identity — soft accent border, but ONLY when the map is a framed card. On the full-bleed
+          immersive home (framed=false) a bordered frame looks out of place, so the map goes flush. */}
+      {!expanded && framed && <View pointerEvents="none" style={[styles.modeTint, { borderColor: mode === 'work' ? 'rgba(14,122,82,0.28)' : 'rgba(70,54,232,0.26)' }]} />}
       {!expanded && mode === 'work' ? (
         <View pointerEvents="none" style={styles.modeLabelWrap}>
           <View style={[styles.modeLabel, { backgroundColor: 'rgba(16,61,46,0.9)' }]}>

@@ -1,11 +1,13 @@
 // screens.js — Operator screens extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable } from 'react-native';
 import { C, R, S, E, M, T, Z } from './theme';
 import { SH, S_ } from './styles';
 import Icon, { iconForType } from './Icon';
 import { supabase } from './supabaseClient';
 import MapHero from './MapHero';
+import GoOnlineOrb from './GoOnlineOrb';
+import EndShiftSheet from './EndShiftSheet';
 import LiveTrackerCard from './LiveTrackerCard';
 import Pulse from './Pulse';
 import JobChat from './JobChat';
@@ -342,6 +344,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const [prestart, setPrestart] = useState(null);           // assignmentId in the arrival safety-prestart gate
   const { needs: prestartNeeds, check: checkPrestart, markDone: markPrestartDone } = usePrestartStatus(myAssigns);
   const [opMapExpanded, setOpMapExpanded] = useState(false);
+  const flood = useRef(new Animated.Value(0)).current;   // green colour-flood when going online
+  const [onlineSince, setOnlineSince] = useState(null);  // when this shift started (for the live timer)
+  const [endShift, setEndShift] = useState(false);       // "Nice work" end-of-shift sheet visible
   // Live location — follow the worker as they move (real GPS on Expo Go via
   // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
   // to DEV_LOCATION when real GPS isn't available. stop() cleans up on unmount.
@@ -399,6 +404,11 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['dispatches', 'assignments'], refresh);
+  // shift clock — starts when the worker goes online (kept if already online on load), clears offline.
+  useEffect(() => {
+    if (profile?.is_online) setOnlineSince((s) => s || Date.now());
+    else setOnlineSince(null);
+  }, [profile?.is_online]);
 
   async function becomeOperator() {
     // Capture identity first — the anchor a register check needs (Phase 2). Validated in setMyIdentity.
@@ -428,6 +438,12 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
       }
       await refresh();
     } catch (e) { setMsg(friendly(e)); } finally { setBusy(false); }
+  }
+  // Going online with the payoff — a green colour-flood blooms from the orb as the map ignites.
+  async function goLive() {
+    flood.setValue(0);
+    Animated.timing(flood, { toValue: 1, duration: 640, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(() => flood.setValue(0));
+    await toggleOnline();
   }
   async function accept(itemId) {
     setBusy(true); setBusyId(itemId); setMsg('');
@@ -579,9 +595,93 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     : doneAssign ? 'done'
     : profile.is_online ? 'find'
     : 'offline';
+  // The immersive green Work home (full-bleed map + floating sheet + GO orb) covers the "deciding /
+  // available" states. Once a job is active/working/done we keep the proven mission-control layout
+  // below so none of the on-site + close-out flows change.
+  const immersive = mission === 'offline' || mission === 'find';
+  // Earnings anchor — best-effort from finished assignments (real fields when present, else 0). A
+  // dedicated earnings endpoint replaces this in a later pass; the UI is ready for real numbers.
+  const opEarn = (() => {
+    const done = (myAssigns || []).filter((a) => ['complete', 'approved'].includes(a.status));
+    const now = Date.now(), DAY = 86400000;
+    let today = 0, week = 0;
+    done.forEach((a) => {
+      const v = Number(a.settle_net != null ? a.settle_net : (a.net_cents != null ? a.net_cents / 100 : 0)) || 0;
+      const t = new Date(a.paid_at || a.completed_at || a.accepted_at || 0).getTime();
+      if (now - t < DAY) today += v;
+      if (now - t < 7 * DAY) week += v;
+    });
+    return { today: Math.round(today), week: Math.round(week) };
+  })();
 
   return (
     <>
+    {immersive ? (
+      <View style={{ flex: 1 }}>
+        {/* full-bleed green work map — ambient decision context */}
+        <View style={StyleSheet.absoluteFill}>
+          <MapHero
+            height={Dimensions.get('window').height} framed={false} mode="work" me={myLoc}
+            offline={!profile.is_online} demand={demandHeat} markers={profile.is_online ? opMapJobs : []}
+            hubJobs={profile.is_online ? (jobs || []).filter((d) => !passed.has(d.request_item?.id)).map((d) => {
+              const it = d.request_item; const r = it?.request; const qty = it?.qty || 1; const left = qty - (d.taken || 0);
+              return {
+                id: d.id, kind: 'accept', itemId: it?.id,
+                title: it?.type || 'Job', sub: `${suburbOf(r?.address_text)} · ${left > 0 ? `${left} of ${qty} open` : 'Full'}${r?.when_type === 'now' ? ' · Urgent' : ''}`,
+                dotColor: r?.when_type === 'now' ? C.amber : C.green, action: left <= 0 ? 'Full' : 'Accept', _left: left,
+                detail: { rows: [{ k: 'Type', v: it?.type || 'Job' }, { k: 'Site', v: suburbOf(r?.address_text) || '—' }, { k: 'Spots', v: left > 0 ? `${left} of ${qty} open` : 'Full' }, it?.rate ? { k: 'Rate', v: `$${it.rate}/hr` } : null].filter(Boolean),
+                  actions: [left > 0 ? { label: 'Accept this job', tone: 'green', fn: () => it?.id && accept(it.id) } : null, { label: 'Pass', tone: 'ghost', fn: () => it?.id && pass(it.id) }].filter(Boolean) },
+              };
+            }) : []}
+            onHubAction={(j) => { if (j.kind === 'accept' && j._left > 0 && j.itemId) accept(j.itemId); }}
+            commandSummary={(() => { const near = (jobs || []).filter((d) => !passed.has(d.request_item?.id)).length; return profile.is_online ? (near > 0 ? `${near} job${near > 1 ? 's' : ''} nearby` : 'Finding work near you') : 'Go online to get work'; })()}
+          />
+        </View>
+        {/* GREEN COLOUR-FLOOD — blooms up from the orb as you go online */}
+        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '44%', left: '50%', marginLeft: -65, marginTop: -65, width: 130, height: 130, borderRadius: 65, backgroundColor: C.green, opacity: flood.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 0.85, 0] }), transform: [{ scale: flood.interpolate({ inputRange: [0, 1], outputRange: [0.2, 18] }) }] }} />
+        {/* floating green sheet — dashboard-forward for the worker; the orb crowns it */}
+        <View style={{ position: 'absolute', left: 0, right: 0, top: '40%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
+          {/* control PINNED above the scroll — orb centres itself; the online pill stretches wide.
+              Pinning it (not inside the scroll) keeps a press-and-hold from being stolen by scrolling. */}
+          <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
+            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={() => setEndShift(true)} earningsToday={opEarn.today} onlineSince={onlineSince} />
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+            {/* earnings — the worker's emotional anchor (wired to real totals in a later pass) */}
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+              <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>Today</Text>
+                <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.today}</Text>
+              </View>
+              <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>This week</Text>
+                <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.week}</Text>
+              </View>
+            </View>
+            {/* demand line — where the work is right now */}
+            <View style={[S_.rowBetween, { marginBottom: 10 }]}>
+              <Text style={T.eyebrow}>{profile.is_online ? 'Jobs near you' : 'Demand near you'}</Text>
+              <LiveTag />
+            </View>
+            {!profile.is_online && (
+              <Text style={{ fontSize: 13.5, color: C.mute, fontWeight: '600', marginBottom: 14, lineHeight: 19 }}>
+                Labour is in demand across Sydney right now — go online to see jobs near you and start earning.
+              </Text>
+            )}
+            <WorkFeed mission={mission} jobs={jobs} passed={passed} busyId={busyId} expandedBios={expandedBios} setExpandedBios={setExpandedBios} onAccept={accept} onPass={pass} onDismissDone={() => {}} />
+            {!!msg && <Text style={msg[0] === '✓' ? S_.successText : S_.msg}>{msg}</Text>}
+            {/* what I supply — collapsed skill summary */}
+            <TouchableOpacity style={[S_.capSummary, { marginTop: 20 }]} onPress={() => setCapPicker(true)} activeOpacity={0.85}>
+              <View style={{ flex: 1 }}>
+                <Text style={T.bodyStrong}>{caps.length === 0 ? 'Add what you supply' : `${caps.length} skill${caps.length === 1 ? '' : 's'}`}</Text>
+                <Text style={[T.small, { color: C.mute, marginTop: 4 }]}>{caps.length === 0 ? 'Get matched to work nearby.' : 'Tap to add another skill.'}</Text>
+              </View>
+              <Text style={S_.capChevron}>›</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </View>
+    ) : (
     <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128 }}>
       {(() => {
         // Map presence follows the mission: big when navigating/offline context, compact when the
@@ -803,6 +903,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
         })()}
       </View>
     </Animated.ScrollView>
+    )}
     <JobChat
       visible={!!chat}
       onClose={() => { setChat(null); refresh(); }}
@@ -815,6 +916,16 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
       onOpenProfile={onOpenProfile}
     />
     <AcceptCelebration data={celebrate} onDone={() => setCelebrate(null)} />
+    <EndShiftSheet
+      visible={endShift}
+      onClose={() => setEndShift(false)}
+      onConfirmOffline={() => { setEndShift(false); toggleOnline(); }}
+      summary={{
+        today: opEarn.today,
+        jobs: (myAssigns || []).filter((a) => ['complete', 'approved'].includes(a.status) && (Date.now() - new Date(a.paid_at || a.completed_at || a.accepted_at || 0).getTime()) < 86400000).length,
+        minutes: onlineSince ? Math.max(0, Math.floor((Date.now() - onlineSince) / 60000)) : 0,
+      }}
+    />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
     <SkillDiscoverySheet skill={discSkill} excludeUserId={session.user.id} onClose={() => setDiscSkill(null)} onOpenProfile={onOpenProfile} />
     <CloseOutSheet

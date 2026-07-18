@@ -205,13 +205,15 @@ export const S_ = StyleSheet.create({
   input: { backgroundColor: C.panel, borderColor: C.line, borderWidth: 1, borderRadius: R.md, color: C.ink, fontSize: 16, padding: 15, marginBottom: 4 },
   msg: { color: C.indigo, marginTop: 14, fontSize: 13, lineHeight: 19, fontWeight: '500' },
 
-  topbar: { flexDirection: 'row', alignItems: 'center', paddingTop: 56, paddingHorizontal: S.xl, paddingBottom: 12, gap: 11, backgroundColor: C.canvas },
+  // Dark chrome — the top bar is one continuous dark shell with the map and the island tab bar
+  // (same #131319 family), so there's no hard white seam where the header meets the map.
+  topbar: { flexDirection: 'row', alignItems: 'center', paddingTop: 56, paddingHorizontal: S.xl, paddingBottom: 12, gap: 11, backgroundColor: '#131319' },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.canvas, zIndex: 100 },
   markSm: { width: 34, height: 34, borderRadius: 9, backgroundColor: C.ink, alignItems: 'center', justifyContent: 'center' },
-  roleSwitch: { flexDirection: 'row', backgroundColor: C.line2, borderRadius: R.md, padding: 3 },
+  roleSwitch: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: R.md, padding: 3 },
   roleChip: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 9, minWidth: 62, alignItems: 'center' },
   roleChipOn: { backgroundColor: C.panel, ...E.sm },
-  roleChipT: { color: C.mute, fontWeight: '700', fontSize: 13, letterSpacing: 0.2 },
+  roleChipT: { color: 'rgba(255,255,255,0.58)', fontWeight: '700', fontSize: 13, letterSpacing: 0.2 },
   roleChipLock: { fontSize: 9 },
   gateScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 28 },
   gateCard: { backgroundColor: C.panel, borderRadius: 22, padding: 24 },
