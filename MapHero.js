@@ -37,6 +37,25 @@ const MC = {
   grey:  '#78787F',   // = C.mute
 };
 
+// A live "now" pulse — hi-vis amber, gently breathing outward. The signature "the network is
+// alive" cue on the map hero. Native-driver, cheap, loops quietly. Sized via `size`.
+function LivePulse({ size = 8, color = C.hiviz }) {
+  const ring = useRef(new Animated.Value(0)).current;
+  React.useEffect(() => {
+    const loop = Animated.loop(Animated.timing(ring, { toValue: 1, duration: 2200, useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, [ring]);
+  const scale = ring.interpolate({ inputRange: [0, 1], outputRange: [1, 3] });
+  const opacity = ring.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] });
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={{ position: 'absolute', width: size, height: size, borderRadius: size / 2, backgroundColor: color, transform: [{ scale }], opacity }} />
+      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color, shadowColor: color, shadowOpacity: 0.9, shadowRadius: 5, shadowOffset: { width: 0, height: 0 } }} />
+    </View>
+  );
+}
+
 const STATUS_META = {
   getting_ready: { color: MC.grey,  label: 'Getting ready' },
   on_the_way:    { color: MC.blue,  label: 'On the way' },
@@ -359,7 +378,7 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
             : coverage && coverage.n > 0 && mode !== 'hire' ? (
             <View style={styles.ambientChip}><View style={styles.ambientDot} /><Text style={styles.ambientT}>{coverage.n} worker{coverage.n === 1 ? '' : 's'} available near you</Text></View>
           ) : activeNow != null && activeNow > 0 ? (
-            <View style={styles.ambientChip}><View style={styles.ambientDot} /><Text style={styles.ambientT}>{activeNow} jobs live on SiteCall right now</Text></View>
+            <View style={styles.ambientChip}><LivePulse size={8} /><Text style={styles.ambientT}>{activeNow} jobs live on SiteCall right now</Text></View>
           ) : (!coverage || coverage.n === 0) ? (
             <Text style={styles.emptyT}>{mode === 'hire'
               ? 'Post a job and watch it come alive here'
@@ -519,9 +538,9 @@ const styles = StyleSheet.create({
   emptyOverlay: { position: 'absolute', top: 46, left: 0, right: 0, alignItems: 'center' },
   emptyOverlayFull: { top: 114 },   // in fullscreen, sit clear below the command bar (top:64) + notch
   emptyT: { color: '#fff', fontSize: 11, backgroundColor: 'rgba(11,11,18,0.85)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, overflow: 'hidden' },
-  ambientChip: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(11,11,18,0.9)', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
+  ambientChip: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(11,11,18,0.78)', paddingHorizontal: 13, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,176,32,0.38)', shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } },
   ambientDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.green },
-  ambientT: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  ambientT: { color: '#fff', fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1 },
   keyOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(11,11,18,0.9)' },
   keyT: { color: '#fff', fontSize: 12, fontWeight: '600', textAlign: 'center', paddingHorizontal: 20 },
   expandBtn: { position: 'absolute', top: 10, right: 10, width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(22,22,26,0.88)', alignItems: 'center', justifyContent: 'center' },
@@ -529,9 +548,9 @@ const styles = StyleSheet.create({
   expandBtnT: { color: '#fff', fontSize: 17, fontWeight: '700' },
   modeTint: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderWidth: 1.5, borderRadius: 18 },
   modeLabelWrap: { position: 'absolute', top: 10, left: 0, right: 0, alignItems: 'center' },
-  modeLabel: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
+  modeLabel: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
   modeLabelDot: { width: 6, height: 6, borderRadius: 3 },
-  modeLabelT: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
+  modeLabelT: { color: '#fff', fontSize: 10.5, fontWeight: '800', letterSpacing: 0.9 },
   cmdTopBar: { position: 'absolute', top: 64, left: 0, right: 0, alignItems: 'center' },
   cmdTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(11,11,18,0.88)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, maxWidth: '72%' },
   cmdMode: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 1 },

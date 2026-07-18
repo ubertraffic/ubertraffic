@@ -130,7 +130,7 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
         )}
       </View>
       {jobs === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : jobs.length === 0 ? <EmptyState icon="crew" title="No jobs nearby right now" sub="New work near you appears here the moment it's posted. Stay online to catch it first." />
+        : jobs.length === 0 ? <EmptyState icon="crew" title="You're first in line" sub="You're visible to sites nearby. New work drops here the moment it's posted — you'll see it before anyone else." />
         : visible.length === 0 ? <EmptyState icon="crew" title="You're all caught up" sub="You've passed on the jobs nearby for now. New ones will appear here as they're posted." />
         : visible.map((d, i) => (
           <AvailableJobCard
