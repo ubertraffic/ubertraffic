@@ -12,7 +12,7 @@ import LiveTrackerCard from './LiveTrackerCard';
 import Pulse from './Pulse';
 import JobChat from './JobChat';
 import { jobTitle, jobSubtitle, estTotal, RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, PrimaryBtn, tap, Center } from './components2';
-import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard } from './components';
+import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard, RateJob } from './components';
 import CredentialsScreen from './CredentialsScreen';
 import BusinessDetailsScreen from './BusinessDetailsScreen';
 import AdminScreen from './AdminScreen';
@@ -347,6 +347,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const flood = useRef(new Animated.Value(0)).current;   // green colour-flood when going online
   const [onlineSince, setOnlineSince] = useState(null);  // when this shift started (for the live timer)
   const [endShift, setEndShift] = useState(false);       // "Nice work" end-of-shift sheet visible
+  const [ratePrompt, setRatePrompt] = useState(null);    // { assignmentId } — rate the CLIENT after payout
+  const ratePromptedRef = useRef(new Set());             // assignment ids already prompted this session
+  const rateSeededRef = useRef(false);                   // seed existing-approved so we only prompt on NEW payouts
   // Live location — follow the worker as they move (real GPS on Expo Go via
   // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
   // to DEV_LOCATION when real GPS isn't available. stop() cleans up on unmount.
@@ -409,6 +412,15 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     if (profile?.is_online) setOnlineSince((s) => s || Date.now());
     else setOnlineSince(null);
   }, [profile?.is_online]);
+  // Rate the CLIENT after a job is approved+paid. Seed existing-approved on first load so we only
+  // prompt when a job flips to approved DURING this session (not for old history on every open).
+  useEffect(() => {
+    if (!myAssigns) return;
+    const approved = myAssigns.filter((a) => a.status === 'approved');
+    if (!rateSeededRef.current) { approved.forEach((a) => ratePromptedRef.current.add(a.id)); rateSeededRef.current = true; return; }
+    const fresh = approved.find((a) => !ratePromptedRef.current.has(a.id));
+    if (fresh && !ratePrompt) { ratePromptedRef.current.add(fresh.id); setRatePrompt({ assignmentId: fresh.id }); }
+  }, [myAssigns]);
 
   async function becomeOperator() {
     // Capture identity first — the anchor a register check needs (Phase 2). Validated in setMyIdentity.
@@ -935,6 +947,13 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
         minutes: onlineSince ? Math.max(0, Math.floor((Date.now() - onlineSince) / 60000)) : 0,
         pending: (myAssigns || []).filter((a) => a.status === 'complete').length,   // done, not yet approved → why "earned" can read $0
       }}
+    />
+    <RateJob
+      visible={!!ratePrompt}
+      assignmentId={ratePrompt?.assignmentId}
+      rateeName="the client"
+      rateeIsWorker={false}
+      onClose={() => setRatePrompt(null)}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
     <SkillDiscoverySheet skill={discSkill} excludeUserId={session.user.id} onClose={() => setDiscSkill(null)} onOpenProfile={onOpenProfile} />

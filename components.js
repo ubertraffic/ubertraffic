@@ -101,6 +101,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={S_.revScrim}>
         <TouchableOpacity style={S_.revBackdrop} activeOpacity={1} onPress={onClose} />
         <View style={S_.revSheet}>
@@ -196,6 +197,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
           </TouchableOpacity>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -231,6 +233,7 @@ export function MaterialsClaim({ visible, assignment, onClose, onDone }) {
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={S_.revScrim}>
         <TouchableOpacity style={S_.revBackdrop} activeOpacity={1} onPress={onClose} />
         <View style={S_.revSheet}>
@@ -254,6 +257,7 @@ export function MaterialsClaim({ visible, assignment, onClose, onDone }) {
           </TouchableOpacity>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

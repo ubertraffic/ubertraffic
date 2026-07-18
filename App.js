@@ -420,6 +420,7 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={S_.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={S_.gateScrim}>
         <View style={S_.gateCard}>
           {done ? (
@@ -457,6 +458,7 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
           )}
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
