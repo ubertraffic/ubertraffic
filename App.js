@@ -258,28 +258,13 @@ function Shell({ session, pushDeepLink }) {
   cacheBindUser(session?.user?.id);
   const [role, setRoleSide] = useState('client');  // client | operator — VIEW side only
   const [tab, setTab] = useState('home');
-  // Floating island tab bar visibility. A robust, predictable show/hide — NOT diffClamp (which was
-  // recreated every render and got stuck off-screen). barTY animates 0 (shown) <-> 116 (hidden),
-  // created ONCE. Rule: hide only on a real downward scroll; ALWAYS reveal on any upward scroll or
-  // near the top; and force it shown whenever the tab or the Hire/Work side changes, so it can
-  // never get stranded hidden.
+  // Floating island tab bar. Now that the home is a PINNED anchor (post bar + chips) with only a
+  // short body to reveal, the hide-on-scroll behaviour felt twitchy and pointless — so the bar is
+  // STATIC: always visible, never animated away. barTY stays 0; the scroll handler is a no-op.
   const barTY = useRef(new Animated.Value(0)).current;
-  const barHidden = useRef(false);
-  const lastScrollY = useRef(0);
-  const setBar = (hide) => {
-    if (barHidden.current === hide) return;
-    barHidden.current = hide;
-    Animated.timing(barTY, { toValue: hide ? 116 : 0, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
-  };
-  const onHomeScroll = (e) => {
-    const y = e.nativeEvent.contentOffset.y;
-    const dy = y - lastScrollY.current;
-    lastScrollY.current = y;
-    if (y <= 8 || dy < -3) setBar(false);       // near the top OR any upward scroll -> reveal
-    else if (dy > 4 && y > 24) setBar(true);    // a real downward scroll -> hide
-  };
-  const revealBar = () => { lastScrollY.current = 0; setBar(false); };
-  const changeTab = (k) => { revealBar(); setTab(k); };
+  const onHomeScroll = () => {};   // static tab bar — no hide-on-scroll
+  const revealBar = () => {};
+  const changeTab = (k) => { setTab(k); };
   const [wantNew, setWantNew] = useState(false);   // signal: open new-request flow on Requests
   const [focusReq, setFocusReq] = useState(null);  // signal: open a specific request on Requests
   const [myName, setMyName] = useState(null);      // personalisation: first name in the header
@@ -1072,7 +1057,9 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     const seen = new Set(); const out = [];
     for (const r of done) {
       const its = r.request_items;
-      const sig = its.map((i) => `${i.trade_id}:${i.qty}:${i.rate}:${i.price_mode}`).sort().join('|');
+      // Dedupe by TRADE MIX only (not qty/rate) so "Traffic control" can't appear twice — one
+      // chip per distinct kind of job, newest wins. Keeps the row varied, never repetitive.
+      const sig = its.map((i) => i.trade_id).sort().join('|');
       if (seen.has(sig)) continue; seen.add(sig);
       const heads = its.reduce((s, i) => s + (i.qty || 1), 0);
       const extra = its.length - 1;
@@ -1094,6 +1081,11 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
   })();
   const openPost = () => { setPrefill(null); setSheetOpen(true); };
   const openPostAgain = (tpl) => { setPrefill({ items: tpl.items }); setSheetOpen(true); };
+  // The sheet HUGS its content instead of always reaching the same line: on a quiet day the pinned
+  // anchor (post bar + chips) is all there is, so the sheet sits low and the map fills more of the
+  // screen — killing the dead gap above the tab bar. When there's active work to reveal, it rises.
+  const hasActiveWork = active.length > 0;
+  const sheetTopPct = hasActiveWork ? '54%' : (mine !== null && (mine || []).length === 0 ? '60%' : '68%');
   // When a job is waiting to be paid, THAT is the hero — so the post CTA recedes to a quiet
   // bar (only one loud element at a time). Otherwise "Post a job" is the loud hero.
   const payMode = needsYou.length > 0;
@@ -1192,7 +1184,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     </View>
     {/* floating content sheet — the map breathes above it. PINNED header (post bar + recent chips)
         never scrolls; the body below reveals active work as you pull up. */}
-    <View style={{ position: 'absolute', left: 0, right: 0, top: '60%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
+    <View style={{ position: 'absolute', left: 0, right: 0, top: sheetTopPct, bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
       {/* ── PINNED ANCHOR — always visible, the one thing that never moves ── */}
       <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: postAgain.length > 0 ? 12 : 6 }}>
         {/* primary post action — clean white card, the permanent hero */}
