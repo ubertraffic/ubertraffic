@@ -308,13 +308,13 @@ function Shell({ session, pushDeepLink }) {
 
   return (
     <View style={S_.fill}>
-      <StatusBar barStyle="dark-content" />
-      {/* compact top bar with role switch */}
+      <StatusBar barStyle="light-content" />
+      {/* compact top bar with role switch — dark chrome, light content */}
       <View style={S_.topbar}>
-        <View style={S_.markSm}><Icon name="pin" size={17} color="#fff" strokeWidth={2.4} /></View>
+        <View style={[S_.markSm, { backgroundColor: C.indigo }]}><Icon name="pin" size={17} color="#fff" strokeWidth={2.4} /></View>
         <View style={{ flex: 1 }}>
-          <Text style={T.heading}>SiteCall</Text>
-          <Text style={[T.label, { fontSize: 9.5, marginTop: 1 }]}>{myName ? `G'day, ${myName}` : session.user.email}</Text>
+          <Text style={[T.heading, { color: '#fff' }]}>SiteCall</Text>
+          <Text style={[T.label, { fontSize: 9.5, marginTop: 1, color: 'rgba(255,255,255,0.55)' }]}>{myName ? `G'day, ${myName}` : session.user.email}</Text>
         </View>
         <View style={S_.roleSwitch}>
           <RoleChip label="Hire" on={role === 'client'} locked={!canHire} onPress={() => switchRole('client')} accent={C.indigo} />
@@ -524,7 +524,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   useEffect(() => {
     if (visible && prefill && Array.isArray(prefill.items) && prefill.items.length) {
       setItems(prefill.items);
-      setPhase('where');
+      setPhase(prefill.phase || 'where');
     }
   }, [visible, prefill]);
 
@@ -994,6 +994,8 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
   const [activeNow, setActiveNow] = useState(null);
   const [coverage, setCoverage] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [tax, setTax] = useState(null);   // taxonomy — powers the "popular quick-start" chips
+  useEffect(() => { loadTaxonomy().then(setTax).catch(() => {}); }, []);
   const load = useCallback(async () => {
     try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); } catch (e) { setMine((p) => (p == null ? [] : p)); }
     try { setMapJobs(await getMapJobs()); } catch (_) { /* map just shows empty */ }
@@ -1079,8 +1081,27 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     }
     return out;
   })();
+  // POPULAR QUICK-STARTS — the common trades, one tap to start a FRESH post of that type. Blended
+  // into the chip row after the re-posts (DoorDash "reorder + popular near you"). We drop any trade
+  // the client already has as a re-post chip so the row never shows the same job twice, and land on
+  // the RATE step (not location) so they confirm the default price before it goes out.
+  const quickStarts = (() => {
+    const feat = featuredTrades(tax, 6);
+    const usedTradeIds = new Set(postAgain.flatMap((t) => t.items.map((i) => i.trade_id)));
+    return feat
+      .filter((t) => !usedTradeIds.has(t.id))
+      .slice(0, 4)
+      .map((t) => {
+        const kind = t.kind === 'plant' ? 'gear' : t.kind;
+        return {
+          id: t.id, name: t.name,
+          item: { trade_id: t.id, kind, type: t.name, qty: 1, rate: sheetRateFor(t.name, kind), priceMode: kind === 'task' ? 'job' : 'hour', tickets: kind === 'crew' ? ['White Card'] : [], run: t.run_style === 'open' },
+        };
+      });
+  })();
   const openPost = () => { setPrefill(null); setSheetOpen(true); };
-  const openPostAgain = (tpl) => { setPrefill({ items: tpl.items }); setSheetOpen(true); };
+  const openPostAgain = (tpl) => { setPrefill({ items: tpl.items, phase: 'where' }); setSheetOpen(true); };
+  const openQuickStart = (qs) => { setPrefill({ items: [qs.item], phase: 'rate' }); setSheetOpen(true); };
   // The sheet HUGS its content instead of always reaching the same line: on a quiet day the pinned
   // anchor (post bar + chips) is all there is, so the sheet sits low and the map fills more of the
   // screen — killing the dead gap above the tab bar. When there's active work to reveal, it rises.
@@ -1186,7 +1207,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         never scrolls; the body below reveals active work as you pull up. */}
     <View style={{ position: 'absolute', left: 0, right: 0, top: sheetTopPct, bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
       {/* ── PINNED ANCHOR — always visible, the one thing that never moves ── */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: postAgain.length > 0 ? 12 : 6 }}>
+      <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: (postAgain.length > 0 || quickStarts.length > 0) ? 12 : 6 }}>
         {/* primary post action — clean white card, the permanent hero */}
         <TouchableOpacity onPress={openPost} activeOpacity={0.9}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
@@ -1198,8 +1219,9 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
             <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
           </View>
         </TouchableOpacity>
-        {/* POST AGAIN — compact chip row, the quiet helper under the hero (not big cards) */}
-        {postAgain.length > 0 && (
+        {/* QUICK PILLS — the quiet helper under the hero. Re-post your recent jobs (↻) first, then
+            popular quick-starts (＋) to spin up a common new job. Compact chips, never big cards. */}
+        {(postAgain.length > 0 || quickStarts.length > 0) && (
           <View style={{ marginTop: 12 }}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 4 }} keyboardShouldPersistTaps="handled">
               {postAgain.map((tpl) => (
@@ -1207,6 +1229,13 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.panel, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: C.line }}>
                   <Icon name="refresh" size={14} color={C.indigo} strokeWidth={2.4} />
                   <Text style={{ fontSize: 13, fontWeight: '700', color: C.ink }} numberOfLines={1}>{tpl.chip}</Text>
+                </TouchableOpacity>
+              ))}
+              {quickStarts.map((qs) => (
+                <TouchableOpacity key={qs.id} onPress={() => openQuickStart(qs)} activeOpacity={0.85}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.canvas, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: C.line }}>
+                  <Icon name="plus" size={14} color={C.mute} strokeWidth={2.6} />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: C.ink }} numberOfLines={1}>{qs.name}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -1294,16 +1323,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
                       ? `${coverage.n} ${coverage.n === 1 ? 'crew' : 'crews'} available near you right now`
                       : 'Crews across Sydney, ready to mobilise'}
                   </Text>
-                  <Text style={{ fontSize: 13, color: C.mute, fontWeight: '600', marginTop: 4 }}>Post your first job — nearby crews are notified instantly.</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginTop: 14 }}>
-                    {['Traffic control', 'Labourers', 'Trades'].map((k) => (
-                      <TouchableOpacity key={k} onPress={openPost} activeOpacity={0.85}
-                        style={{ backgroundColor: C.panel, borderRadius: 999, paddingVertical: 10, paddingHorizontal: 16, borderWidth: 1, borderColor: C.line, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={{ fontSize: 13.5, fontWeight: '700', color: C.ink }}>{k}</Text>
-                        <Text style={{ fontSize: 15, color: C.indigo, fontWeight: '800', marginTop: -1 }}>＋</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                  <Text style={{ fontSize: 13, color: C.mute, fontWeight: '600', marginTop: 4 }}>Tap a job type above, or post your own — nearby crews are notified instantly.</Text>
                 </View>
               )}
 
