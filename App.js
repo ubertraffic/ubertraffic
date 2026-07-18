@@ -807,7 +807,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                       } finally { setLocBusy(false); }
                     }}>
                     {locBusy ? <ActivityIndicator color={C.indigo} size="small" />
-                      : <><Text style={SH.useLocPin}>◎</Text><Text style={SH.useLocT}>Use my current location</Text><Text style={SH.useLocSub}>you're on site</Text></>}
+                      : <><Text style={SH.useLocPin}>◎</Text><Text style={SH.useLocT}>Use my current location</Text><Text style={SH.useLocSub}>if you're at the site</Text></>}
                   </TouchableOpacity>
                 )}
                 {myLoc && <Text style={SH.orType}>or type an address</Text>}
@@ -1184,6 +1184,11 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         }}
       />
     </View>
+    {/* subtle "?" help button floating on the map (replaces the sheet pill — keeps the sheet tight) */}
+    <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.8}
+      style={{ position: 'absolute', top: 14, left: 16, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(18,18,26,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}>
+      <Icon name="help" size={19} color="rgba(255,255,255,0.9)" strokeWidth={2.2} />
+    </TouchableOpacity>
     {/* floating content sheet — HUGS its content when quiet (sits just above the tab bar, no dead
         gap, map fills the rest) and rises into a scrollable panel when there's active work. */}
     {(() => {
@@ -1203,14 +1208,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
               <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
             </View>
           </TouchableOpacity>
-          {/* one centred helper pill — learn the ropes */}
-          <View style={{ marginTop: 12, alignItems: 'center' }}>
-            <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.85}
-              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.panel, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 30, borderWidth: 1, borderColor: C.line }}>
-              <Icon name="help" size={16} color={C.mute} strokeWidth={2.3} />
-              <Text style={{ fontSize: 14, fontWeight: '700', color: C.ink }}>How it works</Text>
-            </TouchableOpacity>
-          </View>
+          {/* "How it works" moved to a subtle ? button ON the map (see below) — the sheet stays tight. */}
           {brandNew && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 14 }}>
               <LiveTag />
@@ -1227,7 +1225,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
       }
       // ACTIVE — a taller panel with a scrollable body holding the live work.
       return (
-        <View style={[sheetChrome, { top: '54%' }]}>
+        <View style={[sheetChrome, { top: '42%' }]}>
           {pinnedHeader}
           <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 130, paddingHorizontal: 16, paddingTop: 2 }}>
             {(() => {
