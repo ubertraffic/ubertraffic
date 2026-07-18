@@ -183,7 +183,7 @@ export async function listMyAssignments() {
   const { data, error } = await supabase
     .from('assignments')
     .select(`
-      id, status, accepted_at, paid_at, net_amount, gross_amount, fee_amount,
+      id, status, accepted_at, paid_at, completed_at, net_amount, gross_amount, fee_amount,
       reconcile_state, reconcile_deadline, claimed_end_at,
       request_item:request_items (
         type, kind, rate, rate_offered, price_mode, trade_id,

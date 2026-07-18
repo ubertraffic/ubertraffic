@@ -426,14 +426,21 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
       const goingOnline = !profile.is_online;
       await setOnline(goingOnline);
       if (goingOnline) {
-        // capturing location is REQUIRED to receive jobs — dispatch is geographic.
-        // If we can't get it, tell the operator instead of silently going online
-        // with no location (which makes them invisible to the matcher).
+        // capturing location is REQUIRED to receive jobs — dispatch is geographic. getPosition()
+        // never throws; it returns source:'fallback' when GPS is denied/unavailable, so we must
+        // check that explicitly (a real device with location off must NOT be pinned to dev coords).
         try {
           const pos = await getPosition();
+          if (pos.source === 'fallback') {
+            await setOnline(false);   // roll back — don't sit online invisible/mis-located
+            setMsg('Turn on location to go online — SiteCall matches you to jobs near where you are. Enable location access, then try again.');
+            return;
+          }
           await setMyOperatorLocation(pos.lat, pos.lng);
         } catch (locErr) {
-          setMsg('You\'re online, but we couldn\'t get your location — you won\'t receive jobs until location is on. Check location permissions and toggle again.');
+          await setOnline(false);
+          setMsg('Couldn\'t get your location, so you\'re not online yet. Check location permissions and try again.');
+          return;
         }
       }
       await refresh();
@@ -1102,6 +1109,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
             : a.status === 'on_site' ? ['complete', 'Mark complete'] : null;
           const st = a.status === 'approved' ? { label: 'Paid', color: C.green }
             : a.status === 'complete' ? { label: 'Awaiting approval', color: C.amber }
+            : a.status === 'cancelled' ? { label: 'Cancelled', color: C.red }
             : a.status === 'on_site' ? { label: 'On site', color: C.green }
             : a.status === 'en_route' ? { label: 'On the way', color: C.indigo }
             : { label: 'Committed', color: C.mute };

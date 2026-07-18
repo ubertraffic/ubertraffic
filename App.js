@@ -812,7 +812,11 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                 )}
                 {myLoc && <Text style={SH.orType}>or type an address</Text>}
                 <AddressField value={loc} onChangeText={(t) => { setLoc(t); setCoords(null); }} onPick={(r) => { setLoc(r.label); setCoords({ lat: r.lat, lng: r.lng }); }} picked={!!coords} disabled={busy} />
-                <TouchableOpacity style={[SH.next, { marginTop: 16, opacity: loc.trim() ? 1 : 0.4 }]} disabled={!loc.trim()} onPress={() => setPhase('when')}><Text style={SH.nextT}>Next ›</Text></TouchableOpacity>
+                {loc.trim().length > 0 && !coords && (
+                  <Text style={{ fontSize: 12.5, color: C.amber, fontWeight: '700', marginTop: 8 }}>Pick your address from the list so crews can find the exact site.</Text>
+                )}
+                {/* require real coordinates — a free-typed address with no pin breaks the worker's on-site check-in */}
+                <TouchableOpacity style={[SH.next, { marginTop: 16, opacity: coords ? 1 : 0.4 }]} disabled={!coords} onPress={() => setPhase('when')}><Text style={SH.nextT}>Next ›</Text></TouchableOpacity>
               </>
             )}
 
@@ -1114,7 +1118,6 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         actions: [
           isReady ? { label: 'Review & pay', tone: 'green', fn: () => openReview(j.requestId) } : null,
           j.assignedName ? { label: j.crewSize > 1 ? 'Message crew' : `Message ${j.assignedName.split(' ')[0]}`, tone: 'ready', closesMap: true, fn: () => messageForRaw(j) } : null,
-          { label: 'Pay securely', tone: 'ready', fn: () => payJob(j.requestId) },
           j.status !== 'done' ? { label: 'Re-post to pool', tone: 'ghost', fn: () => repost(j.requestId) } : null,
           j.status !== 'done' ? { label: 'Cancel job', tone: 'danger', fn: () => cancel(j.requestId) } : null,
         ].filter(Boolean),
