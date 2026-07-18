@@ -9,6 +9,7 @@ import {
   ChevronDown, ChevronUp, Plus, Minus, X, Circle, CircleDot,
   Zap, Calendar, Search, Settings, LogOut, Building2, CreditCard,
   BadgeCheck, ShieldCheck, TrendingUp, Bell, Star, Users, Signal, RotateCcw,
+  MessageCircle, HelpCircle,
 } from 'lucide-react-native';
 import { C } from './theme';
 
@@ -62,6 +63,8 @@ const MAP = {
   users: Users,
   signal: Signal,
   refresh: RotateCcw,
+  chat: MessageCircle,
+  help: HelpCircle,
 };
 
 export default function Icon({ name, size = 20, color = C.ink, strokeWidth = 2, fill = 'none' }) {

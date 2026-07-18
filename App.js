@@ -994,8 +994,6 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
   const [activeNow, setActiveNow] = useState(null);
   const [coverage, setCoverage] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [tax, setTax] = useState(null);   // taxonomy — powers the "popular quick-start" chips
-  useEffect(() => { loadTaxonomy().then(setTax).catch(() => {}); }, []);
   const load = useCallback(async () => {
     try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); } catch (e) { setMine((p) => (p == null ? [] : p)); }
     try { setMapJobs(await getMapJobs()); } catch (_) { /* map just shows empty */ }
@@ -1049,64 +1047,11 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     if (crew.length > 0) { match = { r, crew, needed, it: primaryItem }; break; }
   }
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [prefill, setPrefill] = useState(null);   // "Post again" template seeded into RequestSheet
-  // POST AGAIN — a repeat client's own history as one-tap re-posts (Instacart "Buy It Again" /
-  // DoorDash reorder). Dedupe finished jobs by their trade signature, newest first, take a few.
-  // Only jobs whose items all carry a trade_id qualify (so the re-post seeds faithfully).
-  const postAgain = (() => {
-    const done = (mine || []).filter((r) => r.status === 'complete'
-      && (r.request_items || []).length && r.request_items.every((it) => it.trade_id));
-    const seen = new Set(); const out = [];
-    for (const r of done) {
-      const its = r.request_items;
-      // Dedupe by TRADE MIX only (not qty/rate) so "Traffic control" can't appear twice — one
-      // chip per distinct kind of job, newest wins. Keeps the row varied, never repetitive.
-      const sig = its.map((i) => i.trade_id).sort().join('|');
-      if (seen.has(sig)) continue; seen.add(sig);
-      const heads = its.reduce((s, i) => s + (i.qty || 1), 0);
-      const extra = its.length - 1;
-      out.push({
-        key: sig,
-        label: its[0].type + (its[0].qty > 1 ? ` ×${its[0].qty}` : '') + (extra > 0 ? ` +${extra}` : ''),
-        chip: its[0].type + (heads > 1 ? ` · ${heads}` : '') + (extra > 0 ? ` +${extra}` : ''),
-        sub: `${heads} ${heads === 1 ? 'person' : 'people'}`,
-        items: its.map((it) => ({
-          trade_id: it.trade_id, kind: it.kind, type: it.type, qty: it.qty || 1,
-          rate: it.rate != null ? Number(it.rate) : 0,
-          priceMode: it.price_mode || (it.kind === 'task' ? 'job' : 'hour'),
-          tickets: it.kind === 'crew' ? ['White Card'] : [], run: false,
-        })),
-      });
-      if (out.length >= 4) break;
-    }
-    return out;
-  })();
-  // POPULAR QUICK-STARTS — the common trades, one tap to start a FRESH post of that type. Blended
-  // into the chip row after the re-posts (DoorDash "reorder + popular near you"). We drop any trade
-  // the client already has as a re-post chip so the row never shows the same job twice, and land on
-  // the RATE step (not location) so they confirm the default price before it goes out.
-  const quickStarts = (() => {
-    const feat = featuredTrades(tax, 6);
-    const usedTradeIds = new Set(postAgain.flatMap((t) => t.items.map((i) => i.trade_id)));
-    return feat
-      .filter((t) => !usedTradeIds.has(t.id))
-      .slice(0, 4)
-      .map((t) => {
-        const kind = t.kind === 'plant' ? 'gear' : t.kind;
-        return {
-          id: t.id, name: t.name,
-          item: { trade_id: t.id, kind, type: t.name, qty: 1, rate: sheetRateFor(t.name, kind), priceMode: kind === 'task' ? 'job' : 'hour', tickets: kind === 'crew' ? ['White Card'] : [], run: t.run_style === 'open' },
-        };
-      });
-  })();
+  const [prefill, setPrefill] = useState(null);   // reserved for future one-tap templates
   const openPost = () => { setPrefill(null); setSheetOpen(true); };
-  const openPostAgain = (tpl) => { setPrefill({ items: tpl.items, phase: 'where' }); setSheetOpen(true); };
-  const openQuickStart = (qs) => { setPrefill({ items: [qs.item], phase: 'rate' }); setSheetOpen(true); };
-  // The sheet HUGS its content instead of always reaching the same line: on a quiet day the pinned
-  // anchor (post bar + chips) is all there is, so the sheet sits low and the map fills more of the
-  // screen — killing the dead gap above the tab bar. When there's active work to reveal, it rises.
+  // When there's active work the sheet is a tall, scrollable panel (fixed peek). When there ISN'T,
+  // the sheet HUGS its content and sits right above the tab bar — no dead gap, map fills the rest.
   const hasActiveWork = active.length > 0;
-  const sheetTopPct = hasActiveWork ? '54%' : (mine !== null && (mine || []).length === 0 ? '60%' : '68%');
   // When a job is waiting to be paid, THAT is the hero — so the post CTA recedes to a quiet
   // bar (only one loud element at a time). Otherwise "Post a job" is the loud hero.
   const payMode = needsYou.length > 0;
@@ -1203,146 +1148,119 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         }}
       />
     </View>
-    {/* floating content sheet — the map breathes above it. PINNED header (post bar + recent chips)
-        never scrolls; the body below reveals active work as you pull up. */}
-    <View style={{ position: 'absolute', left: 0, right: 0, top: sheetTopPct, bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
-      {/* ── PINNED ANCHOR — always visible, the one thing that never moves ── */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: (postAgain.length > 0 || quickStarts.length > 0) ? 12 : 6 }}>
-        {/* primary post action — clean white card, the permanent hero */}
-        <TouchableOpacity onPress={openPost} activeOpacity={0.9}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3, color: C.ink }}>Who do you need on site?</Text>
-            <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3 }}>Post a job — crews nearby are notified instantly</Text>
+    {/* floating content sheet — HUGS its content when quiet (sits just above the tab bar, no dead
+        gap, map fills the rest) and rises into a scrollable panel when there's active work. */}
+    {(() => {
+      const brandNew = mine !== null && (mine || []).length === 0;
+      const sheetChrome = { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 };
+      const pillStyle = { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.panel, borderRadius: 14, paddingVertical: 13, borderWidth: 1, borderColor: C.line };
+      // PINNED ANCHOR — the post-a-job hero + two fixed helper pills. Always the same height, so the
+      // hugging sheet lands in a predictable spot on every device.
+      const pinnedHeader = (
+        <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14 }}>
+          <TouchableOpacity onPress={openPost} activeOpacity={0.9}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3, color: C.ink }}>Who do you need on site?</Text>
+              <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3 }}>Post a job — crews nearby are notified instantly</Text>
+            </View>
+            <View style={{ width: 50, height: 50, borderRadius: 15, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', shadowColor: C.indigo, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } }}>
+              <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
+            </View>
+          </TouchableOpacity>
+          {/* two fixed helper pills — reach a human / learn the ropes */}
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.85} style={pillStyle}>
+              <Icon name="chat" size={16} color={C.indigo} strokeWidth={2.3} />
+              <Text style={{ fontSize: 14, fontWeight: '700', color: C.ink }}>Live chat</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.85} style={pillStyle}>
+              <Icon name="help" size={16} color={C.mute} strokeWidth={2.3} />
+              <Text style={{ fontSize: 14, fontWeight: '700', color: C.ink }}>How it works</Text>
+            </TouchableOpacity>
           </View>
-          <View style={{ width: 50, height: 50, borderRadius: 15, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', shadowColor: C.indigo, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } }}>
-            <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
-          </View>
-        </TouchableOpacity>
-        {/* QUICK PILLS — the quiet helper under the hero. Re-post your recent jobs (↻) first, then
-            popular quick-starts (＋) to spin up a common new job. Compact chips, never big cards. */}
-        {(postAgain.length > 0 || quickStarts.length > 0) && (
-          <View style={{ marginTop: 12 }}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 4 }} keyboardShouldPersistTaps="handled">
-              {postAgain.map((tpl) => (
-                <TouchableOpacity key={tpl.key} onPress={() => openPostAgain(tpl)} activeOpacity={0.85}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.panel, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: C.line }}>
-                  <Icon name="refresh" size={14} color={C.indigo} strokeWidth={2.4} />
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: C.ink }} numberOfLines={1}>{tpl.chip}</Text>
-                </TouchableOpacity>
-              ))}
-              {quickStarts.map((qs) => (
-                <TouchableOpacity key={qs.id} onPress={() => openQuickStart(qs)} activeOpacity={0.85}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.canvas, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: C.line }}>
-                  <Icon name="plus" size={14} color={C.mute} strokeWidth={2.6} />
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: C.ink }} numberOfLines={1}>{qs.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-      </View>
-      {/* ── SCROLL BODY — active work + context, revealed on pull-up ── */}
-      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 130, paddingHorizontal: 16, paddingTop: 4 }}>
-      {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job. */}
-      {(() => {
-        const trackedId = (match && match.r.id) || (active[0] && active[0].id);
-        if (!trackedId) return null;
-        return <TrackerContainer requestId={trackedId} onAction={(action, arg) => {
-          if (action === 'open_review' && onOpenReq) onOpenReq(trackedId);
-          else if (action === 'open_profile' && arg && onOpenProfile) onOpenProfile(arg);
-          else if (action === 'open_chat') {
-            const m = match && match.r.id === trackedId ? match : null;
-            const trav = m ? ((m.crew || []).find((x) => x.a.status === 'en_route') || (m.crew || [])[0]) : null;
-            if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: suburbOf(m.r.address_text), info: buildJobInfo({ a: trav.a, it: trav.it, r: m.r }) });
-            else if (onOpenReq) onOpenReq(trackedId);
-          }
-          else if (action === 'open_help') setHelpOpen(true);
-        }} />;
-      })()}
-      <View style={{ paddingTop: 8 }}>
-
-        {/* THE MATCH — the whole job, filling up, crew inside. The Uber moment. */}
-        {match && (
-          <Entrance key={match.r.id}>
-            <MatchCard
-              r={match.r} crew={match.crew} needed={match.needed}
-              unread={unread}
-              showMessage={false}
-              onOpenProfile={onOpenProfile}
-              onOpen={() => onOpenReq && onOpenReq(match.r.id)}
-              onMessageWorker={(a, it) => setChat({
-                a,
-                title: `${(a.operator?.full_name || 'Worker').split(' ')[0]} · ${it.type}`,
-                sub: `${suburbOf(match.r.address_text)} · ${a.status === 'en_route' ? 'on the way' : a.status === 'on_site' ? 'on site' : 'committed'}`,
-                info: buildJobInfo({ a, it, r: match.r }),
-              })}
-            />
-          </Entrance>
-        )}
-
-        {/* NEEDS YOU — the hero when present. Accent lives on the CARD, not the label. */}
-        {needsYou.length > 0 && (
-          <View style={{ marginBottom: 24 }}>
-            <Text style={[T.eyebrow, { marginBottom: 8 }]}>Needs you</Text>
-            {needsYou.map((r) => <NeedsYouCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
-          </View>
-        )}
-
-        {mine === null ? (
-          <ActivityIndicator color={C.indigo} style={{ marginTop: 20 }} />
-        ) : (() => {
-          // The home sheet now shows the CLIENT'S OWN world — never a feed of strangers' jobs.
-          // Order (research: Uber/DoorDash/Instacart/Airtasker): their live work → one-tap
-          // re-post of their common jobs → (brand-new only) liveness + starters → calm end cap.
-          const rest = progressing.filter((r) => !match || r.id !== match.r.id);
-          const brandNew = (mine || []).length === 0;
-          const anythingOwn = !!match || needsYou.length > 0 || rest.length > 0;
-          return (
-            <>
-              {/* OWN ACTIVE WORK — the returning user's centre of gravity */}
-              {rest.length > 0 && (
-                <>
-                  <View style={S_.rowBetween}>
-                    <Text style={T.eyebrow}>Active now</Text>
-                    <LiveTag />
-                  </View>
-                  {rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
-                </>
+          {brandNew && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 14 }}>
+              <LiveTag />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: C.ink }}>
+                {coverage && coverage.n > 0 ? `${coverage.n} ${coverage.n === 1 ? 'crew' : 'crews'} available near you` : 'Crews across Sydney, ready to mobilise'}
+              </Text>
+            </View>
+          )}
+        </View>
+      );
+      // QUIET — hug the content, sit just above the tab bar (paddingBottom clears the island).
+      if (!hasActiveWork) {
+        return <View style={[sheetChrome, { paddingBottom: 80 }]}>{pinnedHeader}</View>;
+      }
+      // ACTIVE — a taller panel with a scrollable body holding the live work.
+      return (
+        <View style={[sheetChrome, { top: '54%' }]}>
+          {pinnedHeader}
+          <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 130, paddingHorizontal: 16, paddingTop: 2 }}>
+            {(() => {
+              const trackedId = (match && match.r.id) || (active[0] && active[0].id);
+              if (!trackedId) return null;
+              return <TrackerContainer requestId={trackedId} onAction={(action, arg) => {
+                if (action === 'open_review' && onOpenReq) onOpenReq(trackedId);
+                else if (action === 'open_profile' && arg && onOpenProfile) onOpenProfile(arg);
+                else if (action === 'open_chat') {
+                  const m = match && match.r.id === trackedId ? match : null;
+                  const trav = m ? ((m.crew || []).find((x) => x.a.status === 'en_route') || (m.crew || [])[0]) : null;
+                  if (trav) setChat({ a: trav.a, title: `${(trav.a.operator?.full_name || 'Worker').split(' ')[0]} · ${trav.it.type}`, sub: suburbOf(m.r.address_text), info: buildJobInfo({ a: trav.a, it: trav.it, r: m.r }) });
+                  else if (onOpenReq) onOpenReq(trackedId);
+                }
+                else if (action === 'open_help') setHelpOpen(true);
+              }} />;
+            })()}
+            <View style={{ paddingTop: 8 }}>
+              {match && (
+                <Entrance key={match.r.id}>
+                  <MatchCard
+                    r={match.r} crew={match.crew} needed={match.needed}
+                    unread={unread}
+                    showMessage={false}
+                    onOpenProfile={onOpenProfile}
+                    onOpen={() => onOpenReq && onOpenReq(match.r.id)}
+                    onMessageWorker={(a, it) => setChat({
+                      a,
+                      title: `${(a.operator?.full_name || 'Worker').split(' ')[0]} · ${it.type}`,
+                      sub: `${suburbOf(match.r.address_text)} · ${a.status === 'en_route' ? 'on the way' : a.status === 'on_site' ? 'on site' : 'committed'}`,
+                      info: buildJobInfo({ a, it, r: match.r }),
+                    })}
+                  />
+                </Entrance>
               )}
-
-              {/* BRAND-NEW — no history yet: prove the network is live + seed the first post */}
-              {brandNew && (
-                <View style={{ marginTop: 4 }}>
-                  <View style={S_.rowBetween}>
-                    <Text style={T.eyebrow}>Ready when you are</Text>
-                    <LiveTag />
-                  </View>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: C.ink, marginTop: 10, letterSpacing: -0.2 }}>
-                    {coverage && coverage.n > 0
-                      ? `${coverage.n} ${coverage.n === 1 ? 'crew' : 'crews'} available near you right now`
-                      : 'Crews across Sydney, ready to mobilise'}
-                  </Text>
-                  <Text style={{ fontSize: 13, color: C.mute, fontWeight: '600', marginTop: 4 }}>Tap a job type above, or post your own — nearby crews are notified instantly.</Text>
+              {needsYou.length > 0 && (
+                <View style={{ marginBottom: 24 }}>
+                  <Text style={[T.eyebrow, { marginBottom: 8 }]}>Needs you</Text>
+                  {needsYou.map((r) => <NeedsYouCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
                 </View>
               )}
-
-              {/* CALM END CAP — only when there's active work to close off (caught up), or when the
-                  client has no work AND no re-post chips (then a gentle nudge). A quiet client who
-                  DOES have re-post chips pinned above needs nothing here — the sheet just rests. */}
-              {!brandNew && (anythingOwn || postAgain.length === 0) && (
-                <View style={{ alignItems: 'center', marginTop: anythingOwn ? 28 : 20, paddingVertical: 8 }}>
-                  <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', letterSpacing: 0.2 }}>
-                    {anythingOwn ? "You're all caught up" : 'Nothing on right now — post a job above'}
-                  </Text>
-                </View>
-              )}
-            </>
-          );
-        })()}
-      </View>
-    </Animated.ScrollView>
-    </View>
+              {(() => {
+                const rest = progressing.filter((r) => !match || r.id !== match.r.id);
+                return (
+                  <>
+                    {rest.length > 0 && (
+                      <>
+                        <View style={S_.rowBetween}>
+                          <Text style={T.eyebrow}>Active now</Text>
+                          <LiveTag />
+                        </View>
+                        {rest.slice(0, 4).map((r) => <MiniReqCard key={r.id} r={r} onOpen={() => onOpenReq && onOpenReq(r.id)} />)}
+                      </>
+                    )}
+                    <View style={{ alignItems: 'center', marginTop: 28, paddingVertical: 8 }}>
+                      <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', letterSpacing: 0.2 }}>You're all caught up</Text>
+                    </View>
+                  </>
+                );
+              })()}
+            </View>
+          </Animated.ScrollView>
+        </View>
+      );
+    })()}
     <RequestSheet
       visible={sheetOpen}
       onClose={() => { setSheetOpen(false); setPrefill(null); }}

@@ -328,8 +328,9 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
 
   const overlays = (expanded) => (
     <>
-      {/* mode identity — soft accent + label, so users always know Hire vs Work */}
-      {!expanded && <View pointerEvents="none" style={[styles.modeTint, { borderColor: mode === 'work' ? 'rgba(14,122,82,0.28)' : 'rgba(70,54,232,0.26)' }]} />}
+      {/* mode identity — soft accent border, but ONLY when the map is a framed card. On the full-bleed
+          immersive home (framed=false) a bordered frame looks out of place, so the map goes flush. */}
+      {!expanded && framed && <View pointerEvents="none" style={[styles.modeTint, { borderColor: mode === 'work' ? 'rgba(14,122,82,0.28)' : 'rgba(70,54,232,0.26)' }]} />}
       {!expanded && mode === 'work' ? (
         <View pointerEvents="none" style={styles.modeLabelWrap}>
           <View style={[styles.modeLabel, { backgroundColor: 'rgba(16,61,46,0.9)' }]}>
