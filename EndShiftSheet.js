@@ -9,23 +9,16 @@ import { tap } from './components2';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
-// A drag-the-thumb-to-confirm track. A green fill grows behind the thumb; the label shimmers as a
-// directional hint; onComplete fires once the thumb passes ~72%. All non-native so the fill width
-// animates in lock-step with the thumb.
+// A drag-the-thumb-to-confirm track. One clear thumb at the far left; the label stays PUT and just
+// fades as you drag (research: static label + one recognizable handle). Native-driven so it's smooth.
+// onComplete fires once the thumb passes ~70%; releases short spring back.
 function SlideToConfirm({ label, onComplete }) {
   const [w, setW] = useState(SCREEN_W - 96);
-  const THUMB = 56;
-  const PAD = 4;
+  const THUMB = 54;
+  const PAD = 5;
   const x = useRef(new Animated.Value(0)).current;
-  const shimmer = useRef(new Animated.Value(0)).current;
   const done = useRef(false);
   const max = Math.max(1, w - THUMB - PAD * 2);
-
-  useEffect(() => {
-    const l = Animated.loop(Animated.timing(shimmer, { toValue: 1, duration: 1700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }));
-    l.start();
-    return () => l.stop();
-  }, []);
 
   const pan = useRef(
     PanResponder.create({
@@ -34,28 +27,23 @@ function SlideToConfirm({ label, onComplete }) {
       onPanResponderMove: (_e, g) => { x.setValue(Math.min(Math.max(0, g.dx), max)); },
       onPanResponderRelease: (_e, g) => {
         const nx = Math.min(Math.max(0, g.dx), max);
-        if (nx >= max * 0.72 && !done.current) {
+        if (nx >= max * 0.7 && !done.current) {
           done.current = true;
           tap('success');
-          Animated.timing(x, { toValue: max, duration: 140, easing: Easing.out(Easing.quad), useNativeDriver: false })
+          Animated.timing(x, { toValue: max, duration: 130, easing: Easing.out(Easing.quad), useNativeDriver: true })
             .start(() => onComplete && onComplete());
         } else {
-          Animated.spring(x, { toValue: 0, useNativeDriver: false, damping: 15, stiffness: 200 }).start();
+          Animated.spring(x, { toValue: 0, useNativeDriver: true, damping: 16, stiffness: 220 }).start();
         }
       },
     })
   ).current;
 
-  const fillW = x.interpolate({ inputRange: [0, max], outputRange: [THUMB + PAD * 2, w], extrapolate: 'clamp' });
-  const labelOpacity = x.interpolate({ inputRange: [0, max * 0.6], outputRange: [1, 0], extrapolate: 'clamp' });
-  const shimmerX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-40, 40] });
+  const labelOpacity = x.interpolate({ inputRange: [0, max * 0.5], outputRange: [1, 0], extrapolate: 'clamp' });
 
   return (
     <View style={styles.track} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
-      <Animated.View style={[styles.fill, { width: fillW }]} pointerEvents="none" />
-      <Animated.Text style={[styles.trackLabel, { opacity: labelOpacity, transform: [{ translateX: shimmerX }] }]} pointerEvents="none">
-        {label}  ›››
-      </Animated.Text>
+      <Animated.Text style={[styles.trackLabel, { opacity: labelOpacity }]} pointerEvents="none">{label}</Animated.Text>
       <Animated.View style={[styles.thumb, { transform: [{ translateX: x }] }]} {...pan.panHandlers}>
         <Text style={styles.thumbArrow}>›</Text>
       </Animated.View>
@@ -135,14 +123,13 @@ const styles = StyleSheet.create({
   stat: { flex: 1, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 18, alignItems: 'center', borderWidth: 1, borderColor: C.line },
   statNum: { fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5 },
   statLabel: { fontSize: 11.5, fontWeight: '700', color: C.mute, letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 5 },
-  track: { height: 64, borderRadius: 18, backgroundColor: '#17171E', justifyContent: 'center', overflow: 'hidden' },
-  fill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: C.green, borderRadius: 18, opacity: 0.9 },
-  trackLabel: { textAlign: 'center', color: 'rgba(255,255,255,0.62)', fontSize: 14.5, fontWeight: '800', letterSpacing: 0.4 },
+  track: { height: 64, borderRadius: 18, backgroundColor: '#191921', justifyContent: 'center' },
+  trackLabel: { textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 14.5, fontWeight: '800', letterSpacing: 0.4 },
   thumb: {
-    position: 'absolute', left: 4, top: 4, width: 56, height: 56, borderRadius: 15, backgroundColor: '#fff',
-    alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 5,
+    position: 'absolute', left: 5, top: 5, width: 54, height: 54, borderRadius: 14, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 6,
   },
-  thumbArrow: { color: C.ink, fontSize: 26, fontWeight: '900', marginTop: -2 },
+  thumbArrow: { color: C.ink, fontSize: 27, fontWeight: '900', marginTop: -2 },
   pendingNote: { backgroundColor: 'rgba(214,158,46,0.12)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 16 },
   pendingT: { color: C.amber, fontSize: 12.5, fontWeight: '700', lineHeight: 18 },
   stay: { alignItems: 'center', paddingVertical: 14, marginTop: 6 },
