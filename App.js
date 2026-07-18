@@ -471,6 +471,10 @@ const pk = StyleSheet.create({
 function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   const y = useRef(new Animated.Value(SHEET_SCREEN_H)).current;
   const dim = useRef(new Animated.Value(0)).current;
+  // `shown` keeps the Modal mounted through the slide-OUT animation (it only unmounts once the
+  // exit finishes). Rendering inside a Modal portals the sheet ABOVE the floating tab bar, so the
+  // island can never cover the picker (e.g. the Equipment & plant folder at the bottom).
+  const [shown, setShown] = useState(false);
   const [tax, setTax] = useState(null);
   const [phase, setPhase] = useState('door');
   const [door, setDoor] = useState(null);
@@ -506,15 +510,16 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
 
   useEffect(() => {
     if (visible) {
+      setShown(true);   // mount the Modal, then slide in
       Animated.parallel([
         Animated.spring(y, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 220, mass: 0.9 }),
         Animated.timing(dim, { toValue: 1, duration: 220, useNativeDriver: true }),
       ]).start();
-    } else {
+    } else if (shown) {
       Animated.parallel([
         Animated.timing(y, { toValue: SHEET_SCREEN_H, duration: 240, useNativeDriver: true }),
         Animated.timing(dim, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]).start(() => { setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
+      ]).start(() => { setShown(false); setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
     }
   }, [visible]);
 
@@ -582,6 +587,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   const canSend = items.length > 0 && loc.trim();
 
   return (
+    <Modal visible={shown} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
     <Animated.View pointerEvents={visible ? 'auto' : 'none'} style={[SH.host, { opacity: dim }]}>
       <Pressable style={SH.backdrop} onPress={() => { Keyboard.dismiss(); onClose(); }} />
       <KeyboardAvoidingView
@@ -878,6 +884,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
       </Animated.View>
       </KeyboardAvoidingView>
     </Animated.View>
+    </Modal>
   );
 }
 
