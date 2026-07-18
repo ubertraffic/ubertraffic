@@ -158,6 +158,20 @@ function shellHtml() {
 + 'try{map.setPaintProperty("coverage-heat","heatmap-opacity",0.8*(0.72+0.28*e));}catch(_){}'
 + 'try{map.setPaintProperty("demand-heat","heatmap-opacity",0.72*(0.72+0.28*e));}catch(_){}}'
 + 'requestAnimationFrame(breathe);}requestAnimationFrame(breathe);'
+// DEMO HEAT — drifting synthetic red (demand) + green (coverage) blobs so the map is always alive
+// when idle. Seeded around the user, gently pulled back to centre so they wander but stay in view.
++ 'function demoTick(){if(!S.demoOn||S.liveJobs)return;'
++ 'var c=S.me?[S.me.lng,S.me.lat]:[map.getCenter().lng,map.getCenter().lat];'
++ 'if(!S.demoSeed||(S.demoCenter&&(Math.abs(S.demoCenter[0]-c[0])>0.02||Math.abs(S.demoCenter[1]-c[1])>0.02))){'
++ 'S.demoCenter=c;S.demoSeed=[];for(var i=0;i<16;i++){var a=Math.random()*6.283,r=0.003+Math.random()*0.026;'
++ 'S.demoSeed.push({x:c[0]+Math.cos(a)*r,y:c[1]+Math.sin(a)*r,kind:(i%3===0?"dem":"cov"),vx:(Math.random()-0.5)*0.0008,vy:(Math.random()-0.5)*0.0008});}}'
++ 'var cc=S.demoCenter,cov=[],dem=[];S.demoSeed.forEach(function(b){'
++ 'b.vx+=(Math.random()-0.5)*0.00018+(cc[0]-b.x)*0.008;b.vy+=(Math.random()-0.5)*0.00018+(cc[1]-b.y)*0.008;'
++ 'b.vx*=0.95;b.vy*=0.95;b.x+=b.vx;b.y+=b.vy;'
++ 'var f={type:"Feature",geometry:{type:"Point",coordinates:[b.x,b.y]}};(b.kind==="dem"?dem:cov).push(f);});'
++ 'try{map.getSource("coverage").setData({type:"FeatureCollection",features:cov});}catch(_){}'
++ 'try{map.getSource("demand").setData({type:"FeatureCollection",features:dem});}catch(_){}'
++ 'S.hasHeat=true;}setInterval(demoTick,180);'
 + 'S.ready=true;if(window.__pending){apply(window.__pending);window.__pending=null;}'
 + 'function __sendReady(){if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({type:"map_ready"}));}'
 + '__sendReady();map.once("idle",__sendReady);'
@@ -171,6 +185,7 @@ function shellHtml() {
 + 'el.innerHTML="<div class=\\"glow\\" style=\\"background:"+meta.color+"\\"></div>"+((p.pulse||p.status==="on_site")?"<div class=\\"ring\\" style=\\"background:"+meta.color+"55\\"></div>":"")+"<div class=\\"dot\\" style=\\"background:"+meta.color+"\\">"+inner+"</div>";}'
 // ---- the LIVE updater: diff state, move things, ease camera. NO rebuild. ----
 + 'function apply(st){if(!S.ready){window.__pending=st;return;}'
++ 'S.demoOn=!!st.demoHeat;S.liveJobs=(st.markers||[]).length>0;if(st.me)S.me=st.me;'
 + 'var META={getting_ready:{color:"'+MC.grey+'",label:"Getting ready"},on_the_way:{color:"'+MC.blue+'",label:"On the way"},on_site:{color:"'+MC.green+'",label:"On site"},waiting:{color:"'+MC.red+'",label:"Finding workers"},done:{color:"'+MC.green+'",label:"Complete"}};'
 // you marker
 + 'if(st.me){var yl=[st.me.lng,st.me.lat];if(!S.youMk){var yEl=document.createElement("div");yEl.className="you-wrap";yEl.innerHTML="<div class=\\"halo\\"></div><div class=\\"you\\"></div>";S.youMk=new maplibregl.Marker({element:yEl,anchor:"center"}).setLngLat(yl).addTo(map);}else{S.youMk.setLngLat(yl);}}'
@@ -196,12 +211,15 @@ function shellHtml() {
 + 'else{glide(S.worker,target);}'
 + 'map.getSource("jobline").setData({type:"FeatureCollection",features:[{type:"Feature",geometry:{type:"LineString",coordinates:[target,[trav.lng,trav.lat]]}}]});'
 + '}else{if(S.worker.mk){S.worker.mk.remove();S.worker.mk=null;S.worker.pos=null;}map.getSource("jobline").setData({type:"FeatureCollection",features:[]});}'
-// coverage + demand heat (idle only; cleared when a job is active)
+// coverage + demand heat (idle only; cleared when a job is active). When the demo animation owns the
+// heat (idle + demoHeat), skip the static real-data write so the two don't fight.
++ 'if(!(S.demoOn&&!S.liveJobs)){'
 + 'var covF=(st.coverage||[]).map(function(c){return {type:"Feature",geometry:{type:"Point",coordinates:[c.lng,c.lat]}};});'
 + 'var demF=(st.demand||[]).map(function(c){return {type:"Feature",geometry:{type:"Point",coordinates:[c.lng,c.lat]}};});'
 + 'map.getSource("coverage").setData({type:"FeatureCollection",features:covF});'
 + 'map.getSource("demand").setData({type:"FeatureCollection",features:demF});'
 + 'S.hasHeat=(covF.length>0||demF.length>0);'
++ '}'
 // badge (docked bottom bar)
 + 'updateBadge(st,META,trav);'
 // camera — ease to the story, but never fight the user right after they touch
@@ -308,6 +326,9 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
       mode,
       coverage: !hasJobs && coverage && coverage.points ? coverage.points : [],
       demand: !hasJobs ? landDemand : [],
+      // DEMO HEAT — when idle (no live jobs), the map animates drifting red/green heat so it always
+      // feels alive. Fake, but only ever shows when there's no real job activity to display.
+      demoHeat: true,
     });
     const js = 'window.__apply && window.__apply(' + JSON.stringify(state) + '); true;';
     // only feed the VISIBLE map — when fullscreen is open the small map is hidden,

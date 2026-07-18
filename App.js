@@ -1160,8 +1160,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
     {(() => {
       const brandNew = mine !== null && (mine || []).length === 0;
       const sheetChrome = { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 };
-      const pillStyle = { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.panel, borderRadius: 14, paddingVertical: 13, borderWidth: 1, borderColor: C.line };
-      // PINNED ANCHOR — the post-a-job hero + two fixed helper pills. Always the same height, so the
+      // PINNED ANCHOR — the post-a-job hero + one centred helper pill. Always the same height, so the
       // hugging sheet lands in a predictable spot on every device.
       const pinnedHeader = (
         <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14 }}>
@@ -1175,13 +1174,10 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
               <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
             </View>
           </TouchableOpacity>
-          {/* two fixed helper pills — reach a human / learn the ropes */}
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-            <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.85} style={pillStyle}>
-              <Icon name="chat" size={16} color={C.indigo} strokeWidth={2.3} />
-              <Text style={{ fontSize: 14, fontWeight: '700', color: C.ink }}>Live chat</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.85} style={pillStyle}>
+          {/* one centred helper pill — learn the ropes */}
+          <View style={{ marginTop: 12, alignItems: 'center' }}>
+            <TouchableOpacity onPress={() => setHelpOpen(true)} activeOpacity={0.85}
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.panel, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 30, borderWidth: 1, borderColor: C.line }}>
               <Icon name="help" size={16} color={C.mute} strokeWidth={2.3} />
               <Text style={{ fontSize: 14, fontWeight: '700', color: C.ink }}>How it works</Text>
             </TouchableOpacity>
