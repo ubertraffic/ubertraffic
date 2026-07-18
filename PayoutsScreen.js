@@ -75,9 +75,9 @@ export default function PayoutsScreen({ onClose }) {
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.canvas },
-  head: { paddingHorizontal: S.xl, paddingTop: 48, paddingBottom: 12 },
-  back: { color: C.indigo, fontWeight: '600', fontSize: 15, marginBottom: 10 },
-  h1: { fontSize: 24, fontWeight: '800', letterSpacing: -0.5, color: C.ink },
+  head: { paddingHorizontal: S.xl, paddingTop: 22, paddingBottom: 16 },
+  back: { color: C.mute, fontWeight: '700', fontSize: 14, marginBottom: 12 },
+  h1: { fontSize: 27, fontWeight: '900', letterSpacing: -0.7, color: C.ink },
   tier: { fontSize: 13, color: C.mute, marginTop: 4, lineHeight: 18 },
   card: { backgroundColor: C.panel, borderRadius: R.lg, padding: 16, ...shadowSm },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
