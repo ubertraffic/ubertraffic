@@ -7,6 +7,7 @@ import Icon, { iconForType } from './Icon';
 import { supabase } from './supabaseClient';
 import MapHero from './MapHero';
 import GoOnlineOrb from './GoOnlineOrb';
+import EndShiftSheet from './EndShiftSheet';
 import LiveTrackerCard from './LiveTrackerCard';
 import Pulse from './Pulse';
 import JobChat from './JobChat';
@@ -344,6 +345,8 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const { needs: prestartNeeds, check: checkPrestart, markDone: markPrestartDone } = usePrestartStatus(myAssigns);
   const [opMapExpanded, setOpMapExpanded] = useState(false);
   const flood = useRef(new Animated.Value(0)).current;   // green colour-flood when going online
+  const [onlineSince, setOnlineSince] = useState(null);  // when this shift started (for the live timer)
+  const [endShift, setEndShift] = useState(false);       // "Nice work" end-of-shift sheet visible
   // Live location — follow the worker as they move (real GPS on Expo Go via
   // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
   // to DEV_LOCATION when real GPS isn't available. stop() cleans up on unmount.
@@ -401,6 +404,11 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['dispatches', 'assignments'], refresh);
+  // shift clock — starts when the worker goes online (kept if already online on load), clears offline.
+  useEffect(() => {
+    if (profile?.is_online) setOnlineSince((s) => s || Date.now());
+    else setOnlineSince(null);
+  }, [profile?.is_online]);
 
   async function becomeOperator() {
     // Capture identity first — the anchor a register check needs (Phase 2). Validated in setMyIdentity.
@@ -636,7 +644,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           {/* control PINNED above the scroll — orb centres itself; the online pill stretches wide.
               Pinning it (not inside the scroll) keeps a press-and-hold from being stolen by scrolling. */}
           <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
-            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={toggleOnline} />
+            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={() => setEndShift(true)} earningsToday={opEarn.today} onlineSince={onlineSince} />
           </View>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
             {/* earnings — the worker's emotional anchor (wired to real totals in a later pass) */}
@@ -908,6 +916,16 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
       onOpenProfile={onOpenProfile}
     />
     <AcceptCelebration data={celebrate} onDone={() => setCelebrate(null)} />
+    <EndShiftSheet
+      visible={endShift}
+      onClose={() => setEndShift(false)}
+      onConfirmOffline={() => { setEndShift(false); toggleOnline(); }}
+      summary={{
+        today: opEarn.today,
+        jobs: (myAssigns || []).filter((a) => ['complete', 'approved'].includes(a.status) && (Date.now() - new Date(a.paid_at || a.completed_at || a.accepted_at || 0).getTime()) < 86400000).length,
+        minutes: onlineSince ? Math.max(0, Math.floor((Date.now() - onlineSince) / 60000)) : 0,
+      }}
+    />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
     <SkillDiscoverySheet skill={discSkill} excludeUserId={session.user.id} onClose={() => setDiscSkill(null)} onOpenProfile={onOpenProfile} />
     <CloseOutSheet

@@ -11,12 +11,19 @@ import { tap } from './components2';
 
 const HOLD_MS = 520;
 
-export default function GoOnlineOrb({ online, busy, onConfirm, onGoOffline, suburb, earnings }) {
+export default function GoOnlineOrb({ online, busy, onConfirm, onGoOffline, suburb, earningsToday, onlineSince }) {
   const halo = useRef(new Animated.Value(0)).current;   // idle breathing
   const fill = useRef(new Animated.Value(0)).current;    // hold-to-confirm charge
   const press = useRef(new Animated.Value(0)).current;   // press-down scale
   const midTick = useRef(null);
   const [holding, setHolding] = useState(false);
+  const [nowTick, setNowTick] = useState(0);   // 1s heartbeat so the online timer counts up live
+
+  useEffect(() => {
+    if (!online || !onlineSince) return;
+    const t = setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [online, onlineSince]);
 
   // idle breathing halo (offline only)
   useEffect(() => {
@@ -55,14 +62,19 @@ export default function GoOnlineOrb({ online, busy, onConfirm, onGoOffline, subu
   };
 
   if (online) {
+    // live session length, counting up every second (nowTick keeps this fresh)
+    const elapsedMin = onlineSince ? Math.max(0, Math.floor((Date.now() - onlineSince) / 60000)) : 0;
+    const eh = Math.floor(elapsedMin / 60), em = elapsedMin % 60;
+    const timeStr = onlineSince ? (eh > 0 ? `${eh}h ${em}m online` : `${em}m online`) : 'Online';
+    const money = earningsToday && earningsToday > 0 ? `$${earningsToday} today` : null;
     return (
       <TouchableOpacity onPress={onGoOffline} activeOpacity={0.9} style={styles.pill}>
         <View style={styles.liveDot} />
         <View style={{ flex: 1 }}>
           <Text style={styles.pillTitle} numberOfLines={1}>You're online{suburb ? ` · ${suburb}` : ''}</Text>
-          <Text style={styles.pillSub} numberOfLines={1}>{earnings || 'Waiting for jobs nearby'}</Text>
+          <Text style={styles.pillSub} numberOfLines={1}>{[money, timeStr].filter(Boolean).join(' · ')}</Text>
         </View>
-        <Text style={styles.pillOff}>Go offline</Text>
+        <Text style={styles.pillOff}>End shift</Text>
       </TouchableOpacity>
     );
   }
