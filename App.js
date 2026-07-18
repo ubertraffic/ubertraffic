@@ -36,6 +36,7 @@ import CredentialsScreen from './CredentialsScreen';
 import { readinessForTrades, verifiedCredentialsFor } from './credentialsService';
 import Icon, { iconForType } from './Icon';
 import TabBar from './TabBar';
+import RoleToggle from './RoleToggle';
 import Pulse from './Pulse';
 import { getPulseStats } from './pulseService';
 import MomentToasts from './MomentToast';
@@ -332,10 +333,7 @@ function Shell({ session, pushDeepLink }) {
           <Text style={[T.heading, { color: '#fff' }]}>SiteCall</Text>
           <Text style={[T.label, { fontSize: 9.5, marginTop: 1, color: 'rgba(255,255,255,0.55)' }]}>{myName ? `G'day, ${myName}` : session.user.email}</Text>
         </View>
-        <View style={S_.roleSwitch}>
-          <RoleChip label="Hire" on={role === 'client'} locked={!canHire} onPress={() => switchRole('client')} accent={C.indigo} />
-          <RoleChip label="Work" on={role === 'operator'} locked={!canWork} onPress={() => switchRole('operator')} accent={C.green} />
-        </View>
+        <RoleToggle role={role} canHire={canHire} canWork={canWork} onSelect={switchRole} />
       </View>
 
       {/* tab content */}
