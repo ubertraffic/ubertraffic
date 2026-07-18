@@ -691,14 +691,32 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
             )}
             <WorkFeed mission={mission} jobs={jobs} passed={passed} busyId={busyId} expandedBios={expandedBios} setExpandedBios={setExpandedBios} onAccept={accept} onPass={pass} onDismissDone={() => {}} />
             {!!msg && <Text style={msg[0] === '✓' ? S_.successText : S_.msg}>{msg}</Text>}
-            {/* what I supply — collapsed skill summary */}
-            <TouchableOpacity style={[S_.capSummary, { marginTop: 20 }]} onPress={() => setCapPicker(true)} activeOpacity={0.85}>
-              <View style={{ flex: 1 }}>
-                <Text style={T.bodyStrong}>{caps.length === 0 ? 'Add what you supply' : `${caps.length} skill${caps.length === 1 ? '' : 's'}`}</Text>
-                <Text style={[T.small, { color: C.mute, marginTop: 4 }]}>{caps.length === 0 ? 'Get matched to work nearby.' : 'Tap to add another skill.'}</Text>
-              </View>
-              <Text style={S_.capChevron}>›</Text>
-            </TouchableOpacity>
+            {/* what I supply — with readiness, so a worker who gets no jobs learns WHY (tickets) */}
+            {(() => {
+              const readyCaps = caps.filter((c) => c.trade_id && readiness[c.trade_id]?.ready);
+              const notReady = caps.filter((c) => c.trade_id && readiness[c.trade_id] && !readiness[c.trade_id].ready);
+              const noneReady = caps.length > 0 && readyCaps.length === 0;
+              return (
+                <>
+                  {profile.is_online && noneReady && (
+                    <TouchableOpacity onPress={() => setCapPicker(true)} activeOpacity={0.9}
+                      style={{ backgroundColor: 'rgba(214,158,46,0.12)', borderRadius: 14, padding: 14, marginTop: 16, borderWidth: 1, borderColor: 'rgba(214,158,46,0.30)' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: C.amber }}>No jobs coming through? Add your tickets</Text>
+                      <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3, lineHeight: 18 }}>Your skills need verified tickets (e.g. White Card) before sites can be matched to you.</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity style={[S_.capSummary, { marginTop: 16 }]} onPress={() => setCapPicker(true)} activeOpacity={0.85}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={T.bodyStrong}>{caps.length === 0 ? 'Add what you supply' : `${caps.length} skill${caps.length === 1 ? '' : 's'}${readyCaps.length > 0 ? ` · ${readyCaps.length} ready` : ''}`}</Text>
+                      <Text style={[T.small, { color: notReady.length > 0 ? C.amber : C.mute, marginTop: 4 }]}>
+                        {caps.length === 0 ? 'Get matched to work nearby.' : notReady.length > 0 ? `${notReady.length} need tickets before you're matched` : 'Tap to add another skill.'}
+                      </Text>
+                    </View>
+                    <Text style={S_.capChevron}>›</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
           </ScrollView>
         </View>
       </View>
