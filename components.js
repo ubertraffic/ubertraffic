@@ -1,7 +1,7 @@
 // components.js — leaf components + helpers extracted from App.js so App.js fits under the
 // mobile paste limit. These are called from App.js, which imports them back.
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, StyleSheet, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
 import { C, R, S, E, T } from './theme';
 import { S_ } from './styles';
 import Icon from './Icon';
@@ -285,6 +285,7 @@ export function RateJob({ visible, assignmentId, rateeName, onClose, rateeIsWork
   const who = (rateeName || 'them').split(' ')[0];
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={() => onClose && onClose(false)}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={S_.rateScrim}>
         <View style={S_.rateCard}>
           {done ? (
@@ -342,6 +343,7 @@ export function RateJob({ visible, assignmentId, rateeName, onClose, rateeIsWork
           )}
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
