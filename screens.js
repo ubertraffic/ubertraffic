@@ -721,14 +721,10 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
         </View>
       </View>
     ) : (
-    <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128 }}>
-      {(() => {
-        // Map presence follows the mission: big when navigating/offline context, compact when the
-        // mission is finding work or actively working (Laws 1+2 — don't let the map compete then).
-        const mapHeight = (mission === 'find' || mission === 'working') ? 150 : 300;
-        return (
-      <MapReveal height={mapHeight}>
-      <MapHero me={myLoc} markers={profile.is_online ? opMapJobs : []} mode="work" offline={!profile.is_online} dockedBottom demand={demandHeat}
+      <View style={{ flex: 1 }}>
+        {/* full-bleed green work map — same immersive frame as the offline home, active-job wired */}
+        <View style={StyleSheet.absoluteFill}>
+      <MapHero height={Dimensions.get('window').height} framed={false} me={myLoc} markers={profile.is_online ? opMapJobs : []} mode="work" offline={!profile.is_online} demand={demandHeat}
         hubJobs={profile.is_online ? [
           // MY active jobs — with the next lifecycle step, done right on the map
           ...(myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status)).map((a) => {
@@ -786,13 +782,6 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           if (activeMine > 0) return `${activeMine} active${near ? ` · ${near} nearby` : ''}`;
           return near > 0 ? `${near} job${near > 1 ? 's' : ''} nearby` : 'No jobs nearby';
         })()}
-        primaryAction={(() => {
-          const mineActive = (myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status));
-          if (mineActive.length > 0) { const a = mineActive[0]; const na = nextAction(a); if (na) return { label: na.label, sub: a.request_item?.type || 'Your job', tone: a.status === 'on_site' ? 'green' : 'ready', fn: na.fn, chevron: false }; }
-          const near = (jobs || []).filter((d) => !passed.has(d.request_item?.id));
-          if (near.length > 0) { const it = near[0].request_item; return { label: 'Accept nearest job', sub: it?.type || 'Work nearby', tone: 'green', fn: () => it?.id && accept(it.id), chevron: false }; }
-          return null;
-        })()}
         chatBubble={(() => {
           const mineActive = (myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status));
           if (mineActive.length === 0) return null;
@@ -800,11 +789,14 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           return { unread: 0, fn: () => setChat({ a, title: `${a.request_item?.type || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) };
         })()}
       />
-      </MapReveal>
-        );
-      })()}
-      {/* Operator's live tracker — the SAME confidence experience, worker's lens. Closes the
-          loop: the worker sees what they've done + that the client can see it. */}
+        </View>
+        {/* floating green sheet — carries the online pill + the live job & actions */}
+        <View style={{ position: 'absolute', left: 0, right: 0, top: '40%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
+          <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
+            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={() => setEndShift(true)} earningsToday={opEarn.today} onlineSince={onlineSince} />
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+      {/* Operator's live tracker — the SAME confidence experience, worker's lens. */}
       {(() => {
         const act = (myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status));
         const rid = act?.request_item?.request?.id;
@@ -819,24 +811,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           else if (action === 'open_profile' && arg && onOpenProfile) onOpenProfile(arg);
         }} />;
       })()}
-      {/* dock bar — mirrors Hire's "Post a job" bar, but holds the online toggle. When a live
-          tracker card is showing above it, the dock becomes a separate rounded card with a gap
-          (otherwise its flush-top design collides with the tracker). */}
-      {(() => {
-        const hasTracker = !!(myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status))?.request_item?.request?.id;
-        return (
-      <TouchableOpacity style={[S_.askDock, hasTracker && S_.askDockStandalone, profile.is_online && S_.askDockQuiet]} onPress={toggleOnline} activeOpacity={0.92} disabled={busy}>
-        <View style={{ flex: 1 }}>
-          <Text style={[S_.askDockLabel, profile.is_online && S_.askDockLabelQuiet]}>{profile.is_online ? 'YOU\'RE ONLINE' : 'YOU\'RE OFFLINE'}</Text>
-          <Text style={[S_.askDockT, profile.is_online ? S_.askDockTQuiet : S_.askDockTLg]}>{profile.is_online ? 'Receiving jobs near you' : 'Go online to get work'}</Text>
-        </View>
-        <View style={[S_.sw, profile.is_online && S_.swOn]}>
-          <View style={[S_.swKnob, profile.is_online && S_.swKnobOn]} />
-        </View>
-      </TouchableOpacity>
-        );
-      })()}
-      <View style={{ padding: 24, paddingTop: 24 }}>
+      <View style={{ paddingTop: 8 }}>
 
         {/* Run brief — the moment a worker has an active run, show what/where/cap/drop + the
             "message before you buy" CTA up front, so the details aren't buried in the finish sheet. */}
@@ -941,7 +916,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           </>);
         })()}
       </View>
-    </Animated.ScrollView>
+          </ScrollView>
+        </View>
+      </View>
     )}
     <JobChat
       visible={!!chat}
