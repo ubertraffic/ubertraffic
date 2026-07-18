@@ -258,6 +258,12 @@ function Shell({ session, pushDeepLink }) {
   cacheBindUser(session?.user?.id);
   const [role, setRoleSide] = useState('client');  // client | operator — VIEW side only
   const [tab, setTab] = useState('home');
+  // Floating island tab bar: track scroll to hide it on the way down, reveal on the way up.
+  // diffClamp accumulates the scroll delta and clamps it, so a direction change flips it instantly.
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const tabHide = Animated.diffClamp(scrollY, 0, 70).interpolate({ inputRange: [0, 70], outputRange: [0, 130], extrapolate: 'clamp' });
+  const onHomeScroll = Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true });
+  const changeTab = (k) => { scrollY.setValue(0); setTab(k); };
   const [wantNew, setWantNew] = useState(false);   // signal: open new-request flow on Requests
   const [focusReq, setFocusReq] = useState(null);  // signal: open a specific request on Requests
   const [myName, setMyName] = useState(null);      // personalisation: first name in the header
@@ -322,10 +328,10 @@ function Shell({ session, pushDeepLink }) {
           // unmounts/reloads when switching Hire<->Work. Seamless, no page flash.
           <View style={{ flex: 1 }}>
             <View style={[S_.homeLayer, role !== 'client' && S_.homeHidden]} pointerEvents={role === 'client' ? 'auto' : 'none'}>
-              <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} />
+              <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
             </View>
             <View style={[S_.homeLayer, role !== 'operator' && S_.homeHidden]} pointerEvents={role === 'operator' ? 'auto' : 'none'}>
-              <OperatorHome session={session} onOpenProfile={setProfileId} />
+              <OperatorHome session={session} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
             </View>
           </View>
         ) : role === 'client' ? (
@@ -339,7 +345,7 @@ function Shell({ session, pushDeepLink }) {
         )}
       </View>
 
-      <TabBar tabs={tabs} active={tab} onChange={setTab} />
+      <TabBar tabs={tabs} active={tab} onChange={changeTab} translateY={tabHide} accent={role === 'client' ? C.indigo : C.green} />
       {/* MomentToasts retired: the Live Tracker card now covers lifecycle moments calmly and
           persistently, so the popping toasts were redundant (competing peers). Kept the import
           so it's a one-line re-enable if we ever want it for events the tracker doesn't cover. */}
@@ -964,7 +970,7 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
   return { payReq, payJob, beginApproval, PaySheet };
 }
 
-function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
+function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
   const [mine, setMine] = useState(() => cacheGet('client-requests'));   // shared cache → instant paint
   const [mapJobs, setMapJobs] = useState([]);
   const [myLoc, setMyLoc] = useState(null);
@@ -1099,7 +1105,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
   const onHubAction = (j) => messageForRaw(j._raw);
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+    <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128 }}>
       <MapHero
         height={240} markers={mapJobs} me={myLoc} dockedBottom activeNow={activeNow} coverage={coverage} demand={demand} mode="hire"
         hubJobs={hubJobs} onHubAction={onHubAction} onPostFromMap={(r) => { if (r && r.posted) { load(); if (r.id) setTimeout(() => payJob(r.id, r.est, r.label), 500); } else { setSheetOpen(true); } }}
@@ -1223,7 +1229,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile }) {
           );
         })()}
       </View>
-    </ScrollView>
+    </Animated.ScrollView>
     <RequestSheet
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
@@ -1508,7 +1514,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
 
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <View style={S_.rowBetween}>
         <Text style={T.eyebrow}>My requests</Text>
         <LiveTag />
@@ -1573,7 +1579,7 @@ function ClientActivity({ session }) {
   const done = (mine || []).filter((r) => r.status === 'complete');
   const spent = done.reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
   return (
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <Text style={T.eyebrow}>Activity</Text>
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 24 }]}>
         <Text style={T.label}>Total spent · completed jobs</Text>

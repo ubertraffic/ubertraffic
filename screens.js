@@ -312,7 +312,7 @@ function BottomSheet({ activeKey, onRequestClose, render }) {
   );
 }
 
-export function OperatorHome({ session, onOpenProfile }) {
+export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const [profile, setProfile] = useState(() => cacheGet('operator-profile'));   // instant paint, skips gate spinner
   const [loadFailed, setLoadFailed] = useState(false);  // profile load errored — show retry, not an endless spinner
   const [caps, setCaps] = useState(() => cacheGet('operator-caps') || []);
@@ -534,7 +534,7 @@ export function OperatorHome({ session, onOpenProfile }) {
 
   if (profile.role !== 'operator') {
     return (
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
         <Text style={T.eyebrow}>Start working</Text>
         <Text style={[T.body, { marginTop: 8, marginBottom: 18 }]}>Set yourself up to receive jobs — verified, online, and matched to work near you.</Text>
         <Text style={[T.label, { marginBottom: 6 }]}>Full legal name</Text>
@@ -582,7 +582,7 @@ export function OperatorHome({ session, onOpenProfile }) {
 
   return (
     <>
-    <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+    <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128 }}>
       {(() => {
         // Map presence follows the mission: big when navigating/offline context, compact when the
         // mission is finding work or actively working (Laws 1+2 — don't let the map compete then).
@@ -802,7 +802,7 @@ export function OperatorHome({ session, onOpenProfile }) {
           </>);
         })()}
       </View>
-    </ScrollView>
+    </Animated.ScrollView>
     <JobChat
       visible={!!chat}
       onClose={() => { setChat(null); refresh(); }}
@@ -977,7 +977,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
 
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <Text style={T.eyebrow}>My jobs</Text>
       {assigns === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
         : assigns.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No accepted jobs yet.</Text>
@@ -1240,7 +1240,7 @@ export function OperatorEarnings({ session }) {
   const pendingValue = pending.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <Text style={T.eyebrow}>Earnings</Text>
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 26 }]}>
         <Text style={T.label}>Paid to you</Text>
@@ -1325,7 +1325,7 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <Text style={T.eyebrow}>Account</Text>
       <View style={[S_.card, { marginTop: 12 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
