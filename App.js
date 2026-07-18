@@ -1079,6 +1079,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
       out.push({
         key: sig,
         label: its[0].type + (its[0].qty > 1 ? ` ×${its[0].qty}` : '') + (extra > 0 ? ` +${extra}` : ''),
+        chip: its[0].type + (heads > 1 ? ` · ${heads}` : '') + (extra > 0 ? ` +${extra}` : ''),
         sub: `${heads} ${heads === 1 ? 'person' : 'people'}`,
         items: its.map((it) => ({
           trade_id: it.trade_id, kind: it.kind, type: it.type, qty: it.qty || 1,
@@ -1189,22 +1190,40 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         }}
       />
     </View>
-    {/* floating content sheet — the map breathes above it */}
-    <View style={{ position: 'absolute', left: 0, right: 0, top: '61%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
-      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128, paddingHorizontal: 16, paddingTop: 16 }}>
-      {/* primary post action — clean white card (the mockup style), not a heavy black bar */}
-      <TouchableOpacity onPress={openPost} activeOpacity={0.9}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3, color: C.ink }}>Who do you need on site?</Text>
-          <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3 }}>Post a job — crews nearby are notified instantly</Text>
-        </View>
-        <View style={{ width: 50, height: 50, borderRadius: 15, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', shadowColor: C.indigo, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } }}>
-          <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
-        </View>
-      </TouchableOpacity>
-      {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job.
-          Renders BELOW the docked post-bar so it doesn't break the map+dock connected card. */}
+    {/* floating content sheet — the map breathes above it. PINNED header (post bar + recent chips)
+        never scrolls; the body below reveals active work as you pull up. */}
+    <View style={{ position: 'absolute', left: 0, right: 0, top: '60%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
+      {/* ── PINNED ANCHOR — always visible, the one thing that never moves ── */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: postAgain.length > 0 ? 12 : 6 }}>
+        {/* primary post action — clean white card, the permanent hero */}
+        <TouchableOpacity onPress={openPost} activeOpacity={0.9}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.panel, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3, color: C.ink }}>Who do you need on site?</Text>
+            <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3 }}>Post a job — crews nearby are notified instantly</Text>
+          </View>
+          <View style={{ width: 50, height: 50, borderRadius: 15, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', shadowColor: C.indigo, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } }}>
+            <Text style={{ color: '#fff', fontSize: 27, marginTop: -2 }}>＋</Text>
+          </View>
+        </TouchableOpacity>
+        {/* POST AGAIN — compact chip row, the quiet helper under the hero (not big cards) */}
+        {postAgain.length > 0 && (
+          <View style={{ marginTop: 12 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 4 }} keyboardShouldPersistTaps="handled">
+              {postAgain.map((tpl) => (
+                <TouchableOpacity key={tpl.key} onPress={() => openPostAgain(tpl)} activeOpacity={0.85}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.panel, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: C.line }}>
+                  <Icon name="refresh" size={14} color={C.indigo} strokeWidth={2.4} />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: C.ink }} numberOfLines={1}>{tpl.chip}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+      </View>
+      {/* ── SCROLL BODY — active work + context, revealed on pull-up ── */}
+      <Animated.ScrollView style={{ flex: 1 }} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 130, paddingHorizontal: 16, paddingTop: 4 }}>
+      {/* Live tracker — SiteCall's own in-app "Live Activity" for the most relevant active job. */}
       {(() => {
         const trackedId = (match && match.r.id) || (active[0] && active[0].id);
         if (!trackedId) return null;
@@ -1220,7 +1239,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
           else if (action === 'open_help') setHelpOpen(true);
         }} />;
       })()}
-      <View style={{ paddingTop: 12 }}>
+      <View style={{ paddingTop: 8 }}>
 
         {/* THE MATCH — the whole job, filling up, crew inside. The Uber moment. */}
         {match && (
@@ -1271,25 +1290,6 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
                 </>
               )}
 
-              {/* POST AGAIN — one-tap re-post of the client's common jobs (their real history) */}
-              {postAgain.length > 0 && (
-                <View style={{ marginTop: anythingOwn ? 24 : 4 }}>
-                  <Text style={[T.eyebrow, { marginBottom: 10 }]}>Post again</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 4 }}>
-                    {postAgain.map((tpl) => (
-                      <TouchableOpacity key={tpl.key} onPress={() => openPostAgain(tpl)} activeOpacity={0.85}
-                        style={{ width: 168, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 2 }}>
-                        <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: C.indigoSoft || 'rgba(79,70,229,0.10)', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
-                          <Icon name="refresh" size={17} color={C.indigo} strokeWidth={2.4} />
-                        </View>
-                        <Text numberOfLines={1} style={{ fontSize: 14.5, fontWeight: '800', color: C.ink, letterSpacing: -0.2 }}>{tpl.label}</Text>
-                        <Text style={{ fontSize: 12, color: C.mute, fontWeight: '600', marginTop: 3 }}>{tpl.sub} · tap to re-post</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
-
               {/* BRAND-NEW — no history yet: prove the network is live + seed the first post */}
               {brandNew && (
                 <View style={{ marginTop: 4 }}>
@@ -1315,9 +1315,11 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
                 </View>
               )}
 
-              {/* CALM END CAP — a deliberate close instead of dead trailing space */}
-              {!brandNew && (
-                <View style={{ alignItems: 'center', marginTop: anythingOwn || postAgain.length > 0 ? 28 : 20, paddingVertical: 8 }}>
+              {/* CALM END CAP — only when there's active work to close off (caught up), or when the
+                  client has no work AND no re-post chips (then a gentle nudge). A quiet client who
+                  DOES have re-post chips pinned above needs nothing here — the sheet just rests. */}
+              {!brandNew && (anythingOwn || postAgain.length === 0) && (
+                <View style={{ alignItems: 'center', marginTop: anythingOwn ? 28 : 20, paddingVertical: 8 }}>
                   <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', letterSpacing: 0.2 }}>
                     {anythingOwn ? "You're all caught up" : 'Nothing on right now — post a job above'}
                   </Text>
