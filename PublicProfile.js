@@ -154,7 +154,7 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
         ) : !p || !p.exists ? (
           <View style={styles.center}><Text style={styles.muted}>Profile unavailable.</Text></View>
         ) : (
-          <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+          <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
             {/* identity */}
             <View style={styles.top}>
               {p.avatar_url ? (

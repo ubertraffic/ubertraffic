@@ -79,7 +79,7 @@ export default function BusinessDetailsScreen({ onClose }) {
         <Text style={styles.h1}>Business details</Text>
         <Text style={styles.tier}>Your company name and ABN — how you’re billed and paid on SiteCall.</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
 
         {/* Company / trading name */}
         <View style={styles.card}>

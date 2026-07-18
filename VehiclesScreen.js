@@ -104,7 +104,7 @@ export default function VehiclesScreen({ onClose }) {
           <TouchableOpacity onPress={() => setEditing(null)}><Text style={s.back}>‹ Back</Text></TouchableOpacity>
           <Text style={s.h1}>{editing === 'new' ? 'Add a vehicle' : 'Edit vehicle'}</Text>
         </View>
-        <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
           <Text style={s.label}>Type</Text>
           <View style={s.chipRow}>
             {VEHICLE_TYPES.map((t) => (
@@ -146,7 +146,7 @@ export default function VehiclesScreen({ onClose }) {
         <Text style={s.h1}>Vehicles</Text>
         <Text style={s.tier}>Your rig — each vehicle carries its own rego and insurance.</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
         {!!msg && <Text style={s.err}>{msg}</Text>}
         {list.length === 0 ? (
           <Text style={[T.small, { color: C.mute, marginBottom: 16, lineHeight: 19 }]}>

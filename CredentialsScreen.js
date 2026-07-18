@@ -142,7 +142,7 @@ export default function CredentialsScreen({ onClose }) {
           <Text style={styles.h1}>{adding.name}</Text>
           <Text style={styles.tier}>{adding.needs_provider ? 'Insurance' : adding.self_declared ? 'Trade licence' : (TIER_LABEL[adding.tier] || adding.tier)}{adding.renews_years ? ` · renews every ${adding.renews_years}yr` : ''}</Text>
         </View>
-        <ScrollView contentContainerStyle={{ padding: S.xl }}>
+        <ScrollView contentContainerStyle={{ padding: S.xl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
           {adding.needs_provider && (
             <>
               <Text style={styles.label}>Insurer / provider</Text>
@@ -190,7 +190,7 @@ export default function CredentialsScreen({ onClose }) {
         <Text style={styles.h1}>Tickets & expiry</Text>
         <Text style={styles.tier}>Verified tickets unlock the jobs that require them.</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
         {caps && (
           <View style={styles.capBanner}>
             <View style={styles.capRow}>
