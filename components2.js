@@ -1,6 +1,6 @@
 // components2.js — presentational component cluster extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, StyleSheet } from 'react-native';
 import { C, R, S, E, M, T } from './theme';
 import { S_ } from './styles';
 import Icon, { iconForType } from './Icon';
@@ -183,80 +183,121 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
     transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
   };
 
+  const busyHere = busyId === it?.id;
+  const accent = urgent ? C.amber : C.green;
+  const accentSoft = urgent ? 'rgba(245,158,11,0.12)' : C.greenSoft;
   return (
-    <Animated.View style={cardStyle}>
-    <View style={S_.jobCard}>
-      {/* top row: urgency (the first thing that matters) + spots */}
-      <View style={S_.rowBetween}>
-        <View style={[S_.pill, { backgroundColor: urgent ? 'rgba(245,158,11,0.12)' : C.panel2 }]}>
-          <Text style={[S_.pillT, { color: urgent ? C.amber : C.mute }]}>{urgent ? '⚡ Urgent · now' : 'Booked'}</Text>
-        </View>
-        <View style={[S_.pill, { backgroundColor: left > 0 ? C.greenSoft : C.panel2 }]}>
-          <Text style={[S_.pillT, { color: left > 0 ? C.green : C.mute }]}>{left > 0 ? `${left} of ${qty} open` : 'All filled'}</Text>
-        </View>
-      </View>
+    <Animated.View style={[cardStyle, { marginBottom: 14 }]}>
+      <View style={jc.card}>
+        {/* urgency accent bar — the eye lands here first for a "now" job */}
+        <View style={[jc.accentBar, { backgroundColor: urgent ? C.amber : 'transparent' }]} />
 
-      {/* trade + location */}
-      <Text style={[T.title, { marginTop: 10 }]}>{it?.type}{multi ? `  ·  ${qty} needed` : ''}</Text>
-      <Text style={[T.small, { color: C.mute }]}>{suburbOf(r?.address_text)}</Text>
+        {/* header — trade + where, with a tinted glyph */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={[jc.glyph, { backgroundColor: accentSoft }]}>
+            <Icon name={iconForType(it?.type, it?.kind)} size={22} color={accent} strokeWidth={2} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={jc.trade} numberOfLines={1}>{it?.type}{multi ? `  ·  ${qty}` : ''}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+              <Icon name="pin" size={12} color={C.mute} strokeWidth={2.2} />
+              <Text style={jc.where} numberOfLines={1}>{suburbOf(r?.address_text) || 'Nearby'}</Text>
+            </View>
+          </View>
+          <View style={[jc.badge, { backgroundColor: urgent ? 'rgba(245,158,11,0.14)' : C.panel2 }]}>
+            <Text style={[jc.badgeT, { color: urgent ? C.amber : C.mute }]}>{urgent ? '⚡ Now' : 'Booked'}</Text>
+          </View>
+        </View>
 
-      {/* Job "bio" — what they'll actually be doing. The trust piece: read it before accepting. */}
-      {r?.job_details ? (
-        <TouchableOpacity activeOpacity={0.7} onPress={onToggleBio}>
-          <View style={S_.bioBox}>
-            <Text style={S_.bioText} numberOfLines={expanded ? undefined : 3}>{r.job_details}</Text>
-            {r.job_details.length > 120 && (
-              <Text style={S_.bioMore}>{expanded ? 'less' : 'more'}</Text>
+        {/* what they'll be doing — the trust piece */}
+        {r?.job_details ? (
+          <TouchableOpacity activeOpacity={0.7} onPress={onToggleBio} style={{ marginTop: 14 }}>
+            <Text style={jc.bio} numberOfLines={expanded ? undefined : 2}>{r.job_details}</Text>
+            {r.job_details.length > 90 && <Text style={[jc.bioMore, { color: accent }]}>{expanded ? 'Show less' : 'Read more'}</Text>}
+          </TouchableOpacity>
+        ) : null}
+
+        {/* PAY — the number the worker decides on, and the open-spots chip */}
+        {rate != null && (
+          <View style={jc.payRow}>
+            <View>
+              <Text style={jc.payLabel}>You earn</Text>
+              <Text style={jc.payBig}>${rate}<Text style={jc.payUnit}>{isJobPrice ? '/job' : '/hr'}</Text></Text>
+              {estTotal != null && <Text style={jc.payEst}>≈ ${estTotal} · {hours} hrs</Text>}
+            </View>
+            {left > 0 && multi && (
+              <View style={jc.spots}>
+                <Text style={jc.spotsN}>{left}</Text>
+                <Text style={jc.spotsL}>of {qty} open</Text>
+              </View>
             )}
           </View>
+        )}
+
+        {/* multi-spot pips */}
+        {multi && (
+          <View style={[S_.pips, { marginTop: 12 }]}>
+            {Array.from({ length: qty }).map((_, i) => (<View key={i} style={[S_.pip, i < taken && S_.pipFilled]} />))}
+            <Text style={[T.label, { fontSize: 9, marginLeft: 6 }]}>{taken}/{qty} filled</Text>
+          </View>
+        )}
+
+        {mineHere > 0 && (
+          <View style={jc.mine}><Text style={jc.mineT}>✓ You've taken {mineHere} spot{mineHere > 1 ? 's' : ''}</Text></View>
+        )}
+
+        {/* the ACCEPT — big, green, unmistakable */}
+        <TouchableOpacity
+          activeOpacity={0.88}
+          onPress={() => left > 0 && onAccept(it.id)}
+          disabled={left <= 0 || busyHere}
+          style={[jc.accept, left <= 0 ? jc.acceptOff : null]}
+        >
+          {busyHere ? <ActivityIndicator color="#fff" />
+            : <Text style={jc.acceptT}>{left <= 0 ? 'All filled' : mineHere > 0 ? 'Take another spot' : 'Accept job'}</Text>}
         </TouchableOpacity>
-      ) : null}
-
-      {/* PAY — the number the worker decides on. Big and clear. */}
-      {rate != null && (
-        <View style={S_.payRow}>
-          <View>
-            <Text style={S_.payBig}>${rate}<Text style={S_.payUnit}>{isJobPrice ? '/job' : '/hr'}</Text></Text>
-            {estTotal != null && (
-              <Text style={S_.payEst}>~${estTotal} for {hours} hr{!isJobPrice ? ' est.' : ''}</Text>
-            )}
-          </View>
-          {!isJobPrice && (
-            <View style={S_.payDur}><Text style={S_.payDurT}>{hours} hr</Text><Text style={S_.payDurL}>booked</Text></View>
-          )}
-        </View>
-      )}
-
-      {/* spot pips so multi-spot jobs are unmistakable */}
-      {multi && (
-        <View style={[S_.pips, { marginTop: 12 }]}>
-          {Array.from({ length: qty }).map((_, i) => (
-            <View key={i} style={[S_.pip, i < taken && S_.pipFilled]} />
-          ))}
-          <Text style={[T.label, { fontSize: 9, marginLeft: 6 }]}>{taken}/{qty} filled</Text>
-        </View>
-      )}
-
-      {mineHere > 0 && (
-        <Text style={[T.small, { color: C.green, marginTop: 8 }]}>
-          ✓ You've taken {mineHere} spot{mineHere > 1 ? 's' : ''} on this job
-        </Text>
-      )}
-
-      <View style={{ marginTop: 12 }}>
-        <PrimaryBtn
-          label={left <= 0 ? 'Full' : mineHere > 0 ? 'Take another spot' : multi ? 'Accept a spot' : 'Accept job'}
-          onPress={() => onAccept(it.id)} busy={busyId === it.id} disabled={left <= 0} />
         {mineHere <= 0 && left > 0 && (
-          <TouchableOpacity onPress={() => onPass(it.id)} style={S_.passBtn} activeOpacity={0.7}>
-            <Text style={S_.passBtnT}>Pass</Text>
+          <TouchableOpacity onPress={() => onPass(it.id)} style={jc.pass} activeOpacity={0.7}>
+            <Text style={jc.passT}>Pass</Text>
           </TouchableOpacity>
         )}
       </View>
-    </View>
     </Animated.View>
   );
 }
+
+const jc = StyleSheet.create({
+  card: {
+    backgroundColor: C.panel, borderRadius: 22, padding: 18, paddingTop: 20, borderWidth: 1, borderColor: C.line, overflow: 'hidden',
+    shadowColor: '#000', shadowOpacity: 0.07, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 4,
+  },
+  accentBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
+  glyph: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  trade: { fontSize: 17.5, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
+  where: { fontSize: 13, color: C.mute, fontWeight: '600' },
+  badge: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
+  badgeT: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.2 },
+  bio: { fontSize: 13.5, color: C.ink2 || C.ink, lineHeight: 19, fontWeight: '500' },
+  bioMore: { fontSize: 12.5, fontWeight: '800', marginTop: 4 },
+  payRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.line },
+  payLabel: { fontSize: 10.5, fontWeight: '800', color: C.mute, letterSpacing: 0.5, textTransform: 'uppercase' },
+  payBig: { fontSize: 32, fontWeight: '900', color: C.ink, letterSpacing: -1.2, marginTop: 3 },
+  payUnit: { fontSize: 15, fontWeight: '700', color: C.mute, letterSpacing: 0 },
+  payEst: { fontSize: 13, color: C.green, fontWeight: '800', marginTop: 3 },
+  spots: { backgroundColor: C.greenSoft, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 9, alignItems: 'center' },
+  spotsN: { fontSize: 18, fontWeight: '900', color: C.green, letterSpacing: -0.5 },
+  spotsL: { fontSize: 9.5, fontWeight: '800', color: C.green, letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 1 },
+  mine: { backgroundColor: C.greenSoft, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, marginTop: 12 },
+  mineT: { fontSize: 12.5, color: C.green, fontWeight: '800' },
+  accept: {
+    marginTop: 16, backgroundColor: C.green, borderRadius: 16, paddingVertical: 16, alignItems: 'center',
+    shadowColor: C.green, shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6,
+  },
+  acceptOff: { backgroundColor: '#C9CBD3', shadowOpacity: 0 },
+  acceptT: { color: '#fff', fontSize: 16.5, fontWeight: '800', letterSpacing: 0.2 },
+  pass: { alignItems: 'center', paddingVertical: 13, marginTop: 2 },
+  passT: { color: C.mute, fontSize: 13.5, fontWeight: '700' },
+});
 
 export function TaskPriceCard({ it, onChange }) {
   const PRESETS = [20, 40, 60, 80, 100];

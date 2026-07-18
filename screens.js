@@ -599,15 +599,15 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   // available" states. Once a job is active/working/done we keep the proven mission-control layout
   // below so none of the on-site + close-out flows change.
   const immersive = mission === 'offline' || mission === 'find';
-  // Earnings anchor — best-effort from finished assignments (real fields when present, else 0). A
-  // dedicated earnings endpoint replaces this in a later pass; the UI is ready for real numbers.
+  // Earnings anchor — REAL settled pay (same source of truth as the Earnings tab: net_amount on
+  // approved assignments). Today = settled in the last 24h, This week = last 7 days.
   const opEarn = (() => {
-    const done = (myAssigns || []).filter((a) => ['complete', 'approved'].includes(a.status));
+    const paid = (myAssigns || []).filter((a) => a.status === 'approved');
     const now = Date.now(), DAY = 86400000;
     let today = 0, week = 0;
-    done.forEach((a) => {
-      const v = Number(a.settle_net != null ? a.settle_net : (a.net_cents != null ? a.net_cents / 100 : 0)) || 0;
-      const t = new Date(a.paid_at || a.completed_at || a.accepted_at || 0).getTime();
+    paid.forEach((a) => {
+      const v = Number(a.net_amount) || 0;
+      const t = new Date(a.paid_at || a.completed_at || 0).getTime();
       if (now - t < DAY) today += v;
       if (now - t < 7 * DAY) week += v;
     });
@@ -658,15 +658,17 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
                 <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.week}</Text>
               </View>
             </View>
-            {/* demand line — where the work is right now */}
-            <View style={[S_.rowBetween, { marginBottom: 10 }]}>
-              <Text style={T.eyebrow}>{profile.is_online ? 'Jobs near you' : 'Demand near you'}</Text>
-              <LiveTag />
-            </View>
+            {/* demand line — where the work is right now (offline only; WorkFeed carries the online header) */}
             {!profile.is_online && (
-              <Text style={{ fontSize: 13.5, color: C.mute, fontWeight: '600', marginBottom: 14, lineHeight: 19 }}>
-                Labour is in demand across Sydney right now — go online to see jobs near you and start earning.
-              </Text>
+              <>
+                <View style={[S_.rowBetween, { marginBottom: 10 }]}>
+                  <Text style={T.eyebrow}>Demand near you</Text>
+                  <LiveTag />
+                </View>
+                <Text style={{ fontSize: 13.5, color: C.mute, fontWeight: '600', marginBottom: 14, lineHeight: 19 }}>
+                  Labour is in demand across Sydney right now — go online to see jobs near you and start earning.
+                </Text>
+              </>
             )}
             <WorkFeed mission={mission} jobs={jobs} passed={passed} busyId={busyId} expandedBios={expandedBios} setExpandedBios={setExpandedBios} onAccept={accept} onPass={pass} onDismissDone={() => {}} />
             {!!msg && <Text style={msg[0] === '✓' ? S_.successText : S_.msg}>{msg}</Text>}
