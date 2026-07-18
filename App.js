@@ -53,7 +53,7 @@ import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerL
 // reload). Flip DEV_AUTOLOGIN to false — and it's a no-op — before any real
 // build. The password is NOT committed: paste your test password locally.
 // This is dev-only convenience; never ship it (CLAUDE.md §1).
-const DEV_AUTOLOGIN = true;
+const DEV_AUTOLOGIN = false;
 const DEV_EMAIL = 'oddsmate.au@gmail.com';
 const DEV_PASSWORD = '';   // ← paste your test password here locally; leave blank in the repo
 

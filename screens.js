@@ -1526,7 +1526,7 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
         ? [['payment', 'Payouts & bank', 'Set up', () => setScreen('payouts')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
         : [['users', 'Team seats', 'Soon', () => setComingSoon('Team seats')], ['payment', 'Monthly billing', 'Soon', () => setComingSoon('Monthly billing')], ['trending', 'Spend reporting', 'Soon', () => setComingSoon('Spend reporting')]]} />
 
-      <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Active', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
+      <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Soon', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
 
       <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role={role === 'operator' ? 'operator' : 'client'} />
 
