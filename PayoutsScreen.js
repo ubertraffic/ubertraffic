@@ -59,6 +59,18 @@ export default function PayoutsScreen({ onClose }) {
                 <Text style={s.primaryT}>{busy ? 'Opening…' : started ? 'Continue payout setup' : 'Set up payouts'}</Text>
               </TouchableOpacity>
             )}
+
+            {/* Diagnostic — what Stripe actually reports, so a stuck "not ready" is debuggable, not a mystery. */}
+            {status && (status.account_id || status.disabled_reason || (status.currently_due && status.currently_due.length)) ? (
+              <View style={s.diag}>
+                <Text style={s.diagLine}>payouts_enabled: <Text style={{ fontWeight: '800', color: status.payouts_enabled ? C.green : C.red }}>{String(!!status.payouts_enabled)}</Text>   ·   charges_enabled: {String(!!status.charges_enabled)}</Text>
+                {status.account_id ? <Text style={s.diagLine}>account: {status.account_id}</Text> : null}
+                {status.disabled_reason ? <Text style={[s.diagLine, { color: C.red }]}>disabled_reason: {status.disabled_reason}</Text> : null}
+                {status.currently_due && status.currently_due.length
+                  ? <Text style={[s.diagLine, { color: C.amber }]}>Stripe needs now: {status.currently_due.join(', ')}</Text>
+                  : <Text style={s.diagLine}>Nothing currently due (any listed items are future/threshold only).</Text>}
+              </View>
+            ) : null}
             {ready && (
               <TouchableOpacity style={s.ghost} onPress={setup} disabled={busy} activeOpacity={0.8}>
                 <Text style={s.ghostT}>Update payout details</Text>
@@ -90,4 +102,6 @@ const s = StyleSheet.create({
   ghostT: { color: C.indigo, fontWeight: '700', fontSize: 14 },
   err: { color: C.red, fontSize: 13, marginTop: 12, textAlign: 'center' },
   note: { fontSize: 11.5, color: C.mute2, textAlign: 'center', marginTop: 20, lineHeight: 16 },
+  diag: { marginTop: 16, padding: 12, borderRadius: R.md, backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, gap: 4 },
+  diagLine: { fontSize: 11.5, color: C.mute, lineHeight: 16 },
 });

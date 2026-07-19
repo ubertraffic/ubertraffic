@@ -35,11 +35,19 @@ Deno.serve(async (req) => {
     const a = await res.json();
     if (!res.ok) return json({ error: "stripe_error", detail: a?.error?.message }, 502);
 
+    // Diagnostic detail so the app (and support) can see WHY an account isn't ready instead of just a
+    // yes/no. currently_due/past_due = what Stripe needs NOW; disabled_reason = why payouts are off.
+    // future 'eventually_due' items (e.g. an ID doc at a volume threshold) do NOT block payouts today.
+    const req = (a.requirements || {}) as any;
     return json({
       onboarded: !!a.payouts_enabled,
       payouts_enabled: !!a.payouts_enabled,
       charges_enabled: !!a.charges_enabled,
       details_submitted: !!a.details_submitted,
+      account_id: acct,
+      disabled_reason: req.disabled_reason || null,
+      currently_due: req.currently_due || [],
+      past_due: req.past_due || [],
     });
   } catch (e) {
     return json({ error: "server_error", detail: (e as Error)?.message || String(e) }, 500);
