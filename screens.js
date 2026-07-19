@@ -1,6 +1,6 @@
 // screens.js — Operator screens extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable, AppState } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable, AppState, Linking } from 'react-native';
 import { C, R, S, E, M, T, Z } from './theme';
 import { SH, S_ } from './styles';
 import Icon, { iconForType } from './Icon';
@@ -62,7 +62,7 @@ function statusWords(s) {
 import { useRealtime } from './useRealtime';
 import { cacheGet, cacheSet, cacheClearAll } from './screenCache';
 import { setRole, setOnline, setVehicle, getMyProfile, updateMyName, setMyOperatorLocation, addCapability, listMyCapabilities, removeCapability, listMyDispatches, acceptSpot, listMyAssignments, getDemandHeat } from './operatorService';
-import { setMyIdentity } from './accountService';
+import { setMyIdentity, setMyAbn, verifyMyAbn, abnValid, normalizeAbn } from './accountService';
 import { formatDMY, dmyToISO } from './dateFormat';
 import { getPosition, watchPosition } from './location';
 import { getUnreadCounts } from './messagesService';
@@ -383,6 +383,93 @@ const PG = StyleSheet.create({
   laterT: { color: C.mute, fontWeight: '700', fontSize: 14 },
 });
 
+// AbnGateSheet — shown when a worker tries to earn without an ABN on file. To be paid as a contractor
+// in Australia you quote an ABN (it's free and usually instant from the ABR); without one, a payer must
+// withhold tax. This captures/validates the ABN inline (format + ABR checksum via setMyAbn) and links
+// to the free ABR registration. It does NOT decide the worker's legal classification — that (and the
+// final terms wording) is for the operator's lawyer; this just supports the contractor-ABN requirement.
+const ABR_APPLY_URL = 'https://www.abr.gov.au/business-super-funds-charities/applying-abn';
+function AbnGateSheet({ visible, onClose, onSaved }) {
+  const [abn, setAbn] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { if (visible) { setAbn(''); setErr(''); } }, [visible]);
+
+  const clean = normalizeAbn(abn);
+  const valid = abnValid(clean);
+
+  async function save() {
+    if (!valid) { setErr('An ABN is 11 digits and must pass the ABR check — double-check the number.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await setMyAbn(clean);
+      try { await verifyMyAbn(); } catch (_) { /* register verify is best-effort; format is saved */ }
+      tap('success'); onSaved && onSaved();
+    } catch (e) { setErr(e?.message || 'Could not save your ABN.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={AG.backdrop}>
+          <View style={AG.sheet}>
+            <View style={AG.grip} />
+            <View style={AG.iconWrap}><Icon name="verified" size={26} color={C.indigo} strokeWidth={2.2} /></View>
+            <Text style={AG.title}>Add your ABN to get paid</Text>
+            <Text style={AG.body}>
+              You work through SiteCall as your own independent business, so you need an ABN to be paid —
+              it’s free and usually issued instantly. Enter yours, or grab one from the ABR first.
+            </Text>
+
+            <TextInput
+              style={[AG.input, valid && { borderColor: C.green }]}
+              value={abn}
+              onChangeText={setAbn}
+              placeholder="11-digit ABN"
+              placeholderTextColor={C.mute2}
+              keyboardType="number-pad"
+              maxLength={14}
+              returnKeyType="done"
+            />
+            {!!err && <Text style={AG.err}>{err}</Text>}
+
+            <TouchableOpacity style={[AG.primary, (!valid || busy) && { opacity: 0.5 }]} disabled={!valid || busy} onPress={save} activeOpacity={0.9}>
+              <Text style={AG.primaryT}>{busy ? 'Saving…' : 'Save ABN'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={AG.link} onPress={() => Linking.openURL(ABR_APPLY_URL).catch(() => {})} activeOpacity={0.8}>
+              <Text style={AG.linkT}>Don’t have one? Get a free ABN at the ABR →</Text>
+            </TouchableOpacity>
+
+            <Text style={AG.disclaimer}>
+              As an independent contractor you’re responsible for your own tax and super. GST only applies
+              if you’re registered for it. (SiteCall’s full contractor terms apply.)
+            </Text>
+            <TouchableOpacity onPress={onClose} activeOpacity={0.8} style={AG.later}><Text style={AG.laterT}>Not now</Text></TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+const AG = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(10,10,16,0.55)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: C.canvas, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 30, alignItems: 'center' },
+  grip: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.line, marginBottom: 18 },
+  iconWrap: { width: 56, height: 56, borderRadius: 28, backgroundColor: C.indigoSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  title: { fontSize: 20, fontWeight: '900', letterSpacing: -0.4, color: C.ink, textAlign: 'center' },
+  body: { fontSize: 14, color: C.mute, lineHeight: 20, textAlign: 'center', marginTop: 10, paddingHorizontal: 4 },
+  input: { alignSelf: 'stretch', backgroundColor: C.panel, borderWidth: 1.5, borderColor: C.line, borderRadius: R.lg, paddingHorizontal: 16, paddingVertical: 15, fontSize: 18, fontWeight: '800', color: C.ink, letterSpacing: 1, textAlign: 'center', marginTop: 20 },
+  primary: { backgroundColor: C.indigo, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', alignSelf: 'stretch', marginTop: 14 },
+  primaryT: { color: '#fff', fontWeight: '800', fontSize: 15.5 },
+  link: { paddingVertical: 14, marginTop: 4 },
+  linkT: { color: C.indigo, fontWeight: '700', fontSize: 14, textAlign: 'center' },
+  err: { color: C.red, fontSize: 13, marginTop: 10, textAlign: 'center' },
+  disclaimer: { fontSize: 11.5, color: C.mute2, lineHeight: 16, textAlign: 'center', marginTop: 10, paddingHorizontal: 4 },
+  later: { paddingVertical: 12, marginTop: 4 },
+  laterT: { color: C.mute, fontWeight: '700', fontSize: 14 },
+});
+
 // WorkerMoment — a full-screen celebratory beat for the two key worker moments: "you got paid" (after
 // a job settles) and "you're on shift" (after arriving on site). One clear hero + one action, so the
 // flow always tells the worker what just happened and what to do next.
@@ -457,6 +544,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const [onlineSince, setOnlineSince] = useState(null);  // when this shift started (for the live timer)
   const [endShift, setEndShift] = useState(false);       // "Nice work" end-of-shift sheet visible
   const [payoutGate, setPayoutGate] = useState(false);   // "set up payouts before you can work" sheet (blocks go-online / accept)
+  const [abnGate, setAbnGate] = useState(false);         // "add your ABN before you earn" sheet (contractor tax requirement)
   const [ratePrompt, setRatePrompt] = useState(null);    // { assignmentId } — rate the CLIENT after payout
   const ratePromptedRef = useRef(new Set());             // assignment ids already prompted this session
   const rateSeededRef = useRef(false);                   // seed existing-approved so we only prompt on NEW payouts
@@ -596,6 +684,10 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   // land. So going online (and accepting) is blocked until Stripe payouts are enabled. Returns true if
   // ready, false if we opened the gate. Fails CLOSED (an unknown status blocks) — money safety first.
   async function ensurePayoutReady() {
+    // Contractor-tax gate FIRST: a worker earning on the platform is invoicing as a business, so they
+    // need an ABN on file before any paid work — otherwise (as a contractor with no ABN) tax must be
+    // withheld. Then the payout (bank) gate. Either missing → surface the right sheet and block.
+    if (!profile?.abn_status) { setAbnGate(true); tap('medium'); return false; }
     const ok = await payoutStatus().then((s) => !!s?.payouts_enabled).catch(() => false);
     if (!ok) { setPayoutGate(true); tap('medium'); return false; }
     return true;
@@ -1129,6 +1221,11 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
       visible={payoutGate}
       onClose={() => setPayoutGate(false)}
       onReady={() => { setPayoutGate(false); refresh(); }}
+    />
+    <AbnGateSheet
+      visible={abnGate}
+      onClose={() => setAbnGate(false)}
+      onSaved={() => { setAbnGate(false); refresh(); }}
     />
     <SkillDiscoverySheet skill={discSkill} excludeUserId={session.user.id} onClose={() => setDiscSkill(null)} onOpenProfile={onOpenProfile} />
     <CloseOutSheet
