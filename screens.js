@@ -527,7 +527,7 @@ const WM = StyleSheet.create({
   ctaT: { color: '#fff', fontWeight: '800', fontSize: 15.5 },
 });
 
-export function OperatorHome({ session, onOpenProfile, onScroll }) {
+export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, setupVersion }) {
   const [profile, setProfile] = useState(() => cacheGet('operator-profile'));   // instant paint, skips gate spinner
   const [loadFailed, setLoadFailed] = useState(false);  // profile load errored — show retry, not an endless spinner
   const [caps, setCaps] = useState(() => cacheGet('operator-caps') || []);
@@ -542,8 +542,6 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
   const [capsOpen, setCapsOpen] = useState(false);     // "What I supply" expanded to the full editor (collapsed by default — the home stays calm)
-  const [idName, setIdName] = useState('');            // onboarding identity: full legal name
-  const [idDob, setIdDob] = useState('');              // onboarding identity: date of birth (entered DD/MM/YYYY, stored ISO)
   const [readiness, setReadiness] = useState({});      // trade_id -> { ready, missing[] }
   const [myLoc, setMyLoc] = useState(null);            // operator's own location for the map
   const [opMapJobs, setOpMapJobs] = useState([]);      // operator's assigned job sites
@@ -627,9 +625,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['dispatches', 'assignments'], refresh);
-  // Pre-fill the legal-name field from the name they already gave at signup, so becoming an operator
-  // never feels like "type your name AGAIN". They only edit it if it differs from their licence.
-  useEffect(() => { if (profile?.full_name && !idName) setIdName(profile.full_name); }, [profile?.full_name]);
+  // When the unified setup flow finishes (Shell bumps setupVersion), re-read the profile so the
+  // home reflects the new operator/verified state immediately instead of the stale "not set up" view.
+  useEffect(() => { if (setupVersion) refresh(); }, [setupVersion, refresh]);
   // shift clock — starts when the worker goes online (kept if already online on load), clears offline.
   useEffect(() => {
     if (profile?.is_online) setOnlineSince((s) => s || Date.now());
@@ -663,16 +661,6 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     if (fresh && !shiftMoment) { shiftShownRef.current.add(fresh.id); tap('success'); setShiftMoment({ type: fresh.request_item?.type }); }
   }, [myAssigns, prestartNeeds]);
 
-  async function becomeOperator() {
-    // Capture identity first — the anchor a register check needs (Phase 2). Validated in setMyIdentity.
-    const name = (idName || '').trim();
-    if (name.length < 2) { setMsg('Enter your full legal name.'); return; }
-    const iso = dmyToISO(idDob);
-    if (!iso) { setMsg('Enter your date of birth as DD/MM/YYYY.'); return; }
-    setBusy(true); setMsg('');
-    try { await setMyIdentity(name, iso); await setRole('operator'); await addCapability('crew', 'Traffic control', 'traffic_controller'); await setVehicle('ute'); await refresh(); }
-    catch (e) { setMsg(friendly(e)); } finally { setBusy(false); }
-  }
   async function toggleOnline() {
     setBusy(true); setMsg('');
     try {
@@ -846,18 +834,23 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   }
 
   if (profile.role !== 'operator') {
+    // Not set up to work yet → hand off to the ONE unified setup flow (the checklist in Shell), the
+    // same one a fresh signup sees. No separate name/DOB form here anymore.
     return (
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
-        <Text style={T.eyebrow}>Start working</Text>
-        <Text style={[T.body, { marginTop: 8, marginBottom: 18 }]}>One last thing before you can receive jobs: confirm your legal name and date of birth so we can check your tickets against the registers.</Text>
-        <Text style={[T.label, { marginBottom: 6 }]}>Full legal name</Text>
-        <TextInput style={S_.input} value={idName} onChangeText={setIdName} placeholder="As it appears on your licence / White Card" placeholderTextColor={C.mute2} />
-        <Text style={[T.small, { color: C.mute, marginTop: 6 }]}>We’ve filled in the name you signed up with — edit it only if your licence shows a different name.</Text>
-        <Text style={[T.label, { marginBottom: 6, marginTop: 12 }]}>Date of birth</Text>
-        <TextInput style={S_.input} value={idDob} onChangeText={(t) => setIdDob(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
-        <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 18 }]}>Used only to check your tickets and licences against the registers — never shown publicly.</Text>
-        <PrimaryBtn label="Set me up to work" onPress={becomeOperator} busy={busy} />
-        {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1, justifyContent: 'center' }}>
+        <View style={{ alignItems: 'center' }}>
+          <View style={{ width: 60, height: 60, borderRadius: 18, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+            <Icon name="labourer" size={28} color="#fff" strokeWidth={2.2} />
+          </View>
+          <Text style={[T.heading, { fontSize: 22, textAlign: 'center' }]}>Get set up to work</Text>
+          <Text style={[T.body, { color: C.mute, textAlign: 'center', marginTop: 10, marginBottom: 24, paddingHorizontal: 8 }]}>
+            A couple of quick steps — your details, your White Card, and your payouts — and you’ll start seeing jobs near you.
+          </Text>
+          <View style={{ alignSelf: 'stretch' }}>
+            <PrimaryBtn label="Finish setup" onPress={() => onOpenSetup && onOpenSetup()} />
+          </View>
+        </View>
+        {!!msg && <Text style={[S_.msg, { textAlign: 'center' }]}>{msg}</Text>}
       </ScrollView>
     );
   }

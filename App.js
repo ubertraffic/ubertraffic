@@ -16,7 +16,8 @@ import {
   addCapability, listMyCapabilities, removeCapability,
   listMyDispatches, acceptSpot, listMyAssignments,
 } from './operatorService';
-import { submitCredential, submitBusinessAbn } from './accountService';
+import { submitCredential, submitBusinessAbn, setMyIdentity } from './accountService';
+import { formatDMY, dmyToISO } from './dateFormat';
 import { getUnreadCounts } from './messagesService';
 import { cacheGet, cacheSet, cacheBindUser, cacheClearAll } from './screenCache';
 import JobChat from './JobChat';
@@ -392,11 +393,19 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
   // "I'll finish later". Either one retires the checklist for this session.
   const [setupDone, setSetupDone] = useState(false);
   const [exploring, setExploring] = useState(false);
+  const [setupManual, setSetupManual] = useState(null);   // a side to (re)open setup for, from a home prompt
+  const [setupVersion, setSetupVersion] = useState(0);    // bumped when setup finishes → homes refetch
   // Steps the user has ACTED on this session, so the checklist reflects the action immediately even
   // before the (admin-approved) profile fields catch up. e.g. { verify: true, name: true }.
   const [setupSubmitted, setSetupSubmitted] = useState({});
   const markSubmitted = (key) => setSetupSubmitted((s) => ({ ...s, [key]: true }));
-  const showSetup = !!firstRunSide && !!acct && !setupDone && !exploring;
+  // The ONE onboarding surface. Auto-opens right after signup (firstRunSide); can also be re-opened
+  // from a home's "finish setup" prompt (setupManual). This is what replaced the old, separate
+  // "Start working" form — there is now a single setup flow for each side.
+  const setupSide = firstRunSide || setupManual;
+  const showSetup = !!setupSide && !!acct && !setupDone && !exploring;
+  const openSetup = (side) => { setSetupSubmitted({}); setSetupDone(false); setExploring(false); setSetupManual(side); };
+  const finishSetup = () => { setSetupDone(true); setSetupVersion((v) => v + 1); loadName(); };
 
   const loadName = useCallback(async () => {
     try {
@@ -455,7 +464,8 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
             <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
           </View>
           <View style={[S_.homeLayer, role !== 'operator' && S_.homeHidden]} pointerEvents={role === 'operator' ? 'auto' : 'none'}>
-            <OperatorHome session={session} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
+            <OperatorHome session={session} onOpenProfile={setProfileId} onScroll={onHomeScroll}
+              onOpenSetup={() => openSetup('work')} setupVersion={setupVersion} />
           </View>
         </View>
         {/* OVERLAY TABS — cross-fade + subtle slide over the map. Kept mounted through the fade-out. */}
@@ -485,14 +495,14 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
       {showSetup && (
         <View style={StyleSheet.absoluteFill}>
           <SetupChecklist
-            side={firstRunSide}
+            side={setupSide}
             acct={acct}
             submitted={setupSubmitted}
             onSubmitted={markSubmitted}
             onOpenGate={(side) => setGate({ side })}
             onRefresh={loadName}
-            onExplore={() => setExploring(true)}
-            onComplete={() => setSetupDone(true)}
+            onExplore={() => { setExploring(true); setSetupManual(null); }}
+            onComplete={() => { finishSetup(); setSetupManual(null); }}
           />
         </View>
       )}
@@ -599,10 +609,16 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
   const [payoutBusy, setPayoutBusy] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(acct?.full_name || '');
+  const [dobVal, setDobVal] = useState('');       // work side only: DD/MM/YYYY (identity for register checks)
+  const [nameErr, setNameErr] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [pulse, setPulse] = useState(null);
 
-  const hasName = !!(acct?.full_name && acct.full_name.trim()) || !!sub.name;
+  // Work "details" = name + DOB + becoming an operator (role flips to 'operator', which persists), so
+  // the app never asks for the name/DOB a second time. Hire "details" = just a display name.
+  const hasName = isHire
+    ? (!!(acct?.full_name && acct.full_name.trim()) || !!sub.name)
+    : (acct?.role === 'operator' || !!sub.name);
   const verified = isHire ? !!acct?.can_hire : !!(acct?.can_work || acct?.can_task);
   // "Under review" = the profile says pending OR they just submitted it this session (the profile
   // field only flips once an admin/register approves, so we can't wait for it to show progress).
@@ -624,10 +640,24 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
 
   async function saveName() {
     const n = nameVal.trim();
-    if (n.length < 2) return;
+    setNameErr('');
+    if (n.length < 2) { setNameErr('Enter your full name.'); return; }
     setSavingName(true);
-    try { await updateMyName(n); onSubmitted && onSubmitted('name'); setEditingName(false); onRefresh && (await onRefresh()); }
-    catch (_) {} finally { setSavingName(false); }
+    try {
+      if (isHire) {
+        await updateMyName(n);
+      } else {
+        // Work side: this is the ONE identity step. Capture legal name + DOB (for register checks) and
+        // become an operator in a single save — replaces the old separate "Start working" form.
+        const iso = dmyToISO(dobVal);
+        if (!iso) { setNameErr('Enter your date of birth as DD/MM/YYYY.'); setSavingName(false); return; }
+        await setMyIdentity(n, iso);   // sets legal_name + DOB, seeds full_name if empty
+        await updateMyName(n);         // ensure the display name is set too
+        await setRole('operator');     // they are now a worker — this persists, so no re-ask later
+      }
+      onSubmitted && onSubmitted('name'); setEditingName(false); onRefresh && (await onRefresh());
+    } catch (e) { setNameErr(friendly ? friendly(e) : (e.message || 'Could not save.')); }
+    finally { setSavingName(false); }
   }
   async function startPayout() {
     setPayoutBusy(true);
@@ -638,8 +668,8 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
   const steps = [];
   steps.push({
     key: 'name',
-    title: isHire ? 'Your name or business' : 'Your name',
-    sub: isHire ? 'Shown to the workers you hire' : 'So clients know who to expect on site',
+    title: isHire ? 'Your name or business' : 'Your details',
+    sub: isHire ? 'Shown to the workers you hire' : 'Name + date of birth — so we can check your tickets',
     state: hasName ? 'done' : 'todo',
   });
   steps.push({
@@ -742,18 +772,26 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
                   {s.state === 'review' && <View style={S_.setPill}><Text style={S_.setPillT}>Reviewing</Text></View>}
                 </PressableScale>
 
-                {/* inline name editor */}
+                {/* inline details editor — name (both sides) + DOB (work side, for register checks) */}
                 {isName && editingName && (
                   <View style={S_.setInline}>
                     <TextInput style={S_.setInput} value={nameVal} onChangeText={setNameVal}
-                      placeholder="e.g. Sam Rivers" placeholderTextColor={C.mute2}
+                      placeholder={isHire ? 'Your name or business' : 'Full name, as on your licence'} placeholderTextColor={C.mute2}
                       autoFocus autoCapitalize="words" editable={!savingName} />
+                    {!isHire && (
+                      <TextInput style={[S_.setInput, { marginTop: 10 }]} value={dobVal}
+                        onChangeText={(t) => setDobVal(formatDMY(t))}
+                        placeholder="Date of birth — DD/MM/YYYY" placeholderTextColor={C.mute2}
+                        keyboardType="number-pad" editable={!savingName} />
+                    )}
+                    {!isHire && <Text style={S_.setInlineHint}>Used only to check your tickets against the registers — never shown publicly.</Text>}
+                    {!!nameErr && <Text style={S_.setInlineErr}>{nameErr}</Text>}
                     <View style={S_.setInlineBtns}>
-                      <TouchableOpacity onPress={() => setEditingName(false)} style={S_.setInlineCancel}>
+                      <TouchableOpacity onPress={() => { setEditingName(false); setNameErr(''); }} style={S_.setInlineCancel}>
                         <Text style={S_.setInlineCancelT}>Cancel</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={saveName} disabled={savingName || nameVal.trim().length < 2}
-                        style={[S_.setInlineSave, (savingName || nameVal.trim().length < 2) && { opacity: 0.5 }]}>
+                      <TouchableOpacity onPress={saveName} disabled={savingName}
+                        style={[S_.setInlineSave, savingName && { opacity: 0.5 }]}>
                         <Text style={S_.setInlineSaveT}>{savingName ? 'Saving…' : 'Save'}</Text>
                       </TouchableOpacity>
                     </View>

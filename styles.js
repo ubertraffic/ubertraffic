@@ -228,6 +228,8 @@ export const S_ = StyleSheet.create({
   setPillT: { fontSize: 11.5, fontWeight: '800', color: C.amber },
   setInline: { backgroundColor: C.panel, borderRadius: R.xl, padding: 16, marginTop: -4 },
   setInput: { backgroundColor: C.canvas, borderColor: C.line, borderWidth: 1, borderRadius: R.md, color: C.ink, fontSize: 16, paddingHorizontal: 14, paddingVertical: 13 },
+  setInlineHint: { fontSize: 12, color: C.mute, lineHeight: 17, marginTop: 8 },
+  setInlineErr: { fontSize: 13, color: C.red, fontWeight: '600', marginTop: 10 },
   setInlineBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 12 },
   setInlineCancel: { paddingHorizontal: 16, paddingVertical: 11 },
   setInlineCancelT: { fontSize: 14, fontWeight: '700', color: C.mute },
