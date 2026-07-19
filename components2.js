@@ -6,6 +6,7 @@ import { S_ } from './styles';
 import Icon, { iconForType } from './Icon';
 import { repLine, requestHasStall, autoReleaseIn, friendly, suburbOf, EmptyState } from './components';
 import { searchAddress } from './geocodeService';
+import { useCountUp } from './Motion';
 
 export function RateCard({ it, onChange }) {
   const [floor, lo, hi] = RATES[it.type] || [45, 55, 85];
@@ -193,6 +194,17 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
     const h = dt.getHours(); const hr = h % 12 || 12; const ap = h < 12 ? 'am' : 'pm';
     return `${day} ${hr}${ap}`;
   })() : null;
+
+  // Who they'd work for + the money perks — the trust + dopamine pieces.
+  const card = d.client_card;
+  const cardRated = card && card.rating_count > 0;
+  const travel = r?.travel_cents ? Math.round(r.travel_cents / 100) : 0;
+  const materials = r?.materials_cap ? Math.round(Number(r.materials_cap)) : 0;
+  // Count the estimated total UP from 0 on appear — a small hit of "look how much you'll make".
+  const [countTarget, setCountTarget] = useState(0);
+  useEffect(() => { setCountTarget(estTotal || 0); }, [estTotal]);
+  const shownTotal = useCountUp(countTarget);
+
   return (
     <Animated.View style={[cardStyle, { marginBottom: 14 }]}>
       <View style={jc.card}>
@@ -210,23 +222,36 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
               <Icon name="pin" size={12} color={C.mute} strokeWidth={2.2} />
               <Text style={jc.where} numberOfLines={1}>{suburbOf(r?.address_text) || 'Nearby'}</Text>
             </View>
-            {/* who you'd work for — so the worker never accepts blind */}
-            {(() => {
-              const rep = d.client_rep;
-              const rated = rep && rep.client_rating_count > 0;
-              return (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                  <Icon name="star" size={11} color={rated ? C.amber : C.mute2} strokeWidth={2.2} fill={rated ? C.amber : 'none'} />
-                  <Text style={{ fontSize: 11.5, color: C.mute, fontWeight: '700' }}>
-                    {rated ? `${Number(rep.client_rating).toFixed(1)} · ${rep.client_rating_count} job${rep.client_rating_count === 1 ? '' : 's'} posted` : 'New client'}
-                  </Text>
-                </View>
-              );
-            })()}
           </View>
           <View style={[jc.badge, { backgroundColor: urgent ? 'rgba(245,158,11,0.14)' : C.panel2 }]}>
             <Text style={[jc.badgeT, { color: urgent ? C.amber : C.mute }]}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
           </View>
+        </View>
+
+        {/* WHO you'd work for — verified badge + business/name + rating, so no one accepts blind */}
+        <View style={jc.client}>
+          <View style={[jc.clientAv, card?.verified && { backgroundColor: C.indigo }]}>
+            {card?.verified
+              ? <Icon name="verified" size={16} color="#fff" strokeWidth={2.2} />
+              : <Text style={jc.clientAvT}>{(card?.display_name || 'C').charAt(0).toUpperCase()}</Text>}
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={jc.clientName} numberOfLines={1}>{card?.display_name || 'A local client'}</Text>
+              {card?.verified && <View style={jc.vChip}><Text style={jc.vChipT}>Verified</Text></View>}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+              <Icon name="star" size={11} color={cardRated ? C.amber : C.mute2} strokeWidth={2.2} fill={cardRated ? C.amber : 'none'} />
+              <Text style={jc.clientRep}>{cardRated ? `${Number(card.rating).toFixed(1)} · ${card.rating_count} job${card.rating_count === 1 ? '' : 's'} posted` : 'New to SiteCall'}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* PERKS — the dopamine chips: guaranteed pay + any bonus money on top */}
+        <View style={jc.perks}>
+          <View style={jc.perk}><Text style={jc.perkT}>🔒 Pay secured</Text></View>
+          {travel > 0 && <View style={[jc.perk, jc.perkGreen]}><Text style={[jc.perkT, jc.perkTGreen]}>＋${travel} travel · 100% yours</Text></View>}
+          {materials > 0 && <View style={jc.perk}><Text style={jc.perkT}>Materials covered to ${materials}</Text></View>}
         </View>
 
         {/* what they'll be doing — the trust piece */}
@@ -243,7 +268,9 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
             <View>
               <Text style={jc.payLabel}>You earn</Text>
               <Text style={jc.payBig}>${rate}<Text style={jc.payUnit}>{isJobPrice ? '/job' : '/hr'}</Text></Text>
-              {estTotal != null && <Text style={jc.payEst}>≈ ${estTotal} · {hours} hrs</Text>}
+              {estTotal != null
+                ? <Text style={jc.payEst}>≈ ${shownTotal.toLocaleString()} for the {hours}h job</Text>
+                : isJobPrice ? <Text style={jc.payEst}>fixed price · paid on completion</Text> : null}
             </View>
             {left > 0 && multi && (
               <View style={jc.spots}>
@@ -297,6 +324,18 @@ const jc = StyleSheet.create({
   where: { fontSize: 13, color: C.mute, fontWeight: '600' },
   badge: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
   badgeT: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.2 },
+  client: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, backgroundColor: C.panel2, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10 },
+  clientAv: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.mute2, alignItems: 'center', justifyContent: 'center' },
+  clientAvT: { color: '#fff', fontWeight: '900', fontSize: 14 },
+  clientName: { fontSize: 14, fontWeight: '800', color: C.ink, flexShrink: 1 },
+  clientRep: { fontSize: 11.5, color: C.mute, fontWeight: '700' },
+  vChip: { backgroundColor: C.indigoSoft, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  vChipT: { fontSize: 10, fontWeight: '900', color: C.indigo, letterSpacing: 0.2 },
+  perks: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 12 },
+  perk: { backgroundColor: C.panel2, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6 },
+  perkT: { fontSize: 11.5, fontWeight: '800', color: C.ink2 || C.ink },
+  perkGreen: { backgroundColor: C.greenSoft },
+  perkTGreen: { color: C.green },
   bio: { fontSize: 13.5, color: C.ink2 || C.ink, lineHeight: 19, fontWeight: '500' },
   bioMore: { fontSize: 12.5, fontWeight: '800', marginTop: 4 },
   payRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.line },

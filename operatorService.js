@@ -136,7 +136,7 @@ export async function listMyDispatches() {
       id, status,
       request_item:request_items (
         id, kind, type, qty, hire, rate, rate_offered, price_mode,
-        request:requests ( id, address_text, when_type, duration_hours, scheduled_at, job_details, client_id )
+        request:requests ( id, address_text, when_type, duration_hours, scheduled_at, job_details, client_id, travel_cents, materials_cap )
       )
     `)
     .eq('operator_id', u.user.id)
@@ -168,18 +168,19 @@ export async function listMyDispatches() {
     return { ...d, taken, mine_accepted };
   }));
 
-  // Attach the client's reputation (deduped, one RPC per unique client) so the worker can see who
-  // they'd be working for BEFORE they accept — trust matters most in an accept-first model.
+  // Attach the client "card" (deduped, one RPC per unique client): who they are, whether they're a
+  // verified business, and their rating from workers — so the worker sees who they'd work for BEFORE
+  // accepting. Trust matters most in an accept-first model.
   const clientIds = [...new Set(withCounts.map((d) => d.request_item?.request?.client_id).filter(Boolean))];
-  const repByClient = {};
+  const cardByClient = {};
   await Promise.all(clientIds.map(async (cid) => {
     try {
-      const { data: rep } = await supabase.rpc('get_client_reputation', { p_user_id: cid });
-      const row = Array.isArray(rep) ? rep[0] : rep;
-      if (row) repByClient[cid] = row;
-    } catch (_) { /* reputation is best-effort — never block the feed */ }
+      const { data: card } = await supabase.rpc('get_client_card', { p_user_id: cid });
+      const row = Array.isArray(card) ? card[0] : card;
+      if (row) cardByClient[cid] = row;
+    } catch (_) { /* best-effort — never block the feed */ }
   }));
-  return withCounts.map((d) => ({ ...d, client_rep: repByClient[d.request_item?.request?.client_id] || null }));
+  return withCounts.map((d) => ({ ...d, client_card: cardByClient[d.request_item?.request?.client_id] || null }));
 }
 
 /** Accept a spot — fires the atomic accept-lock RPC. Returns the assignment. */
