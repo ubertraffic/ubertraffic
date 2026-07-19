@@ -66,7 +66,7 @@ export function RateCard({ it, onChange }) {
 //   'active'  — on a job → the feed RECEDES to one quiet line; the job's tracker dominates (Law 1).
 //   'find'    — online + free → the feed LEADS with a bold header + live count (Laws 1,2,13).
 //   'offline' — not online → jobs hidden; the online toggle is the mission.
-export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpandedBios, onAccept, onPass, onDismissDone }) {
+export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpandedBios, onAccept, onPass, onDismissDone, myLoc }) {
   const nearCount = (jobs || []).filter((d) => !passed.has(d.request_item?.id)).length;
 
   // WORKING: the worker is physically on site. Strip everything — the feed disappears entirely so
@@ -139,6 +139,7 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
             d={d}
             index={i}
             busyId={busyId}
+            myLoc={myLoc}
             expanded={!!expandedBios[d.id]}
             onToggleBio={() => setExpandedBios((p) => ({ ...p, [d.id]: !p[d.id] }))}
             onAccept={onAccept}
@@ -153,6 +154,21 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
 // mission-keyed Work-home render stays readable as the spine grows (CLAUDE.md §2). Pure presentation
 // + callbacks; all decision facts a worker needs in ~2 seconds (Constitution Law 3): urgency, spots,
 // trade, location, the duties brief, pay + estimate.
+// Straight-line distance (km) between two lat/lng points — haversine. Null if either point is missing.
+function distanceKm(aLat, aLng, bLat, bLng) {
+  if (![aLat, aLng, bLat, bLng].every((n) => Number.isFinite(n))) return null;
+  const R = 6371, toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+function distanceLabel(km) {
+  if (km == null) return null;
+  if (km < 1) return `${Math.round(km * 10) * 100} m away`;   // 0.3 km -> "300 m away"
+  if (km < 10) return `${km.toFixed(1)} km away`;
+  return `${Math.round(km)} km away`;
+}
+
 // "posted 4 min ago" — freshness signal (real, from the request's created_at).
 function agoLabel(iso) {
   if (!iso) return null;
@@ -166,7 +182,7 @@ function agoLabel(iso) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, onAccept, onPass }) {
+export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onToggleBio, onAccept, onPass }) {
   const it = d.request_item; const r = it?.request;
   const qty = it?.qty || 1;
   const taken = d.taken || 0;
@@ -214,6 +230,7 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
   const travel = r?.travel_cents ? Math.round(r.travel_cents / 100) : 0;
   const materials = r?.materials_cap ? Math.round(Number(r.materials_cap)) : 0;
   const posted = agoLabel(r?.created_at);
+  const dist = (myLoc && r?.lat != null && r?.lng != null) ? distanceLabel(distanceKm(myLoc.lat, myLoc.lng, Number(r.lat), Number(r.lng))) : null;
   // Count the estimated total UP from 0 on appear — a small hit of "look how much you'll make".
   const [countTarget, setCountTarget] = useState(0);
   useEffect(() => { setCountTarget(estTotal || 0); }, [estTotal]);
@@ -236,6 +253,7 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
               <Icon name="pin" size={12} color={C.mute} strokeWidth={2.2} />
               <Text style={jc.where} numberOfLines={1}>
                 {suburbOf(r?.address_text) || 'Nearby'}
+                {dist ? <Text style={jc.dist}>{`  ·  ${dist}`}</Text> : null}
                 {posted ? <Text style={jc.posted}>{`  ·  ${posted}`}</Text> : null}
               </Text>
             </View>
@@ -340,6 +358,7 @@ const jc = StyleSheet.create({
   trade: { fontSize: 17.5, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
   where: { fontSize: 13, color: C.mute, fontWeight: '600' },
   posted: { fontSize: 12, color: C.mute2, fontWeight: '700' },
+  dist: { fontSize: 12.5, color: C.green, fontWeight: '800' },
   badge: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
   badgeT: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.2 },
   client: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, backgroundColor: C.panel2, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10 },

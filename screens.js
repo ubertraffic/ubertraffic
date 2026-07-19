@@ -988,7 +988,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
                 </Text>
               </>
             )}
-            <WorkFeed mission={mission} jobs={jobs} passed={passed} busyId={busyId} expandedBios={expandedBios} setExpandedBios={setExpandedBios} onAccept={accept} onPass={pass} onDismissDone={() => {}} />
+            <WorkFeed mission={mission} jobs={jobs} passed={passed} busyId={busyId} myLoc={myLoc} expandedBios={expandedBios} setExpandedBios={setExpandedBios} onAccept={accept} onPass={pass} onDismissDone={() => {}} />
             {!!msg && <Text style={msg[0] === '✓' ? S_.successText : S_.msg}>{msg}</Text>}
             {/* what I supply — with readiness, so a worker who gets no jobs learns WHY (tickets) */}
             {(() => {
@@ -1136,6 +1136,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
           jobs={jobs}
           passed={passed}
           busyId={busyId}
+          myLoc={myLoc}
           expandedBios={expandedBios}
           setExpandedBios={setExpandedBios}
           onAccept={accept}

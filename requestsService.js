@@ -40,6 +40,10 @@ export async function createRequest({ when_type, address_text, lat, lng, duratio
       client_id: uid,
       when_type,
       address_text: address_text.trim(),
+      // plain site coords for the worker feed's distance calc (the precise geofence copy is written
+      // separately by set_request_location below). Null when the address wasn't geocoded.
+      lat: (lat != null && Number.isFinite(Number(lat))) ? Number(lat) : null,
+      lng: (lng != null && Number.isFinite(Number(lng))) ? Number(lng) : null,
       duration_hours,
       scheduled_at: when_type === 'scheduled' ? scheduled_for : null,
       site_contact_name: contactName,
