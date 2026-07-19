@@ -383,6 +383,46 @@ const PG = StyleSheet.create({
   laterT: { color: C.mute, fontWeight: '700', fontSize: 14 },
 });
 
+// WorkerMoment — a full-screen celebratory beat for the two key worker moments: "you got paid" (after
+// a job settles) and "you're on shift" (after arriving on site). One clear hero + one action, so the
+// flow always tells the worker what just happened and what to do next.
+function WorkerMoment({ visible, kind, title, big, sub, cta, onClose }) {
+  const pop = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!visible) return;
+    pop.setValue(0);
+    Animated.spring(pop, { toValue: 1, friction: 6, tension: 90, useNativeDriver: true }).start();
+  }, [visible]);
+  const accent = kind === 'paid' ? C.green : C.green;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={WM.scrim}>
+        <Animated.View style={[WM.card, { transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }], opacity: pop }]}>
+          <View style={[WM.badge, { backgroundColor: accent + '1A' }]}>
+            <Icon name={kind === 'paid' ? 'payment' : 'verified'} size={30} color={accent} strokeWidth={2.2} />
+          </View>
+          <Text style={WM.title}>{title}</Text>
+          {!!big && <Text style={[WM.big, kind === 'paid' && { color: accent }]}>{big}</Text>}
+          {!!sub && <Text style={WM.sub}>{sub}</Text>}
+          <TouchableOpacity style={[WM.cta, { backgroundColor: accent }]} onPress={onClose} activeOpacity={0.9}>
+            <Text style={WM.ctaT}>{cta}</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+const WM = StyleSheet.create({
+  scrim: { flex: 1, backgroundColor: 'rgba(10,12,16,0.62)', alignItems: 'center', justifyContent: 'center', padding: 28 },
+  card: { backgroundColor: C.canvas, borderRadius: 26, paddingHorizontal: 26, paddingTop: 30, paddingBottom: 24, alignItems: 'center', alignSelf: 'stretch', maxWidth: 400 },
+  badge: { width: 66, height: 66, borderRadius: 33, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  title: { fontSize: 15, fontWeight: '800', color: C.mute, letterSpacing: 0.3, textTransform: 'uppercase' },
+  big: { fontSize: 40, fontWeight: '900', color: C.ink, letterSpacing: -1, marginTop: 8, textAlign: 'center' },
+  sub: { fontSize: 14, color: C.mute, lineHeight: 20, textAlign: 'center', marginTop: 10, paddingHorizontal: 6 },
+  cta: { borderRadius: 16, paddingVertical: 15, alignItems: 'center', alignSelf: 'stretch', marginTop: 22 },
+  ctaT: { color: '#fff', fontWeight: '800', fontSize: 15.5 },
+});
+
 export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const [profile, setProfile] = useState(() => cacheGet('operator-profile'));   // instant paint, skips gate spinner
   const [loadFailed, setLoadFailed] = useState(false);  // profile load errored — show retry, not an endless spinner
@@ -421,6 +461,10 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const ratePromptedRef = useRef(new Set());             // assignment ids already prompted this session
   const rateSeededRef = useRef(false);                   // seed existing-approved so we only prompt on NEW payouts
   const assignsLoadedRef = useRef(false);                // true once listMyAssignments has actually returned — the initial [] is NOT a load
+  const [paidMoment, setPaidMoment] = useState(null);    // { amount, type } — "you got paid" celebration before the rating
+  const [shiftMoment, setShiftMoment] = useState(null);  // { type } — "you're on shift, stay safe" after arrival
+  const shiftShownRef = useRef(new Set());               // assignment ids we've shown the shift-start moment for
+  const shiftSeededRef = useRef(false);
   // Live location — follow the worker as they move (real GPS on Expo Go via
   // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
   // to DEV_LOCATION when real GPS isn't available. stop() cleans up on unmount.
@@ -493,8 +537,23 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     const approved = myAssigns.filter((a) => a.status === 'approved');
     if (!rateSeededRef.current) { approved.forEach((a) => ratePromptedRef.current.add(a.id)); rateSeededRef.current = true; return; }
     const fresh = approved.find((a) => !ratePromptedRef.current.has(a.id));
-    if (fresh && !ratePrompt) { ratePromptedRef.current.add(fresh.id); setRatePrompt({ assignmentId: fresh.id }); }
+    // Lead with the PAID moment ("you earned $X — paid to your bank"); the rating follows when they
+    // dismiss it. This is the payoff the worker was missing — completing used to jump straight to a rating.
+    if (fresh && !paidMoment && !ratePrompt) {
+      ratePromptedRef.current.add(fresh.id);
+      setPaidMoment({ assignmentId: fresh.id, amount: Number(fresh.net_amount) || 0, type: fresh.request_item?.type });
+    }
   }, [myAssigns]);
+  // "You're on shift" — a calm hero the moment a job goes on-site (and no prestart is still pending),
+  // so it's unmistakable the shift is ACTIVE: put the phone down, stay safe. Removes the confusion of
+  // landing straight on a "Complete job" button.
+  useEffect(() => {
+    if (!myAssigns || !assignsLoadedRef.current) return;
+    const onSite = myAssigns.filter((a) => a.status === 'on_site' && !(prestartNeeds || []).includes(a.id));
+    if (!shiftSeededRef.current) { onSite.forEach((a) => shiftShownRef.current.add(a.id)); shiftSeededRef.current = true; return; }
+    const fresh = onSite.find((a) => !shiftShownRef.current.has(a.id));
+    if (fresh && !shiftMoment) { shiftShownRef.current.add(fresh.id); tap('success'); setShiftMoment({ type: fresh.request_item?.type }); }
+  }, [myAssigns, prestartNeeds]);
 
   async function becomeOperator() {
     // Capture identity first — the anchor a register check needs (Phase 2). Validated in setMyIdentity.
@@ -540,6 +599,13 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     const ok = await payoutStatus().then((s) => !!s?.payouts_enabled).catch(() => false);
     if (!ok) { setPayoutGate(true); tap('medium'); return false; }
     return true;
+  }
+  // Going offline is BLOCKED while a job is live — a worker who's committed/travelling/on site must
+  // finish (or withdraw) first, so they can't vanish mid-shift and strand a client.
+  function handleGoOffline() {
+    const onJob = (myAssigns || []).some((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status));
+    if (onJob) { tap('medium'); setMsg("You're on a job — finish it (or withdraw) before going offline."); return; }
+    setEndShift(true);
   }
   // Going online with the payoff — a green colour-flood blooms from the orb as the map ignites.
   async function goLive() {
@@ -753,9 +819,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           {/* control PINNED above the scroll — orb centres itself; the online pill stretches wide.
               Pinning it (not inside the scroll) keeps a press-and-hold from being stolen by scrolling. */}
           <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
-            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={() => setEndShift(true)} earningsToday={opEarn.today} onlineSince={onlineSince} />
+            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={handleGoOffline} earningsToday={opEarn.today} onlineSince={onlineSince} />
           </View>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 150 }} showsVerticalScrollIndicator={false}>
             {/* earnings — the worker's emotional anchor (wired to real totals in a later pass) */}
             <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
               <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
@@ -883,9 +949,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
         {/* floating green sheet — carries the online pill + the live job & actions */}
         <View style={{ position: 'absolute', left: 0, right: 0, top: '40%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
           <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
-            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={() => setEndShift(true)} earningsToday={opEarn.today} onlineSince={onlineSince} />
+            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={handleGoOffline} earningsToday={opEarn.today} onlineSince={onlineSince} />
           </View>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 150 }} showsVerticalScrollIndicator={false}>
       {/* Operator's live tracker — the SAME confidence experience, worker's lens. */}
       {(() => {
         const act = (myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status));
@@ -1039,6 +1105,24 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
       rateeName="the client"
       rateeIsWorker={false}
       onClose={() => setRatePrompt(null)}
+    />
+    <WorkerMoment
+      visible={!!paidMoment}
+      kind="paid"
+      title="You got paid"
+      big={paidMoment ? `$${(Number(paidMoment.amount) || 0).toLocaleString()}` : ''}
+      sub={`${paidMoment?.type || 'Job'} · sent to your bank`}
+      cta="Rate the client"
+      onClose={() => { const m = paidMoment; setPaidMoment(null); if (m?.assignmentId) setRatePrompt({ assignmentId: m.assignmentId }); }}
+    />
+    <WorkerMoment
+      visible={!!shiftMoment}
+      kind="shift"
+      title="You're on shift"
+      big="Have a good one"
+      sub={`${shiftMoment?.type || 'Your job'} · you're clocked on. Put the phone away, stay safe — tap Complete when the job's done.`}
+      cta="Let's go"
+      onClose={() => setShiftMoment(null)}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
     <PayoutGateSheet

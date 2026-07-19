@@ -9,6 +9,7 @@ import { C, R, shadowSm } from './theme';
 import Icon from './Icon';
 import { getPublicProfile, updateMyProfileBio, getReputationExtras, getClientReputation } from './accountService';
 import { workersWithSkill } from './communityService';
+import { tap } from './components2';
 
 const TRADE_CAP = 6;   // show a focused set; a legit tradie has a handful, not fifty
 
@@ -77,6 +78,7 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   }, [visible, viewUserId]);
 
   function openSkill(skill) {
+    tap('light');
     setDisc({ skill }); setDiscList(null);
     workersWithSkill(skill, viewUserId).then((rows) => setDiscList(rows)).catch(() => setDiscList([]));
   }
@@ -372,6 +374,9 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
                 </TouchableOpacity>
               </View>
               <Text style={styles.discSub}>Verified workers who do this</Text>
+              {/* Stable min-height so the sheet doesn't jump taller when the list loads in after the
+                  slide-up — that resize was the flimsy feel. Loading, empty and short lists open at one size. */}
+              <View style={{ minHeight: 200 }}>
               {discList == null ? (
                 <View style={{ paddingVertical: 30 }}><ActivityIndicator color={C.indigo} /></View>
               ) : discList.length === 0 ? (
@@ -394,6 +399,7 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
                   ))}
                 </ScrollView>
               )}
+              </View>
             </View>
           </View>
         </Modal>
