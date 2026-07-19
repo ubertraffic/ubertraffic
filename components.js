@@ -444,11 +444,12 @@ export function VouchCrewCard({ requestId }) {
 
 // SlidingText — a restrained marquee. If the text overflows its container, it
 // gently slides to reveal the rest, pauses, and eases back. Static if it fits.
-export function SlidingText({ text, style }) {
+export function SlidingText({ text, children, style }) {
   const [boxW, setBoxW] = useState(0);
   const [textW, setTextW] = useState(0);
   const x = useRef(new Animated.Value(0)).current;
   const overflow = textW > boxW && boxW > 0;
+  const content = children != null ? children : text;   // supports plain text OR rich nested <Text> spans
 
   useEffect(() => {
     x.stopAnimation();
@@ -471,10 +472,12 @@ export function SlidingText({ text, style }) {
       <Text
         style={[style, { position: 'absolute', opacity: 0 }]}
         onLayout={(e) => setTextW(e.nativeEvent.layout.width)}
-      >{text}</Text>
+        numberOfLines={1}
+      >{content}</Text>
       <Animated.Text
         style={[style, { transform: [{ translateX: x }] }]}
-      >{text}</Animated.Text>
+        numberOfLines={1}
+      >{content}</Animated.Text>
     </View>
   );
 }

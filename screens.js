@@ -649,6 +649,13 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['dispatches', 'assignments'], refresh);
+  // Self-heal: while online, re-pull the feed every 12s so a job can never quietly stay gone if a
+  // realtime event was missed or a dispatch was (re)created server-side. Belt-and-braces on realtime.
+  useEffect(() => {
+    if (!profile?.is_online) return;
+    const t = setInterval(() => { refresh(); }, 12000);
+    return () => clearInterval(t);
+  }, [profile?.is_online, refresh]);
   const onPull = useCallback(async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }, [refresh]);
   // When the unified setup flow finishes (Shell bumps setupVersion), re-read the profile so the
   // home reflects the new operator/verified state immediately instead of the stale "not set up" view.

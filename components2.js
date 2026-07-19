@@ -4,7 +4,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator,
 import { C, R, S, E, M, T } from './theme';
 import { S_ } from './styles';
 import Icon, { iconForType } from './Icon';
-import { repLine, requestHasStall, autoReleaseIn, friendly, suburbOf, EmptyState } from './components';
+import { repLine, requestHasStall, autoReleaseIn, friendly, suburbOf, EmptyState, SlidingText } from './components';
 import { searchAddress } from './geocodeService';
 import { useCountUp } from './Motion';
 
@@ -287,12 +287,14 @@ export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onTogg
           </View>
           <View style={{ flex: 1 }}>
             <Text style={jc.trade} numberOfLines={1}>{it?.type}{multi ? `  ·  ${qty}` : ''}</Text>
-            <Text style={jc.meta} numberOfLines={1}>
+            {/* Apple-style sliding row — if when·distance·area·posted is too wide, it gently scrolls
+                side to side so nothing is ever cut off. */}
+            <SlidingText style={jc.meta}>
               <Text style={{ color: urgent ? C.amber : C.mute, fontWeight: '800' }}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
               {dist ? <Text style={jc.dist}>{`  ·  ${dist.replace(' away', '')}`}</Text> : null}
-              {`  ·  ${area}`}
+              <Text>{`  ·  ${area}`}</Text>
               {posted ? <Text style={jc.posted}>{`  ·  ${posted}`}</Text> : null}
-            </Text>
+            </SlidingText>
           </View>
           {rate != null && (
             <View style={{ alignItems: 'flex-end' }}>
