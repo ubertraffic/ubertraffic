@@ -350,11 +350,9 @@ export const S_ = StyleSheet.create({
   filterTOn: { color: '#fff' },
   filterN: { fontSize: 11, fontWeight: '700', color: C.mute2, fontFamily: MONO },
   filterNOn: { color: 'rgba(255,255,255,0.7)' },
-  // Equal-width segmented control (spend period selector) — fills the row, three even chips.
-  segChip: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 12, borderWidth: 1, borderColor: C.line, backgroundColor: '#fff' },
-  segChipOn: { backgroundColor: C.ink, borderColor: C.ink },
-  segT: { fontSize: 13, fontWeight: '700', color: C.mute },
-  segTOn: { color: '#fff' },
+  // NOTE: the spend/earnings period selector reuses the existing seg / segBtn / segBtnOn / segT /
+  // segTOn styles defined lower in this object (iOS-style: grey track, white selected thumb, ink
+  // text). Do NOT re-declare segT/segTOn here — duplicate keys in this literal would collide.
   progTrack: { height: 5, borderRadius: 3, backgroundColor: C.line2, marginTop: 10, overflow: 'hidden' },
   progFill: { height: 5, borderRadius: 3, backgroundColor: C.green },
   detailItem: { backgroundColor: C.canvas, borderRadius: R.md, borderWidth: 1, borderColor: C.line, padding: 12, marginBottom: 8 },

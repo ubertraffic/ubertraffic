@@ -1791,11 +1791,11 @@ export function OperatorEarnings({ session }) {
       </View>
 
       {/* Period summary — for the worker's own records. Pick a window; the figure reacts. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+      <View style={[S_.seg, { marginBottom: 12 }]}>
         {EARN_PERIODS.map(([key, label]) => {
           const on = earnPeriod === key;
           return (
-            <TouchableOpacity key={key} style={[S_.segChip, on && S_.segChipOn]} onPress={() => setEarnPeriod(key)} activeOpacity={0.85}>
+            <TouchableOpacity key={key} style={[S_.segBtn, on && S_.segBtnOn]} onPress={() => setEarnPeriod(key)} activeOpacity={0.85}>
               <Text style={[S_.segT, on && S_.segTOn]}>{label}</Text>
             </TouchableOpacity>
           );

@@ -2349,11 +2349,11 @@ function ClientActivity({ session }) {
         <Text style={[T.small, { marginTop: 2 }]}>{done.length} job{done.length !== 1 ? 's' : ''} completed</Text>
       </View>
       {/* Period selector — pick a window, the figure below reacts. No accounting jargon on the face. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+      <View style={[S_.seg, { marginBottom: 12 }]}>
         {PERIODS.map(([key, label]) => {
           const on = period === key;
           return (
-            <TouchableOpacity key={key} style={[S_.segChip, on && S_.segChipOn]} onPress={() => setPeriod(key)} activeOpacity={0.85}>
+            <TouchableOpacity key={key} style={[S_.segBtn, on && S_.segBtnOn]} onPress={() => setPeriod(key)} activeOpacity={0.85}>
               <Text style={[S_.segT, on && S_.segTOn]}>{label}</Text>
             </TouchableOpacity>
           );
