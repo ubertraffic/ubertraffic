@@ -46,6 +46,7 @@ import { OperatorHome, OperatorJobs, OperatorEarnings, Account } from './screens
 import { RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, tap, StepFade, PrimaryBtn, estTotal, jobCrewSize, jobTitle, jobSubtitle, Center } from './components2';
 import { logError } from './errorService';
 import { getPaymentForRequest } from './paymentsService';
+import Invoice from './Invoice';
 import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerLine, MatchCard, EmptyState, isStalledAssignment, requestHasStall, repLine, autoReleaseIn, friendly } from './components';
 
 /* ============================================================ ROOT */
@@ -1666,6 +1667,7 @@ function ClientActivity({ session }) {
 
 function ActivityCard({ r }) {
   const [open, setOpen] = useState(false);
+  const [showInvoice, setShowInvoice] = useState(false);
   const [pay, setPay] = useState(null);   // the Stripe payment behind this job (fetched lazily on expand)
   const items = r.request_items || [];
   const total = Number(r.settle_total || 0);
@@ -1679,16 +1681,18 @@ function ActivityCard({ r }) {
   const paidWhen = pay && (pay.updated_at || pay.created_at) ? new Date(pay.updated_at || pay.created_at) : null;
   const ref = pay?.stripe_payment_intent ? String(pay.stripe_payment_intent).slice(-8).toUpperCase() : null;
   return (
-    <TouchableOpacity style={S_.card} activeOpacity={0.75} onPress={() => setOpen((o) => !o)}>
-      <View style={S_.rowBetween}>
-        <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{suburbOf(r.address_text)}</Text>
-        <View style={[S_.pill, { backgroundColor: C.greenSoft }]}><Text style={[S_.pillT, { color: C.green }]}>Settled</Text></View>
-      </View>
-      <Text style={[T.small, { marginTop: 4, color: C.mute }]} numberOfLines={1}>{summary}</Text>
-      <View style={[S_.rowBetween, { marginTop: 10, alignItems: 'flex-end' }]}>
-        <Text style={T.money}>${net.toLocaleString()}</Text>
-        <Text style={[T.tiny, { color: C.mute2 }]}>{open ? 'Hide detail ▲' : 'View detail ▾'}</Text>
-      </View>
+    <View style={S_.card}>
+      <TouchableOpacity activeOpacity={0.75} onPress={() => setOpen((o) => !o)}>
+        <View style={S_.rowBetween}>
+          <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{suburbOf(r.address_text)}</Text>
+          <View style={[S_.pill, { backgroundColor: C.greenSoft }]}><Text style={[S_.pillT, { color: C.green }]}>Settled</Text></View>
+        </View>
+        <Text style={[T.small, { marginTop: 4, color: C.mute }]} numberOfLines={1}>{summary}</Text>
+        <View style={[S_.rowBetween, { marginTop: 10, alignItems: 'flex-end' }]}>
+          <Text style={T.money}>${net.toLocaleString()}</Text>
+          <Text style={[T.tiny, { color: C.mute2 }]}>{open ? 'Hide detail ▲' : 'View detail ▾'}</Text>
+        </View>
+      </TouchableOpacity>
 
       {open && (
         <View style={S_.actDetail}>
@@ -1699,10 +1703,14 @@ function ActivityCard({ r }) {
           {r.address_text ? <View style={S_.actRow}><Text style={S_.actLabel}>Site</Text><Text style={[S_.actVal, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>{r.address_text}</Text></View> : null}
           {paidWhen ? <View style={S_.actRow}><Text style={S_.actLabel}>Paid</Text><Text style={S_.actVal}>{paidWhen.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></View> : null}
           {ref ? <View style={S_.actRow}><Text style={S_.actLabel}>Receipt no.</Text><Text style={[S_.actVal, { fontVariant: ['tabular-nums'] }]}>SC-{ref}</Text></View> : null}
+          <TouchableOpacity onPress={() => setShowInvoice(true)} activeOpacity={0.85} style={{ marginTop: 14, backgroundColor: C.indigoSoft, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}>
+            <Text style={{ color: C.indigo, fontWeight: '800', fontSize: 14 }}>View / share invoice</Text>
+          </TouchableOpacity>
           <Text style={[T.tiny, { color: C.mute2, marginTop: 10 }]}>🔒 Paid securely via Stripe. SiteCall never stores your card.</Text>
         </View>
       )}
-    </TouchableOpacity>
+      <Invoice visible={showInvoice} request={r} payment={pay || null} onClose={() => setShowInvoice(false)} />
+    </View>
   );
 }
 
