@@ -1641,6 +1641,10 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
 }
 
 /* ============================================================ CLIENT · ACTIVITY */
+// Australian financial year (1 Jul – 30 Jun) for the spend summaries.
+function auFyStartC(d = new Date()) { const july1 = new Date(d.getFullYear(), 6, 1); return d >= july1 ? july1 : new Date(d.getFullYear() - 1, 6, 1); }
+function auFyLabelC(d = new Date()) { const s = auFyStartC(d); return `FY${String(s.getFullYear()).slice(2)}–${String(s.getFullYear() + 1).slice(2)}`; }
+
 function ClientActivity({ session }) {
   const [mine, setMine] = useState(() => cacheGet('client-requests'));   // shares Requests' cache → instant
   useEffect(() => { (async () => {
@@ -1649,6 +1653,10 @@ function ClientActivity({ session }) {
   })(); }, []);
   const done = (mine || []).filter((r) => r.status === 'complete');
   const spent = done.reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
+  const fyStart = auFyStartC().getTime(), moStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+  const spentWhen = (r) => new Date(r.approved_at || r.created_at || 0).getTime();
+  const fySpent = done.filter((r) => spentWhen(r) >= fyStart).reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
+  const moSpent = done.filter((r) => spentWhen(r) >= moStart).reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
   return (
     <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <Text style={T.eyebrow}>Activity</Text>
@@ -1656,6 +1664,16 @@ function ClientActivity({ session }) {
         <Text style={T.label}>Total spent · completed jobs</Text>
         <Text style={[T.dataBig, { fontSize: 34, color: C.ink, marginTop: 6 }]}>${spent.toLocaleString()}</Text>
         <Text style={[T.small, { marginTop: 2 }]}>{done.length} job{done.length !== 1 ? 's' : ''} completed</Text>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 4 }}>
+        <View style={[S_.card, { flex: 1, marginTop: 0 }]}>
+          <Text style={[T.label, { fontSize: 10 }]}>This year · {auFyLabelC()}</Text>
+          <Text style={[T.heading, { marginTop: 4 }]}>${fySpent.toLocaleString()}</Text>
+        </View>
+        <View style={[S_.card, { flex: 1, marginTop: 0 }]}>
+          <Text style={[T.label, { fontSize: 10 }]}>This month</Text>
+          <Text style={[T.heading, { marginTop: 4 }]}>${moSpent.toLocaleString()}</Text>
+        </View>
       </View>
       <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
       {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />

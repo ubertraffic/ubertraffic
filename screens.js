@@ -1654,6 +1654,11 @@ export function OperatorJobs({ session, onOpenProfile }) {
 }
 
 /* ============================================================ OPERATOR · EARNINGS */
+// Australian financial year runs 1 July – 30 June. These drive the tax-period summaries.
+function auFyStart(d = new Date()) { const july1 = new Date(d.getFullYear(), 6, 1); return d >= july1 ? july1 : new Date(d.getFullYear() - 1, 6, 1); }
+function auFyLabel(d = new Date()) { const s = auFyStart(d); return `FY${String(s.getFullYear()).slice(2)}–${String(s.getFullYear() + 1).slice(2)}`; }
+function monthStart(d = new Date()) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+
 export function OperatorEarnings({ session }) {
   const [assigns, setAssigns] = useState(() => cacheGet('operator-assignments'));   // instant paint
   const [payouts, setPayouts] = useState([]);   // the real Stripe transfer ledger (status truth)
@@ -1669,6 +1674,11 @@ export function OperatorEarnings({ session }) {
   const pending = (assigns || []).filter((a) => a.status === 'complete');
   const totalPaid = paid.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
   const pendingValue = pending.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
+  // Tax-period summaries (net earned) — AU financial year + this month, for the worker's own records.
+  const fyStart = auFyStart().getTime(), moStart = monthStart().getTime();
+  const paidWhen = (a) => new Date(a.paid_at || a.completed_at || 0).getTime();
+  const fyPaid = paid.filter((a) => paidWhen(a) >= fyStart).reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
+  const moPaid = paid.filter((a) => paidWhen(a) >= moStart).reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
   // Map the real payout status onto each settled job, and flag any that didn't land.
   const poByAssign = {};
   for (const p of payouts) if (p.assignment_id && !poByAssign[p.assignment_id]) poByAssign[p.assignment_id] = p;
@@ -1683,6 +1693,19 @@ export function OperatorEarnings({ session }) {
         <Text style={[T.small, { marginTop: 2 }]}>{paid.length} job{paid.length !== 1 ? 's' : ''} settled · net after fees</Text>
         <Text style={[T.tiny, { marginTop: 6, color: C.mute2, textAlign: 'center', paddingHorizontal: 12 }]}>SiteCall keeps 10% of labour + $3 per task. Tips & travel are 100% yours.</Text>
       </View>
+
+      {/* Tax-period summary — for the worker's own records */}
+      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 4 }}>
+        <View style={[S_.card, { flex: 1, marginTop: 0 }]}>
+          <Text style={[T.label, { fontSize: 10 }]}>This year · {auFyLabel()}</Text>
+          <Text style={[T.heading, { marginTop: 4 }]}>${fyPaid.toLocaleString()}</Text>
+        </View>
+        <View style={[S_.card, { flex: 1, marginTop: 0 }]}>
+          <Text style={[T.label, { fontSize: 10 }]}>This month</Text>
+          <Text style={[T.heading, { marginTop: 4 }]}>${moPaid.toLocaleString()}</Text>
+        </View>
+      </View>
+      <Text style={[T.tiny, { color: C.mute2, marginBottom: 8, paddingHorizontal: 2 }]}>Net earned (after fees), for your own tax records. Keep your invoices — you handle your own tax &amp; super.</Text>
 
       {pending.length > 0 && (
         <View style={[S_.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
