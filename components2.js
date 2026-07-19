@@ -242,79 +242,58 @@ export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onTogg
         {/* urgency accent bar — the eye lands here first for a "now" job */}
         <View style={[jc.accentBar, { backgroundColor: urgent ? C.amber : 'transparent' }]} />
 
-        {/* header — trade + where, with a tinted glyph */}
+        {/* header — trade + when/where + PAY, all in one glance so the whole card fits a screen */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={[jc.glyph, { backgroundColor: accentSoft }]}>
             <Icon name={iconForType(it?.type, it?.kind)} size={22} color={accent} strokeWidth={2} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={jc.trade} numberOfLines={1}>{it?.type}{multi ? `  ·  ${qty}` : ''}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-              <Icon name="pin" size={12} color={C.mute} strokeWidth={2.2} />
-              <Text style={jc.where} numberOfLines={1}>
-                {suburbOf(r?.address_text) || 'Nearby'}
-                {dist ? <Text style={jc.dist}>{`  ·  ${dist}`}</Text> : null}
-                {posted ? <Text style={jc.posted}>{`  ·  ${posted}`}</Text> : null}
-              </Text>
+            <Text style={jc.meta} numberOfLines={1}>
+              <Text style={{ color: urgent ? C.amber : C.mute, fontWeight: '800' }}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
+              {`  ·  ${suburbOf(r?.address_text) || 'Nearby'}`}
+              {dist ? <Text style={jc.dist}>{`  ·  ${dist.replace(' away', '')}`}</Text> : null}
+              {posted ? <Text style={jc.posted}>{`  ·  ${posted}`}</Text> : null}
+            </Text>
+          </View>
+          {rate != null && (
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={jc.payBig}>${rate}<Text style={jc.payUnit}>{isJobPrice ? '/job' : '/hr'}</Text></Text>
+              {estTotal != null
+                ? <Text style={jc.payEst}>≈ ${shownTotal.toLocaleString()} · {hours}h</Text>
+                : isJobPrice ? <Text style={jc.payEst}>fixed price</Text> : null}
             </View>
-          </View>
-          <View style={[jc.badge, { backgroundColor: urgent ? 'rgba(245,158,11,0.14)' : C.panel2 }]}>
-            <Text style={[jc.badgeT, { color: urgent ? C.amber : C.mute }]}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
-          </View>
+          )}
         </View>
 
-        {/* WHO you'd work for — verified badge + business/name + rating, so no one accepts blind */}
+        {/* WHO you'd work for — one compact line, so no one accepts blind */}
         <View style={jc.client}>
           <View style={[jc.clientAv, card?.verified && { backgroundColor: C.indigo }]}>
             {card?.verified
-              ? <Icon name="verified" size={16} color="#fff" strokeWidth={2.2} />
+              ? <Icon name="verified" size={14} color="#fff" strokeWidth={2.2} />
               : <Text style={jc.clientAvT}>{(card?.display_name || 'C').charAt(0).toUpperCase()}</Text>}
           </View>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={jc.clientName} numberOfLines={1}>{card?.display_name || 'A local client'}</Text>
-              {card?.verified && <View style={jc.vChip}><Text style={jc.vChipT}>Verified</Text></View>}
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-              <Icon name="star" size={11} color={cardRated ? C.amber : C.mute2} strokeWidth={2.2} fill={cardRated ? C.amber : 'none'} />
-              <Text style={jc.clientRep}>{cardRated ? `${Number(card.rating).toFixed(1)} · ${card.rating_count} job${card.rating_count === 1 ? '' : 's'} posted` : 'New to SiteCall'}</Text>
-            </View>
-          </View>
+          <Text style={jc.clientName} numberOfLines={1}>{card?.display_name || 'A local client'}</Text>
+          {card?.verified && <View style={jc.vChip}><Text style={jc.vChipT}>Verified</Text></View>}
+          <View style={{ flex: 1 }} />
+          <Icon name="star" size={11} color={cardRated ? C.amber : C.mute2} strokeWidth={2.2} fill={cardRated ? C.amber : 'none'} />
+          <Text style={jc.clientRep}>{cardRated ? `${Number(card.rating).toFixed(1)} · ${card.rating_count}` : 'New'}</Text>
         </View>
 
-        {/* PERKS — the dopamine chips: guaranteed pay + any bonus money on top */}
+        {/* PERKS — guaranteed pay + any bonus money on top */}
         <View style={jc.perks}>
           <View style={jc.perk}><Text style={jc.perkT}>🔒 Pay secured</Text></View>
-          {travel > 0 && <View style={[jc.perk, jc.perkGreen]}><Text style={[jc.perkT, jc.perkTGreen]}>＋${travel} travel · 100% yours</Text></View>}
-          {materials > 0 && <View style={jc.perk}><Text style={jc.perkT}>Materials covered to ${materials}</Text></View>}
+          {travel > 0 && <View style={[jc.perk, jc.perkGreen]}><Text style={[jc.perkT, jc.perkTGreen]}>＋${travel} travel</Text></View>}
+          {materials > 0 && <View style={jc.perk}><Text style={jc.perkT}>Materials to ${materials}</Text></View>}
         </View>
 
-        {/* what they'll be doing — the trust piece */}
+        {/* what they'll be doing */}
         {r?.job_details ? (
-          <TouchableOpacity activeOpacity={0.7} onPress={onToggleBio} style={{ marginTop: 14 }}>
+          <TouchableOpacity activeOpacity={0.7} onPress={onToggleBio} style={{ marginTop: 12 }}>
             <Text style={jc.bio} numberOfLines={expanded ? undefined : 2}>{r.job_details}</Text>
             {r.job_details.length > 90 && <Text style={[jc.bioMore, { color: accent }]}>{expanded ? 'Show less' : 'Read more'}</Text>}
           </TouchableOpacity>
         ) : null}
-
-        {/* PAY — the number the worker decides on, and the open-spots chip */}
-        {rate != null && (
-          <View style={jc.payRow}>
-            <View>
-              <Text style={jc.payLabel}>You earn</Text>
-              <Text style={jc.payBig}>${rate}<Text style={jc.payUnit}>{isJobPrice ? '/job' : '/hr'}</Text></Text>
-              {estTotal != null
-                ? <Text style={jc.payEst}>≈ ${shownTotal.toLocaleString()} for the {hours}h job</Text>
-                : isJobPrice ? <Text style={jc.payEst}>fixed price · paid on completion</Text> : null}
-            </View>
-            {left > 0 && multi && (
-              <View style={jc.spots}>
-                <Text style={jc.spotsN}>{left}</Text>
-                <Text style={jc.spotsL}>of {qty} open</Text>
-              </View>
-            )}
-          </View>
-        )}
 
         {/* multi-spot pips */}
         {multi && (
@@ -350,48 +329,44 @@ export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onTogg
 
 const jc = StyleSheet.create({
   card: {
-    backgroundColor: C.panel, borderRadius: 22, padding: 18, paddingTop: 20, borderWidth: 1, borderColor: C.line, overflow: 'hidden',
+    backgroundColor: C.panel, borderRadius: 20, padding: 16, paddingTop: 18, borderWidth: 1, borderColor: C.line, overflow: 'hidden',
     shadowColor: '#000', shadowOpacity: 0.07, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 4,
   },
   accentBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
-  glyph: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  trade: { fontSize: 17.5, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
-  where: { fontSize: 13, color: C.mute, fontWeight: '600' },
+  glyph: { width: 44, height: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  trade: { fontSize: 17, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
+  meta: { fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3 },
   posted: { fontSize: 12, color: C.mute2, fontWeight: '700' },
   dist: { fontSize: 12.5, color: C.green, fontWeight: '800' },
-  badge: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
-  badgeT: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.2 },
-  client: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, backgroundColor: C.panel2, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10 },
-  clientAv: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.mute2, alignItems: 'center', justifyContent: 'center' },
-  clientAvT: { color: '#fff', fontWeight: '900', fontSize: 14 },
-  clientName: { fontSize: 14, fontWeight: '800', color: C.ink, flexShrink: 1 },
+  payBig: { fontSize: 25, fontWeight: '900', color: C.ink, letterSpacing: -0.8 },
+  payUnit: { fontSize: 13, fontWeight: '700', color: C.mute, letterSpacing: 0 },
+  payEst: { fontSize: 12, color: C.green, fontWeight: '800', marginTop: 2 },
+  client: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, backgroundColor: C.panel2, borderRadius: 13, paddingHorizontal: 11, paddingVertical: 8 },
+  clientAv: { width: 28, height: 28, borderRadius: 14, backgroundColor: C.mute2, alignItems: 'center', justifyContent: 'center' },
+  clientAvT: { color: '#fff', fontWeight: '900', fontSize: 13 },
+  clientName: { fontSize: 13.5, fontWeight: '800', color: C.ink, flexShrink: 1 },
   clientRep: { fontSize: 11.5, color: C.mute, fontWeight: '700' },
-  vChip: { backgroundColor: C.indigoSoft, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
-  vChipT: { fontSize: 10, fontWeight: '900', color: C.indigo, letterSpacing: 0.2 },
-  perks: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 12 },
-  perk: { backgroundColor: C.panel2, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6 },
-  perkT: { fontSize: 11.5, fontWeight: '800', color: C.ink2 || C.ink },
+  vChip: { backgroundColor: C.indigoSoft, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
+  vChipT: { fontSize: 9.5, fontWeight: '900', color: C.indigo, letterSpacing: 0.2 },
+  perks: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  perk: { backgroundColor: C.panel2, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  perkT: { fontSize: 11, fontWeight: '800', color: C.ink2 || C.ink },
   perkGreen: { backgroundColor: C.greenSoft },
   perkTGreen: { color: C.green },
-  bio: { fontSize: 13.5, color: C.ink2 || C.ink, lineHeight: 19, fontWeight: '500' },
-  bioMore: { fontSize: 12.5, fontWeight: '800', marginTop: 4 },
-  payRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.line },
-  payLabel: { fontSize: 10.5, fontWeight: '800', color: C.mute, letterSpacing: 0.5, textTransform: 'uppercase' },
-  payBig: { fontSize: 32, fontWeight: '900', color: C.ink, letterSpacing: -1.2, marginTop: 3 },
-  payUnit: { fontSize: 15, fontWeight: '700', color: C.mute, letterSpacing: 0 },
-  payEst: { fontSize: 13, color: C.green, fontWeight: '800', marginTop: 3 },
+  bio: { fontSize: 13, color: C.ink2 || C.ink, lineHeight: 18, fontWeight: '500' },
+  bioMore: { fontSize: 12.5, fontWeight: '800', marginTop: 3 },
   spots: { backgroundColor: C.greenSoft, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 9, alignItems: 'center' },
   spotsN: { fontSize: 18, fontWeight: '900', color: C.green, letterSpacing: -0.5 },
   spotsL: { fontSize: 9.5, fontWeight: '800', color: C.green, letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 1 },
-  mine: { backgroundColor: C.greenSoft, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, marginTop: 12 },
+  mine: { backgroundColor: C.greenSoft, borderRadius: 12, paddingVertical: 7, paddingHorizontal: 12, marginTop: 10 },
   mineT: { fontSize: 12.5, color: C.green, fontWeight: '800' },
   accept: {
-    marginTop: 16, backgroundColor: C.green, borderRadius: 16, paddingVertical: 16, alignItems: 'center',
+    marginTop: 14, backgroundColor: C.green, borderRadius: 15, paddingVertical: 14, alignItems: 'center',
     shadowColor: C.green, shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6,
   },
   acceptOff: { backgroundColor: '#C9CBD3', shadowOpacity: 0 },
-  acceptT: { color: '#fff', fontSize: 16.5, fontWeight: '800', letterSpacing: 0.2 },
-  pass: { alignItems: 'center', paddingVertical: 13, marginTop: 2 },
+  acceptT: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.2 },
+  pass: { alignItems: 'center', paddingVertical: 10, marginTop: 2 },
   passT: { color: C.mute, fontSize: 13.5, fontWeight: '700' },
 });
 
