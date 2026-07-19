@@ -281,8 +281,8 @@ export default function CredentialsScreen({ onClose }) {
               ) : null}
               {!!abnMsg && <Text style={styles.err}>{abnMsg}</Text>}
               <TouchableOpacity
-                style={[styles.abnSave, (!abnValid(abnInput) || abnBusy) && { opacity: 0.5 }]}
-                disabled={!abnValid(abnInput) || abnBusy}
+                style={[styles.abnSave, (abnBusy || !abnInput.trim()) && { opacity: 0.5 }]}
+                disabled={abnBusy || !abnInput.trim()}
                 onPress={saveAbn}
               >
                 <Text style={styles.abnSaveT}>{abnBusy ? 'Saving…' : 'Save ABN'}</Text>

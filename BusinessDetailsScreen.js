@@ -143,8 +143,8 @@ export default function BusinessDetailsScreen({ onClose }) {
               ) : null}
               {!!abnMsg && <Text style={styles.err}>{abnMsg}</Text>}
               <TouchableOpacity
-                style={[styles.save, (!abnValid(abnInput) || abnBusy) && { opacity: 0.5 }]}
-                disabled={!abnValid(abnInput) || abnBusy}
+                style={[styles.save, (abnBusy || !abnInput.trim()) && { opacity: 0.5 }]}
+                disabled={abnBusy || !abnInput.trim()}
                 onPress={saveAbn}
               >
                 <Text style={styles.saveT}>{abnBusy ? 'Saving…' : 'Save ABN'}</Text>

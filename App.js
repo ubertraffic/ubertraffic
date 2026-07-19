@@ -392,6 +392,10 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
   // "I'll finish later". Either one retires the checklist for this session.
   const [setupDone, setSetupDone] = useState(false);
   const [exploring, setExploring] = useState(false);
+  // Steps the user has ACTED on this session, so the checklist reflects the action immediately even
+  // before the (admin-approved) profile fields catch up. e.g. { verify: true, name: true }.
+  const [setupSubmitted, setSetupSubmitted] = useState({});
+  const markSubmitted = (key) => setSetupSubmitted((s) => ({ ...s, [key]: true }));
   const showSetup = !!firstRunSide && !!acct && !setupDone && !exploring;
 
   const loadName = useCallback(async () => {
@@ -483,6 +487,8 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
           <SetupChecklist
             side={firstRunSide}
             acct={acct}
+            submitted={setupSubmitted}
+            onSubmitted={markSubmitted}
             onOpenGate={(side) => setGate({ side })}
             onRefresh={loadName}
             onExplore={() => setExploring(true)}
@@ -493,7 +499,7 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
       <CapabilityGate
         gate={gate}
         onClose={() => setGate(null)}
-        onUnlocked={() => { setGate(null); loadName(); }}
+        onUnlocked={() => { markSubmitted('verify'); setGate(null); loadName(); }}
       />
       <PublicProfile visible={!!profileId} userId={profileId} meId={session.user.id} onClose={() => setProfileId(null)} />
     </View>
@@ -586,8 +592,9 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
 // (green tick), actionable now (tap → real flow), or under review (background verification, e.g.
 // ABN/White Card). A live activity strip keeps it feeling alive. When every required step is done,
 // it turns into a celebration and hands them into the app. Verification reuses the CapabilityGate.
-function SetupChecklist({ side, acct, onOpenGate, onRefresh, onExplore, onComplete }) {
+function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefresh, onExplore, onComplete }) {
   const isHire = side === 'hire';
+  const sub = submitted || {};
   const [payout, setPayout] = useState(null);       // work side only: connect-status result
   const [payoutBusy, setPayoutBusy] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -595,11 +602,14 @@ function SetupChecklist({ side, acct, onOpenGate, onRefresh, onExplore, onComple
   const [savingName, setSavingName] = useState(false);
   const [pulse, setPulse] = useState(null);
 
-  const hasName = !!(acct?.full_name && acct.full_name.trim());
+  const hasName = !!(acct?.full_name && acct.full_name.trim()) || !!sub.name;
   const verified = isHire ? !!acct?.can_hire : !!(acct?.can_work || acct?.can_task);
-  const verifyPending = isHire
-    ? (acct?.company_verify_status === 'pending' || acct?.abn_status === 'pending')
-    : (acct?.worker_verify_status === 'pending');
+  // "Under review" = the profile says pending OR they just submitted it this session (the profile
+  // field only flips once an admin/register approves, so we can't wait for it to show progress).
+  const verifyPending = !!sub.verify
+    || (isHire
+      ? (acct?.company_verify_status === 'pending' || acct?.abn_status === 'pending')
+      : (acct?.worker_verify_status === 'pending'));
 
   // Work side needs a payout account before it's "ready". Re-check whenever verification changes
   // (and after they return from Stripe and tap refresh).
@@ -616,7 +626,7 @@ function SetupChecklist({ side, acct, onOpenGate, onRefresh, onExplore, onComple
     const n = nameVal.trim();
     if (n.length < 2) return;
     setSavingName(true);
-    try { await updateMyName(n); setEditingName(false); onRefresh && (await onRefresh()); }
+    try { await updateMyName(n); onSubmitted && onSubmitted('name'); setEditingName(false); onRefresh && (await onRefresh()); }
     catch (_) {} finally { setSavingName(false); }
   }
   async function startPayout() {
@@ -645,9 +655,13 @@ function SetupChecklist({ side, acct, onOpenGate, onRefresh, onExplore, onComple
     state: paidReady ? 'done' : payout == null ? 'loading' : 'todo',
   });
 
+  // A step counts as "handled" once it's done OR submitted for review — the user has done their part,
+  // so onboarding can finish while a background check clears (verify-now, validate-later).
+  const handled = (s) => s.state === 'done' || s.state === 'review';
   const total = steps.length;
-  const doneCount = steps.filter((s) => s.state === 'done').length;
-  const allDone = doneCount === total;
+  const doneCount = steps.filter(handled).length;
+  const allDone = steps.every(handled);
+  const stillReviewing = steps.some((s) => s.state === 'review');
   const pct = total ? doneCount / total : 0;
 
   function handleStep(step) {
@@ -671,7 +685,12 @@ function SetupChecklist({ side, acct, onOpenGate, onRefresh, onExplore, onComple
               <Icon name="check" size={26} color="#fff" strokeWidth={3} />
             </View>
             <Text style={S_.setHero}>You're all set</Text>
-            <Text style={S_.setSub}>{isHire ? "You're ready to post jobs and hire." : "You're ready to find work and get paid."}</Text>
+            <Text style={S_.setSub}>
+              {stillReviewing
+                ? (isHire ? "You can start posting jobs now — we're finishing your verification in the background."
+                          : "You can look around now — we're finishing your verification in the background, then you can accept jobs.")
+                : (isHire ? "You're ready to post jobs and hire." : "You're ready to find work and get paid.")}
+            </Text>
           </View>
         ) : (
           <View style={S_.setHeader}>
