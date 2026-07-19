@@ -1367,6 +1367,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
   const [chat, setChat] = useState(null);   // { a, title, sub } — the open job room
   const [matClaim, setMatClaim] = useState(null);   // assignment for the materials claim sheet
   const [expandedBios, setExpandedBios] = useState({});   // which job cards have duties/brief expanded
+  const [openJobs, setOpenJobs] = useState({});           // which job cards are expanded (accordion; null = smart default)
   const [closeOut, setCloseOut] = useState(null);   // assignmentId in the close-out gate (compliance) — same gate as OperatorHome
   const [runOut, setRunOut] = useState(null);       // { id, list, cap, a } for the run close-out
   const [prestart, setPrestart] = useState(null);   // assignmentId in the arrival safety-prestart gate — same gate as OperatorHome
@@ -1472,6 +1473,17 @@ export function OperatorJobs({ session, onOpenProfile }) {
     } catch (e) { setMsg('Couldn\'t report: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
   }
 
+  // ── Order + group jobs so the screen reads like a rideshare trips list, not a wall of text ──
+  // Urgency rank: the job you're actively doing floats to the top; finished/paid work sinks.
+  const RANK = { on_site: 0, en_route: 1, committed: 2, accepted: 2, complete: 3, approved: 4, cancelled: 5 };
+  const sorted = [...(assigns || [])].sort((a, b) => (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9));
+  // The single most-urgent actionable job opens by default (its action is visible without a tap),
+  // like the current-trip card in a rideshare app. Everything else starts collapsed — progressive
+  // disclosure: the essentials sit on the row, the full brief + actions are one tap away.
+  const heroId = (sorted.find((a) => ['on_site', 'en_route', 'committed', 'accepted'].includes(a.status)) || {}).id;
+  const isOpen = (a) => (openJobs[a.id] != null ? openJobs[a.id] : a.id === heroId);
+  const toggleJob = (id) => setOpenJobs((m) => ({ ...m, [id]: !(m[id] != null ? m[id] : id === heroId) }));
+
   return (
     <View style={{ flex: 1 }}>
     <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1 }}
@@ -1482,7 +1494,11 @@ export function OperatorJobs({ session, onOpenProfile }) {
           <EmptyState icon="jobs" title="No jobs yet"
             sub="When you accept a job it shows up here — with the map, chat and check-in all in one place." />
         )
-        : assigns.map((a) => {
+        : sorted.map((a, _i) => {
+          const open = isOpen(a);
+          // Section divider: label the first "finished" (paid/cancelled) card so history reads apart.
+          const isDone = ['approved', 'cancelled'].includes(a.status);
+          const firstDone = isDone && (_i === 0 || !['approved', 'cancelled'].includes(sorted[_i - 1].status));
           const committed = a.status === 'committed' || a.status === 'accepted';
           const next = committed ? ['en_route', 'Start journey']
             : a.status === 'en_route' ? ['on_site', 'Arrived on site']
@@ -1493,17 +1509,39 @@ export function OperatorJobs({ session, onOpenProfile }) {
             : a.status === 'on_site' ? { label: 'On site', color: C.green }
             : a.status === 'en_route' ? { label: 'On the way', color: C.indigo }
             : { label: 'Committed', color: C.mute };
+          // Money at a glance, right on the collapsed row.
+          const _it = a.request_item; const _r = _it?.request;
+          const _rate = _it?.rate || _it?.rate_offered;
+          const _hrs = _r?.duration_hours || 4;
+          const payShort = _rate ? (_it?.price_mode === 'job' ? `$${Number(_rate).toLocaleString()}` : `~$${Number(_rate * _hrs).toLocaleString()}`) : null;
+          const unreadN = unread[a.id] || 0;
           return (
-            <View key={a.id} style={S_.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{a.request_item?.type}</Text>
-                <View style={{ backgroundColor: st.color + '1A', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 }}>
-                  <Text style={{ color: st.color, fontWeight: '800', fontSize: 11.5, letterSpacing: 0.2 }}>{st.label}</Text>
+            <React.Fragment key={a.id}>
+            {firstDone && <Text style={[T.eyebrow, { marginTop: 18 }]}>Completed</Text>}
+            <View style={[S_.card, open && { borderColor: st.color + '55', borderWidth: 1 }]}>
+              {/* HEADER — always visible; tap to expand/collapse (progressive disclosure) */}
+              <TouchableOpacity activeOpacity={0.7} onPress={() => toggleJob(a.id)}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+                  <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: st.color }} />
+                  <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{a.request_item?.type}</Text>
+                  <View style={{ backgroundColor: st.color + '1A', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 }}>
+                    <Text style={{ color: st.color, fontWeight: '800', fontSize: 11.5, letterSpacing: 0.2 }}>{st.label}</Text>
+                  </View>
+                  <Icon name={open ? 'chevronUp' : 'chevronDown'} size={18} color={C.mute2} strokeWidth={2.4} />
                 </View>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 }}>
+                  <Icon name="pin" size={13} color={C.mute2} strokeWidth={2} />
+                  <Text style={[T.data, { color: C.mute, flex: 1 }]} numberOfLines={1}>{suburbOf(a.request_item?.request?.address_text)}</Text>
+                  {payShort && <Text style={{ color: C.green, fontWeight: '800', fontSize: 13.5 }}>{payShort}</Text>}
+                  {!open && unreadN > 0 && <View style={S_.matchBadge}><Text style={S_.matchBadgeT}>{unreadN}</Text></View>}
+                </View>
+              </TouchableOpacity>
+
+              {open && (<>
+              {/* full site address (collapsed row shows only the suburb) */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 10 }}>
                 <Icon name="pin" size={13} color={C.mute2} strokeWidth={2} />
-                <Text style={[T.data, { color: C.mute, flex: 1 }]} numberOfLines={1}>{a.request_item?.request?.address_text}</Text>
+                <Text style={[T.data, { color: C.mute, flex: 1 }]} numberOfLines={2}>{a.request_item?.request?.address_text}</Text>
               </View>
 
               {/* JOB BRIEF — what the worker accepted: pay, timing, client, materials, and the
@@ -1675,7 +1713,9 @@ export function OperatorJobs({ session, onOpenProfile }) {
                   </TouchableOpacity>
                 )
               )}
+              </>)}
             </View>
+            </React.Fragment>
           );
         })}
       {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
