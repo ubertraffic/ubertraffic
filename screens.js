@@ -939,30 +939,29 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
     <>
     {immersive ? (
       <View style={{ flex: 1, backgroundColor: C.canvas }}>
-        {/* MAP — a SECONDARY view now (research: workers pick discrete jobs from a list, not a map).
-            Always mounted so it never reloads, but hidden behind the feed until the worker opens it. */}
+        {/* MAP — DISPLAY ONLY (like Uber's surge map): it shows WHERE the work + demand is, nothing to
+            tap-to-accept. Accepting/posting happens in the list. No interactive hub cards, no internal
+            fullscreen button. Always mounted so it never reloads; hidden behind the feed until opened. */}
         <View style={StyleSheet.absoluteFill} pointerEvents={mapOpen ? 'auto' : 'none'}>
           <MapHero
-            height={Dimensions.get('window').height} framed={false} mode="work" me={myLoc}
-            offline={!profile.is_online} demand={demandHeat} markers={profile.is_online ? opMapJobs : []}
-            hubJobs={profile.is_online ? (jobs || []).filter((d) => !passed.has(d.request_item?.id)).map((d) => {
-              const it = d.request_item; const r = it?.request; const qty = it?.qty || 1; const left = qty - (d.taken || 0);
-              return {
-                id: d.id, kind: 'accept', itemId: it?.id,
-                title: it?.type || 'Job', sub: `${suburbOf(r?.address_text)} · ${left > 0 ? `${left} of ${qty} open` : 'Full'}${r?.when_type === 'now' ? ' · Urgent' : ''}`,
-                dotColor: r?.when_type === 'now' ? C.amber : C.green, action: left <= 0 ? 'Full' : 'Accept', _left: left,
-                detail: { rows: [{ k: 'Type', v: it?.type || 'Job' }, { k: 'Site', v: suburbOf(r?.address_text) || '—' }, { k: 'Spots', v: left > 0 ? `${left} of ${qty} open` : 'Full' }, it?.rate ? { k: 'Rate', v: `$${it.rate}/hr` } : null].filter(Boolean),
-                  actions: [left > 0 ? { label: 'Accept this job', tone: 'green', fn: () => it?.id && accept(it.id) } : null, { label: 'Pass', tone: 'ghost', fn: () => it?.id && pass(it.id) }].filter(Boolean) },
-              };
-            }) : []}
-            onHubAction={(j) => { if (j.kind === 'accept' && j._left > 0 && j.itemId) accept(j.itemId); }}
+            height={Dimensions.get('window').height} framed={false} mode="work" me={myLoc} hideExpand
+            offline={!profile.is_online} demand={demandHeat}
+            markers={profile.is_online ? [
+              ...(opMapJobs || []),
+              // available jobs as plain display pins (coords from the request) — no actions
+              ...(jobs || []).filter((d) => !passed.has(d.request_item?.id) && d.request_item?.request?.lat != null && d.request_item?.request?.lng != null).map((d) => {
+                const it = d.request_item; const r = it?.request;
+                return { lat: Number(r.lat), lng: Number(r.lng), label: it?.type || 'Job', status: 'waiting', sub: it?.rate ? `$${it.rate}/hr` : '', requestId: r.id };
+              }),
+            ] : []}
             commandSummary={(() => { const near = (jobs || []).filter((d) => !passed.has(d.request_item?.id)).length; return profile.is_online ? (near > 0 ? `${near} job${near > 1 ? 's' : ''} nearby` : 'Finding work near you') : 'Go online to get work'; })()}
           />
+          {/* Back to the list — same spot + shape as the Map button (bottom-right pill) */}
           {mapOpen && (
             <TouchableOpacity onPress={() => setMapOpen(false)} activeOpacity={0.9}
-              style={{ position: 'absolute', top: 14, left: 16, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.panel, borderRadius: 999, paddingLeft: 10, paddingRight: 16, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8 }}>
-              <Icon name="chevronLeft" size={18} color={C.ink} strokeWidth={2.4} />
-              <Text style={{ fontSize: 14, fontWeight: '800', color: C.ink }}>List</Text>
+              style={{ position: 'absolute', right: 16, bottom: 108, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.ink, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 10 }}>
+              <Icon name="requests" size={16} color="#fff" strokeWidth={2.2} />
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>List</Text>
             </TouchableOpacity>
           )}
         </View>
