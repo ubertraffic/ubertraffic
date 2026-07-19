@@ -57,6 +57,18 @@ export async function payoutStatus() {
   return invoke('connect-status', {});
 }
 
+// Worker payout controls (all act on the caller's own Stripe account) — balance + schedule, change
+// the standard schedule, or cash out instantly for a fee.
+export async function payoutBalance() {
+  return invoke('payout-actions', { action: 'balance' });
+}
+export async function setPayoutSchedule(interval) {
+  return invoke('payout-actions', { action: 'schedule', interval });
+}
+export async function instantPayout() {
+  return invoke('payout-actions', { action: 'instant' });
+}
+
 // Worker: my payout ledger — the ACTUAL Stripe transfers (not inferred from settlement columns).
 // Worker-readable via RLS (operator_id = auth.uid()). Surfaces real status: paid / pending / failed,
 // so a payout that didn't land (e.g. account not ready) shows the truth instead of looking "paid".
