@@ -1097,6 +1097,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   const [items, setItems] = useState([]);
   const [loc, setLoc] = useState('');
   const [coords, setCoords] = useState(null);
+  const [resolving, setResolving] = useState(false);   // geocoding the typed address on "Next"
   const [when, setWhen] = useState('now');
   const [schedDay, setSchedDay] = useState(0);    // 0=today, 1=tomorrow, ... offset in days
   const [schedHour, setSchedHour] = useState(9);  // 24h local hour chosen for a booked job
@@ -1155,6 +1156,26 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
     if (ex) setItems(items.map((i) => i.trade_id === t.id ? { ...i, qty: i.qty + 1 } : i));
     else setItems([...items, { trade_id: t.id, kind, type: t.name, qty: 1, rate: sheetRateFor(t.name, kind), priceMode: kind === 'task' ? 'job' : 'hour', tickets: kind === 'crew' ? ['White Card'] : [], run: t.run_style === 'open' }]);
     setPhase('rate');
+  }
+  // Leaving the WHERE step. If they already picked a suggestion we have coords — go. Otherwise resolve
+  // the typed address ourselves so a working address is never a dead end:
+  //   • resolves          → pin it, continue
+  //   • no match          → keep them here with a fix-it hint (don't ship a bad/unlocatable address)
+  //   • geocoder is down  → continue anyway with the typed address (never trap the user behind our
+  //                         own infrastructure; the crew still gets the written address)
+  async function proceedWhere() {
+    setErr('');
+    if (coords) { setPhase('when'); return; }
+    const q = loc.trim();
+    if (q.length < 3) { setErr('Type the site address, or use your current location.'); return; }
+    setResolving(true);
+    try {
+      const rs = await searchAddress(q, 1);
+      if (rs && rs.length) { setLoc(rs[0].label); setCoords({ lat: rs[0].lat, lng: rs[0].lng }); setPhase('when'); }
+      else { setErr("We couldn't find that address. Check the spelling, or tap “Use my current location” if you're on site."); }
+    } catch (_) {
+      setPhase('when');   // geocoder unavailable — proceed with the typed address rather than blocking
+    } finally { setResolving(false); }
   }
   const setRateS = (tid, v) => setItems(items.map((i) => i.trade_id === tid ? { ...i, rate: Math.max(5, v) } : i));
   const bumpS = (tid, d) => setItems(items.map((i) => i.trade_id === tid ? { ...i, qty: Math.max(1, i.qty + d) } : i));
@@ -1404,12 +1425,18 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                   </TouchableOpacity>
                 )}
                 {myLoc && <Text style={SH.orType}>or type an address</Text>}
-                <AddressField value={loc} onChangeText={(t) => { setLoc(t); setCoords(null); }} onPick={(r) => { setLoc(r.label); setCoords({ lat: r.lat, lng: r.lng }); }} picked={!!coords} disabled={busy} />
-                {loc.trim().length > 0 && !coords && (
-                  <Text style={{ fontSize: 12.5, color: C.amber, fontWeight: '700', marginTop: 8 }}>Pick your address from the list so crews can find the exact site.</Text>
+                <AddressField value={loc} onChangeText={(t) => { setLoc(t); setCoords(null); setErr(''); }} onPick={(r) => { setLoc(r.label); setCoords({ lat: r.lat, lng: r.lng }); setErr(''); }} picked={!!coords} disabled={busy} />
+                {!!err && phase === 'where' && (
+                  <Text style={{ fontSize: 12.5, color: C.amber, fontWeight: '700', marginTop: 8 }}>{err}</Text>
                 )}
-                {/* require real coordinates — a free-typed address with no pin breaks the worker's on-site check-in */}
-                <TouchableOpacity style={[SH.next, { marginTop: 16, opacity: coords ? 1 : 0.4 }]} disabled={!coords} onPress={() => setPhase('when')}><Text style={SH.nextT}>Next ›</Text></TouchableOpacity>
+                {loc.trim().length > 0 && !coords && !err && (
+                  <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 8 }}>Pick a suggestion, or just tap Next — we'll locate it for you.</Text>
+                )}
+                {/* Enabled as soon as an address is typed. proceedWhere() resolves coordinates itself
+                    (picked → typed lookup → graceful continue) so a real address is never a dead end. */}
+                <TouchableOpacity style={[SH.next, { marginTop: 16, opacity: (coords || loc.trim().length >= 3) ? 1 : 0.4 }]} disabled={(!coords && loc.trim().length < 3) || resolving} onPress={proceedWhere}>
+                  {resolving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={SH.nextT}>Next ›</Text>}
+                </TouchableOpacity>
               </>
             )}
 

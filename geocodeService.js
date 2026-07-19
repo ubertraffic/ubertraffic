@@ -23,6 +23,17 @@ const STATE_ABBR = {
  *   [{ label, lat, lng }]
  * Never throws for "no results" — returns []. Throws only on network failure (caller surfaces gently).
  */
+// fetch with a hard timeout so a stalled request can't hang the address box forever.
+async function fetchJson(url, ms = 7000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { headers: { Accept: 'application/json' }, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export async function searchAddress(query, limit = 5) {
   const q = (query || '').trim();
   if (q.length < 3) return [];
@@ -34,18 +45,31 @@ export async function searchAddress(query, limit = 5) {
     limit: String(limit),
     language: 'en',
   });
+  const url = `${GEO}/${encodeURIComponent(q)}.json?${params.toString()}`;
 
-  const res = await fetch(`${GEO}/${encodeURIComponent(q)}.json?${params.toString()}`, {
-    headers: { Accept: 'application/json' },
-  });
-  if (!res.ok) throw new Error(`geocode_failed_${res.status}`);
-
-  const body = await res.json();
-  const features = Array.isArray(body?.features) ? body.features : [];
-  return features.map((f) => {
-    const c = f.geometry && Array.isArray(f.geometry.coordinates) ? f.geometry.coordinates : null;
-    return c ? { label: f.place_name || f.text, lat: parseFloat(c[1]), lng: parseFloat(c[0]) } : null;
-  }).filter((r) => r && Number.isFinite(r.lat) && Number.isFinite(r.lng));
+  // The #1 cause of "typing an address does nothing" is a transient geocode blip (timeout, a 429
+  // rate-limit, a 5xx). One quiet retry turns most of those into a normal result instead of a dead
+  // box. A clean 4xx (bad request) is not retried — it won't get better.
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetchJson(url);
+      if (!res.ok) {
+        lastErr = new Error(`geocode_failed_${res.status}`);
+        if (res.status === 429 || res.status >= 500) continue;   // transient — retry
+        throw lastErr;                                            // permanent — stop
+      }
+      const body = await res.json();
+      const features = Array.isArray(body?.features) ? body.features : [];
+      return features.map((f) => {
+        const c = f.geometry && Array.isArray(f.geometry.coordinates) ? f.geometry.coordinates : null;
+        return c ? { label: f.place_name || f.text, lat: parseFloat(c[1]), lng: parseFloat(c[0]) } : null;
+      }).filter((r) => r && Number.isFinite(r.lat) && Number.isFinite(r.lng));
+    } catch (e) {
+      lastErr = e;   // network error / abort — loop retries once
+    }
+  }
+  throw lastErr || new Error('geocode_failed');
 }
 
 // Reverse geocode: coords -> a concise "Suburb, STATE" label (best-effort). Used so "use my current

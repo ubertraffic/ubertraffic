@@ -823,18 +823,25 @@ export function AddressField({ value, onChangeText, onPick, picked, disabled }) 
   const [err, setErr] = useState('');
   const timer = React.useRef(null);
 
+  async function run(t) {
+    setLoading(true); setErr('');
+    try { setResults(await searchAddress(t)); }
+    catch (_) { setResults([]); setErr('Address lookup hiccup — tap Next and we’ll still locate it.'); }
+    finally { setLoading(false); }
+  }
+
   function change(t) {
     onChangeText(t);
     setErr('');
     if (timer.current) clearTimeout(timer.current);
     if (!t || t.trim().length < 3) { setResults([]); return; }
-    // debounce ~600ms (Nominatim politeness: <=1 req/sec)
-    timer.current = setTimeout(async () => {
-      setLoading(true);
-      try { setResults(await searchAddress(t)); }
-      catch (_) { setErr('Address lookup unavailable — you can still type it.'); }
-      finally { setLoading(false); }
-    }, 600);
+    timer.current = setTimeout(() => run(t), 400);   // debounce keystrokes
+  }
+
+  // Pressing return searches immediately (no wait for the debounce) — a common reflex.
+  function submit() {
+    if (timer.current) clearTimeout(timer.current);
+    if (value && value.trim().length >= 3) run(value.trim());
   }
 
   return (
@@ -848,6 +855,8 @@ export function AddressField({ value, onChangeText, onPick, picked, disabled }) 
           onChangeText={change}
           editable={!disabled}
           autoCorrect={false}
+          returnKeyType="search"
+          onSubmitEditing={submit}
         />
         {picked && <Text style={{ position: 'absolute', right: 12, top: 14, color: C.green, fontSize: 14 }}>✓</Text>}
         {loading && <ActivityIndicator size="small" color={C.indigo} style={{ position: 'absolute', right: 12, top: 12 }} />}
