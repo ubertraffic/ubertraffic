@@ -420,6 +420,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const [ratePrompt, setRatePrompt] = useState(null);    // { assignmentId } — rate the CLIENT after payout
   const ratePromptedRef = useRef(new Set());             // assignment ids already prompted this session
   const rateSeededRef = useRef(false);                   // seed existing-approved so we only prompt on NEW payouts
+  const assignsLoadedRef = useRef(false);                // true once listMyAssignments has actually returned — the initial [] is NOT a load
   // Live location — follow the worker as they move (real GPS on Expo Go via
   // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
   // to DEV_LOCATION when real GPS isn't available. stop() cleans up on unmount.
@@ -430,7 +431,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     return () => { alive = false; if (stop) stop(); };
   }, []);
   useEffect(() => { (async () => { try { setOpMapJobs(await getOperatorMapJobs()); } catch (_) {} })(); }, [jobs]);
-  useEffect(() => { (async () => { try { setMyAssigns(await listMyAssignments()); } catch (_) {} })(); }, [jobs]);
+  useEffect(() => { (async () => { try { setMyAssigns(await listMyAssignments()); assignsLoadedRef.current = true; } catch (_) {} })(); }, [jobs]);
 
   // Demand heat ("where the work is") — the worker's money map. Fetched ONLY while finding work
   // (online, no active/on-site job) on a SLOW 90s timer: demand shifts over minutes not seconds, so
@@ -486,6 +487,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   // prompt when a job flips to approved DURING this session (not for old history on every open).
   useEffect(() => {
     if (!myAssigns) return;
+    // Wait for the FIRST real fetch. The initial [] placeholder must not count as a load, or every
+    // pre-existing approved job would look "fresh" and phantom-prompt a rating with no live context.
+    if (!assignsLoadedRef.current) return;
     const approved = myAssigns.filter((a) => a.status === 'approved');
     if (!rateSeededRef.current) { approved.forEach((a) => ratePromptedRef.current.add(a.id)); rateSeededRef.current = true; return; }
     const fresh = approved.find((a) => !ratePromptedRef.current.has(a.id));

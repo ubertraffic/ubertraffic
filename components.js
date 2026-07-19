@@ -286,7 +286,9 @@ export function RateJob({ visible, assignmentId, rateeName, onClose, rateeIsWork
     }
     catch (e) { setErr(friendly(e)); } finally { setBusy(false); }
   }
-  const who = (rateeName || 'them').split(' ')[0];
+  // A real name → first name ("John Smith" → "John"). A generic phrase ("the client", "the operator")
+  // must stay whole — splitting on the space rendered "How was working with the?" (the phantom-name bug).
+  const who = !rateeName ? 'them' : /^the\b/i.test(rateeName.trim()) ? rateeName.trim() : rateeName.split(' ')[0];
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={() => onClose && onClose(false)}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
