@@ -97,13 +97,19 @@ export async function setMyAbn(abn) {
   const { data: u } = await supabase.auth.getUser();
   if (!u || !u.user) throw new Error('Not signed in.');
   const clean = normalizeAbn(abn);
+  if (clean.length === 9) throw new Error('That looks like an ACN (9 digits). Enter your 11-digit ABN — every company has one linked to its ACN.');
   if (!/^\d{11}$/.test(clean)) throw new Error('An ABN is 11 digits.');
   if (!abnValid(clean)) throw new Error('That ABN doesn’t check out — double-check the number.');
-  const { error } = await supabase
+  // .select() confirms the row was actually written. A silent 0-row update (RLS/grant) would
+  // otherwise let the UI think it saved while nothing landed — then "verify" finds no ABN on file.
+  const { data, error } = await supabase
     .from('profiles')
     .update({ abn: clean, abn_status: 'valid' })
-    .eq('id', u.user.id);
+    .eq('id', u.user.id)
+    .select('id')
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('Couldn’t save your ABN. Please try again — if it keeps failing, let us know.');
   return { abn: clean, abn_status: 'valid' };
 }
 
@@ -178,10 +184,12 @@ export async function setMyCompanyAbn(abn) {
   const { data: u } = await supabase.auth.getUser();
   if (!u || !u.user) throw new Error('Not signed in.');
   const clean = normalizeAbn(abn);
+  if (clean.length === 9) throw new Error('That looks like an ACN (9 digits). Enter your company’s 11-digit ABN instead.');
   if (!/^\d{11}$/.test(clean)) throw new Error('An ABN is 11 digits.');
   if (!abnValid(clean)) throw new Error('That ABN doesn’t check out — double-check the number.');
-  const { error } = await supabase.from('profiles').update({ company_abn: clean }).eq('id', u.user.id);
+  const { data, error } = await supabase.from('profiles').update({ company_abn: clean }).eq('id', u.user.id).select('id').maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('Couldn’t save your ABN. Please try again — if it keeps failing, let us know.');
   return { company_abn: clean };
 }
 
