@@ -36,6 +36,29 @@ export function tradeById(taxonomy, id) {
   return (taxonomy.trades || []).find((t) => t.id === id) || null;
 }
 
+// ── DISPLAY NAMING ───────────────────────────────────────────────────────────
+// Every trade/job title is DISPLAYED in Title Case for one consistent, professional read across the
+// whole app — "Traffic Control", never "Traffic control". This is PRESENTATION ONLY: we never mutate
+// the stored trade name/type, because dispatch matching and rate lookups key off the raw value.
+// Naive title-casing already yields the right result for the whole taxonomy ("Dogman / rigger" →
+// "Dogman / Rigger", "Bin / tip run" → "Bin / Tip Run"); we only special-case connector words and a
+// few acronyms so they don't read oddly.
+const TITLE_SMALL = new Set(['a', 'an', 'and', 'the', 'of', 'on', 'to', 'for', 'with', 'or', 'at', 'in', 'by', 'per']);
+const TITLE_ACRONYM = new Set(['tc', 'ppe', 'swms', 'epa', 'hr', 'lr', 'mr', 'hc', 'mc', '4wd', 'ewp', 'nsw', 'wc', 'ita']);
+export function tradeTitle(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  let n = 0;
+  return s.replace(/[A-Za-z0-9]+/g, (word) => {
+    const low = word.toLowerCase();
+    const first = n === 0;
+    n += 1;
+    if (TITLE_ACRONYM.has(low)) return word.toUpperCase();
+    if (!first && TITLE_SMALL.has(low)) return low;
+    return low.charAt(0).toUpperCase() + low.slice(1);
+  });
+}
+
 // FRONT DOORS — the four human-friendly groups a Hirer picks first. Routing is by
 // the trade's KIND (reliable) plus category, not fuzzy name matching.
 //   Equipment = plant (machines/vehicles)

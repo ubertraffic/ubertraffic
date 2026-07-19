@@ -44,7 +44,7 @@ function buildJobInfo({ a, it, r, workerName }) {
   const rows = [];
   const who = workerName || a?.operator?.full_name;
   if (who) rows.push({ label: 'Worker', value: who.split(' ')[0] });
-  if (it?.type) rows.push({ label: 'Job', value: it.type });
+  if (it?.type) rows.push({ label: 'Job', value: tradeTitle(it.type) });
   if (r?.address_text) rows.push({ label: 'Site', value: r.address_text });
   if (r?.site_contact_name) {
     const c = r.site_contact_phone ? `${r.site_contact_name} · ${r.site_contact_phone}` : r.site_contact_name;
@@ -67,6 +67,7 @@ import { formatDMY, dmyToISO } from './dateFormat';
 import { getPosition, watchPosition } from './location';
 import { getUnreadCounts } from './messagesService';
 import { readinessForTrades } from './credentialsService';
+import { tradeTitle } from './taxonomyService';
 import { unregisterPush } from './pushService';
 import { logError } from './errorService';
 
@@ -961,7 +962,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
               // available jobs as plain display pins (coords from the request) — no actions
               ...(jobs || []).filter((d) => !passed.has(d.request_item?.id) && d.request_item?.request?.lat != null && d.request_item?.request?.lng != null).map((d) => {
                 const it = d.request_item; const r = it?.request;
-                return { lat: Number(r.lat), lng: Number(r.lng), label: it?.type || 'Job', status: 'waiting', sub: it?.rate ? `$${it.rate}/hr` : '', requestId: r.id };
+                return { lat: Number(r.lat), lng: Number(r.lng), label: tradeTitle(it?.type) || 'Job', status: 'waiting', sub: it?.rate ? `$${it.rate}/hr` : '', requestId: r.id };
               }),
             ] : []}
             commandSummary={(() => { const near = (jobs || []).filter((d) => !passed.has(d.request_item?.id)).length; return profile.is_online ? (near > 0 ? `${near} job${near > 1 ? 's' : ''} nearby` : 'Finding work near you') : 'Go online to get work'; })()}
@@ -1062,7 +1063,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
             const words = { committed: 'Assigned — ready to start', accepted: 'Assigned — ready to start', en_route: "You're on the way", on_site: "You're on site" };
             return {
               id: `mine-${a.id}`, kind: 'mine', assignId: a.id,
-              title: a.request_item?.type || 'Your job',
+              title: tradeTitle(a.request_item?.type) || 'Your job',
               sub: `${suburbOf(a.request_item?.request?.address_text)} · ${words[a.status] || ''}`,
               dotColor: a.status === 'on_site' ? C.green : a.status === 'en_route' ? C.indigo : C.mute,
               action: na ? na.label : null, _fn: na ? na.fn : null,
@@ -1074,7 +1075,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
                 ].filter(Boolean),
                 actions: [
                   na ? { label: na.label, tone: a.status === 'on_site' ? 'green' : 'ready', fn: na.fn } : null,
-                  { label: 'Message client', tone: 'ghost', fn: () => setChat({ a, title: `${a.request_item?.type || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) },
+                  { label: 'Message client', tone: 'ghost', fn: () => setChat({ a, title: `${tradeTitle(a.request_item?.type) || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) },
                 ].filter(Boolean),
               },
             };
@@ -1085,13 +1086,13 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
             const qty = it?.qty || 1; const left = qty - (d.taken || 0); const mineHere = d.mine_accepted || 0;
             return {
               id: d.id, kind: 'accept', itemId: it?.id,
-              title: it?.type || 'Job',
+              title: tradeTitle(it?.type) || 'Job',
               sub: `${suburbOf(r?.address_text)} · ${left > 0 ? `${left} of ${qty} open` : 'Full'}${r?.when_type === 'now' ? ' · Urgent' : ''}`,
               dotColor: r?.when_type === 'now' ? C.amber : C.green,
               action: left <= 0 ? 'Full' : mineHere > 0 ? 'Take another' : 'Accept', _left: left,
               detail: {
                 rows: [
-                  { k: 'Type', v: it?.type || 'Job' },
+                  { k: 'Type', v: tradeTitle(it?.type) || 'Job' },
                   { k: 'Site', v: suburbOf(r?.address_text) || '—' },
                   { k: 'Spots', v: left > 0 ? `${left} of ${qty} open` : 'Full' },
                   r?.when_type === 'now' ? { k: 'When', v: 'Urgent — now' } : { k: 'When', v: 'Booked' },
@@ -1116,7 +1117,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
           const mineActive = (myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status));
           if (mineActive.length === 0) return null;
           const a = mineActive[0];
-          return { unread: 0, fn: () => setChat({ a, title: `${a.request_item?.type || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) };
+          return { unread: 0, fn: () => setChat({ a, title: `${tradeTitle(a.request_item?.type) || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) };
         })()}
       />
         </View>
@@ -1133,7 +1134,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
         if (!rid) return null;
         return <TrackerContainer requestId={rid} perspective="operator" onAction={(action, arg) => {
           const aid = act?.id;
-          if (action === 'open_chat') setChat({ a: act, title: `${act.request_item?.type || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
+          if (action === 'open_chat') setChat({ a: act, title: `${tradeTitle(act.request_item?.type) || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
           else if (action === 'start_journey' && aid) mapBeginJourney(aid);
           else if (action === 'arrive' && aid) mapArrive(aid);
           else if (action === 'complete' && aid) { if (prestartNeeds[aid] === true) setPrestart(aid); else if (isRunAssignment(act)) setRunOut(runInfoFor(act)); else setCloseOut(aid); }
@@ -1150,7 +1151,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
           if (!runA) return null;
           const info = runInfoFor(runA);
           return <RunBrief list={info.list} pickup={info.pickup} cap={info.cap} drop={info.drop}
-            onMessage={() => setChat({ a: runA, title: `${runA.request_item?.type || 'Run'} · ${suburbOf(runA.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: runA, it: runA.request_item, r: runA.request_item?.request }) })} />;
+            onMessage={() => setChat({ a: runA, title: `${tradeTitle(runA.request_item?.type) || 'Run'} · ${suburbOf(runA.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: runA, it: runA.request_item, r: runA.request_item?.request }) })} />;
         })()}
 
         {/* offline first-impression — the display hero this screen was missing, pointing at the
@@ -1199,7 +1200,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
                 ) : (
                   <View style={S_.capTagWrap}>
                     {readyCaps.slice(0, 4).map((c) => (
-                      <View key={c.id} style={S_.capTag}><Text style={S_.capTagT}>{c.type}</Text></View>
+                      <View key={c.id} style={S_.capTag}><Text style={S_.capTagT}>{tradeTitle(c.type)}</Text></View>
                     ))}
                     {caps.length - Math.min(readyCaps.length, 4) > 0 && (
                       <View style={S_.capTagMuted}><Text style={S_.capTagMutedT}>+{caps.length - Math.min(readyCaps.length, 4)} more</Text></View>
@@ -1219,7 +1220,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
                   <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }} activeOpacity={0.7} onPress={() => setDiscSkill(c.type)}>
                     <Icon name={c.kind === 'gear' ? 'gear' : c.kind === 'task' ? 'task' : 'crew'} size={17} color={C.ink} strokeWidth={1.9} />
                     <View style={{ flex: 1 }}>
-                      <Text style={T.bodyStrong}>{c.type}</Text>
+                      <Text style={T.bodyStrong}>{tradeTitle(c.type)}</Text>
                       {r && !r.ready
                         ? <Text style={[T.small, { color: C.amber, marginTop: 2 }]}>Needs: {r.missing.join(', ')}</Text>
                         : <Text style={[T.small, { color: C.mute2, marginTop: 2 }]}>See others ›</Text>}
@@ -1286,7 +1287,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
       kind="paid"
       title="You got paid"
       big={paidMoment ? `$${(Number(paidMoment.amount) || 0).toLocaleString()}` : ''}
-      sub={`${paidMoment?.type || 'Job'} · sent to your bank`}
+      sub={`${tradeTitle(paidMoment?.type) || 'Job'} · sent to your bank`}
       cta="Rate the client"
       shareText={paidMoment ? `Just earned $${(Number(paidMoment.amount) || 0).toLocaleString()} on SiteCall${paidMoment?.type ? ` doing ${String(paidMoment.type).toLowerCase()}` : ''} 💪 Get paid work on site near you.` : ''}
       onClose={() => { const m = paidMoment; setPaidMoment(null); if (m?.assignmentId) setRatePrompt({ assignmentId: m.assignmentId }); }}
@@ -1296,7 +1297,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
       kind="shift"
       title="You're on shift"
       big="Have a good one"
-      sub={`${shiftMoment?.type || 'Your job'} · you're clocked on. Put the phone away, stay safe — tap Complete when the job's done.`}
+      sub={`${tradeTitle(shiftMoment?.type) || 'Your job'} · you're clocked on. Put the phone away, stay safe — tap Complete when the job's done.`}
       cta="Let's go"
       onClose={() => setShiftMoment(null)}
     />
@@ -1333,7 +1334,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
           pickup={run.pickup}
           onComplete={async () => { const id = run.id; setRunOut(null); await mapComplete(id); }}
           onCancel={() => setRunOut(null)}
-          onMessage={() => setChat({ a: run.a, title: `${run.a.request_item?.type || 'Run'} · ${suburbOf(run.a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
+          onMessage={() => setChat({ a: run.a, title: `${run.tradeTitle(a.request_item?.type) || 'Run'} · ${suburbOf(run.a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
         />
       )}
     />
@@ -1523,7 +1524,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
               <TouchableOpacity activeOpacity={0.7} onPress={() => toggleJob(a.id)}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
                   <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: st.color }} />
-                  <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{a.request_item?.type}</Text>
+                  <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{tradeTitle(a.request_item?.type)}</Text>
                   <View style={{ backgroundColor: st.color + '1A', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 }}>
                     <Text style={{ color: st.color, fontWeight: '800', fontSize: 11.5, letterSpacing: 0.2 }}>{st.label}</Text>
                   </View>
@@ -1603,7 +1604,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
                   buying the wrong thing is the #1 failure mode of an open run */}
               {isRunAssignment(a) && ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status) && (
                 <TouchableOpacity
-                  onPress={() => setChat({ a, title: `Job room · ${a.request_item?.type || 'Run'}`, sub: suburbOf(a.request_item?.request?.address_text), info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) })}
+                  onPress={() => setChat({ a, title: `Job room · ${tradeTitle(a.request_item?.type) || 'Run'}`, sub: suburbOf(a.request_item?.request?.address_text), info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) })}
                   activeOpacity={0.9}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, paddingHorizontal: 14, marginTop: 12 }}
                 >
@@ -1621,7 +1622,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
                   style={S_.opMsgBtn}
                   onPress={() => setChat({
                     a,
-                    title: `Job room · ${a.request_item?.type || 'Job'}`,
+                    title: `Job room · ${tradeTitle(a.request_item?.type) || 'Job'}`,
                     sub: suburbOf(a.request_item?.request?.address_text),
                     info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }),
                   })}
@@ -1758,7 +1759,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
           pickup={run.pickup}
           onComplete={async () => { const id = run.id; setRunOut(null); await complete(id); }}
           onCancel={() => setRunOut(null)}
-          onMessage={() => setChat({ a: run.a, title: `Job room · ${run.a.request_item?.type || 'Run'}`, sub: suburbOf(run.a.request_item?.request?.address_text), info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
+          onMessage={() => setChat({ a: run.a, title: `Job room · ${run.tradeTitle(a.request_item?.type) || 'Run'}`, sub: suburbOf(run.a.request_item?.request?.address_text), info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
         />
       )}
     />
@@ -1891,7 +1892,7 @@ export function OperatorEarnings({ session }) {
                   <View key={a.id} style={[es.row, i > 0 && es.rowDivider]}>
                     <View style={es.icon}><Icon name={iconForType(a.request_item?.type)} size={17} color={C.green} strokeWidth={2.2} /></View>
                     <View style={{ flex: 1 }}>
-                      <Text style={es.rowTitle} numberOfLines={1}>{a.request_item?.type}</Text>
+                      <Text style={es.rowTitle} numberOfLines={1}>{tradeTitle(a.request_item?.type)}</Text>
                       <Text style={es.rowSub} numberOfLines={1}>
                         {suburbOf(a.request_item?.request?.address_text)}
                         {a.paid_at ? ` · ${new Date(a.paid_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` : ''}

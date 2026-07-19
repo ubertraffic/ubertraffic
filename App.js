@@ -9,7 +9,7 @@ import PayJobSheet from './PayJobSheet';
 import { createRequest, listMyRequests } from './requestsService';
 import { submitRating, myRatingForAssignment } from './ratingsService';
 import { searchAddress, reverseGeocode } from './geocodeService';
-import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor, clientPickerGroups, featuredTrades, pickerFolders, searchTrades } from './taxonomyService';
+import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor, clientPickerGroups, featuredTrades, pickerFolders, searchTrades, tradeTitle } from './taxonomyService';
 import {
   setRole, setOnline, setVehicle, getMyProfile, updateMyName,
   setMyOperatorLocation, getOperatorCoverage, getDemandHeat,
@@ -874,7 +874,7 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
                     <TouchableOpacity key={t.id} onPress={() => { tap(); toggleTrade(t); }} activeOpacity={0.85}
                       style={[S_.tradeChip, on && S_.tradeChipOn]}>
                       {on && <Icon name="check" size={15} color="#fff" strokeWidth={3} />}
-                      <Text style={[S_.tradeChipT, on && S_.tradeChipTOn]}>{t.name}</Text>
+                      <Text style={[S_.tradeChipT, on && S_.tradeChipTOn]}>{tradeTitle(t.name)}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -1179,7 +1179,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
       // estimate for the pay sheet (server still computes the authoritative charge) — mirrors the
       // fee math: hourly items × the chosen hours, job-priced as-is, + travel. Passed through so the sheet never flashes $0.
       const estCents = items.reduce((s, it) => s + Math.round((Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : duration) * 100), 0) + Math.round((parseFloat(travel) || 0) * 100);
-      const estLabel = items[0]?.type || 'Job';
+      const estLabel = tradeTitle(items[0]?.type) || 'Job';
       setPhase('sent');
       setTimeout(() => { onPosted && onPosted(newId, estCents, estLabel); }, 1100);   // let the "sent" beat land, then drop home
     } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
@@ -1234,7 +1234,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
               <View style={{ marginBottom: 8 }}>
                 {items.map((it) => (
                   <View key={it.trade_id} style={SH.itemChip}>
-                    <Text style={SH.itemChipT}>{it.type}{it.qty > 1 ? ` ×${it.qty}` : ''} · ${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text>
+                    <Text style={SH.itemChipT}>{tradeTitle(it.type)}{it.qty > 1 ? ` ×${it.qty}` : ''} · ${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text>
                     <TouchableOpacity onPress={() => removeItemS(it.trade_id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={SH.itemChipX}>✕</Text></TouchableOpacity>
                   </View>
                 ))}
@@ -1302,7 +1302,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                         : <View style={[SH.wrapChips, { marginTop: 14 }]}>
                             {pickHits.map((t) => (
                               <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: C.indigo }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
-                                <Text style={SH.pickT}>{t.name}</Text>
+                                <Text style={SH.pickT}>{tradeTitle(t.name)}</Text>
                               </TouchableOpacity>
                             ))}
                           </View>
@@ -1315,7 +1315,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                             <View style={pk.featWrap}>
                               {featured.map((t) => (
                                 <TouchableOpacity key={t.id} style={pk.featChip} onPress={() => pickTrade(t)} activeOpacity={0.85}>
-                                  <Text style={pk.featChipT}>{t.name}</Text>
+                                  <Text style={pk.featChipT}>{tradeTitle(t.name)}</Text>
                                 </TouchableOpacity>
                               ))}
                             </View>
@@ -1340,7 +1340,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                                 <View style={[SH.wrapChips, { marginTop: 4, marginBottom: 12 }]}>
                                   {f.trades.map((t) => (
                                     <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: f.color }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
-                                      <Text style={SH.pickT}>{t.name}</Text>
+                                      <Text style={SH.pickT}>{tradeTitle(t.name)}</Text>
                                     </TouchableOpacity>
                                   ))}
                                 </View>
@@ -1469,7 +1469,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
               <>
                 <View style={SH.reviewCard}>
                   {items.map((it) => (
-                    <View key={it.trade_id} style={SH.reviewRow}><Text style={SH.reviewName}>{it.type}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text><Text style={SH.reviewRate}>${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text></View>
+                    <View key={it.trade_id} style={SH.reviewRow}><Text style={SH.reviewName}>{tradeTitle(it.type)}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text><Text style={SH.reviewRate}>${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text></View>
                   ))}
                   <View style={SH.reviewDiv} />
                   <View style={SH.reviewRow}><Text style={SH.reviewMeta}>{loc || 'No location'}</Text></View>
@@ -2002,7 +2002,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
 function NeedsYouCard({ r, onOpen }) {
   const items = r.request_items || [];
   const suburb = (r.address_text || 'No location').split(',')[0];
-  const summary = items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ');
+  const summary = items.map((it) => it.qty > 1 ? `${tradeTitle(it.type)} ×${it.qty}` : tradeTitle(it.type)).join(' · ');
   return (
     <TouchableOpacity style={S_.needsCard} onPress={onOpen} activeOpacity={0.85}>
       <View style={{ flex: 1 }}>
@@ -2115,7 +2115,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
     setBusy(true); setMsg('');
     try {
       const id = await createRequest({ when_type: when, address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items });
-      const summary = items.map((i) => i.qty > 1 ? `${i.type} ×${i.qty}` : i.type).join(' · ') + (loc ? `  ·  ${loc}` : '');
+      const summary = items.map((i) => i.qty > 1 ? `${tradeTitle(i.type)} ×${i.qty}` : tradeTitle(i.type)).join(' · ') + (loc ? `  ·  ${loc}` : '');
       setSearchReq({ id, summary });
       setItems([]); setLoc(''); setCoords(null); setStep(1);
       setMode('searching');
@@ -2177,7 +2177,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
                 <View style={S_.composeIcon}><Icon name={iconForType(it.type, it.kind)} size={20} color={C.indigo} /></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={T.bodyStrong}>{it.type}{it.qty > 1 ? `  ×${it.qty}` : ''}</Text>
+                  <Text style={T.bodyStrong}>{tradeTitle(it.type)}{it.qty > 1 ? `  ×${it.qty}` : ''}</Text>
                   <Text style={[T.label, { fontSize: 10, marginTop: 1, color: C.mute }]}>{it.kind === 'task' ? 'Community runner' : it.kind === 'crew' ? it.tickets.join(' · ') : 'Wet · with driver'}</Text>
                 </View>
                 {it.kind !== 'gear' && (
@@ -2392,7 +2392,7 @@ function ActivityCard({ r }) {
   const fee = Number(r.settle_fee || 0);
   const net = Number(r.settle_net || 0);
   const d = new Date(r.created_at);
-  const summary = items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ');
+  const summary = items.map((it) => it.qty > 1 ? `${tradeTitle(it.type)} ×${it.qty}` : tradeTitle(it.type)).join(' · ');
   // Pull the real payment record the first time the receipt is opened — the reference + paid date
   // turn "Settled" into a receipt the client can trust and keep.
   useEffect(() => { if (open && pay === null) getPaymentForRequest(r.id).then((p) => setPay(p || false)); }, [open]);
@@ -2444,7 +2444,7 @@ function buildJobInfo({ a, it, r, workerName }) {
   const rows = [];
   const who = workerName || a?.operator?.full_name;
   if (who) rows.push({ label: 'Worker', value: who.split(' ')[0] });
-  if (it?.type) rows.push({ label: 'Job', value: it.type });
+  if (it?.type) rows.push({ label: 'Job', value: tradeTitle(it.type) });
   if (r?.address_text) rows.push({ label: 'Site', value: r.address_text });
   // who to ask for on arrival (falls back to nothing if the client is the unnamed contact)
   if (r?.site_contact_name) {

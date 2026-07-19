@@ -7,6 +7,7 @@ import Icon, { iconForType } from './Icon';
 import { repLine, requestHasStall, autoReleaseIn, friendly, suburbOf, EmptyState, SlidingText } from './components';
 import { searchAddress } from './geocodeService';
 import { useCountUp } from './Motion';
+import { tradeTitle } from './taxonomyService';
 
 export function RateCard({ it, onChange }) {
   const [floor, lo, hi] = RATES[it.type] || [45, 55, 85];
@@ -28,7 +29,7 @@ export function RateCard({ it, onChange }) {
   return (
     <View style={[S_.card, { marginBottom: 12 }]}>
       <View style={S_.rowBetween}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icon name={iconForType(it.type, it.kind)} size={16} color={C.ink} /><Text style={T.bodyStrong}>{it.type}</Text></View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icon name={iconForType(it.type, it.kind)} size={16} color={C.ink} /><Text style={T.bodyStrong}>{tradeTitle(it.type)}</Text></View>
         <Text style={T.money}>${it.rate}<Text style={{ fontSize: 12, color: C.mute }}>/hr</Text></Text>
       </View>
 
@@ -286,7 +287,7 @@ export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onTogg
             <Icon name={iconForType(it?.type, it?.kind)} size={22} color={accent} strokeWidth={2} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={jc.trade} numberOfLines={1}>{it?.type}{multi ? `  ·  ${qty}` : ''}</Text>
+            <Text style={jc.trade} numberOfLines={1}>{tradeTitle(it?.type)}{multi ? `  ·  ${qty}` : ''}</Text>
             {/* Two tidy fixed lines instead of one scrolling line — nothing is ever cut off, and the
                 two differentiators that make near/now jobs read apart from far/booked ones lead: */}
             {/*  LINE 1 — WHEN + how far (the decision drivers), bold and coloured */}
@@ -422,7 +423,7 @@ export function TaskPriceCard({ it, onChange }) {
   return (
     <View style={[S_.card, { marginBottom: 12 }]}>
       <View style={S_.rowBetween}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icon name="task" size={16} color={C.ink} /><Text style={T.bodyStrong}>{it.type}</Text></View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icon name="task" size={16} color={C.ink} /><Text style={T.bodyStrong}>{tradeTitle(it.type)}</Text></View>
         <Text style={T.money}>${it.rate}<Text style={{ fontSize: 12, color: C.mute }}>/job</Text></Text>
       </View>
       <Text style={[T.small, { color: C.mute, marginTop: 2, marginBottom: 12 }]}>Community runner — a flat price for the whole job.</Text>
@@ -483,7 +484,7 @@ export function MiniReqCard({ r, onOpen }) {
         <Text style={{ color: C.mute2, fontSize: 16, marginLeft: 2 }}>›</Text>
       </View>
       <Text style={[T.small, { color: C.mute, marginTop: 3 }]} numberOfLines={1}>
-        {items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ')}
+        {items.map((it) => it.qty > 1 ? `${tradeTitle(it.type)} ×${it.qty}` : tradeTitle(it.type)).join(' · ')}
       </Text>
       <View style={S_.progThin}><View style={[S_.progThinFill, { width: `${Math.max(pct, 4)}%`, backgroundColor: allDone ? C.green : filled === 0 ? C.line2 : C.indigo }]} /></View>
     </TouchableOpacity>
@@ -686,7 +687,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
               <View style={S_.doneCheck}><Text style={S_.doneCheckT}>✓</Text></View>
               <Text style={S_.doneTitle}>All {needed === 1 ? 'work' : `${needed} spots`} complete</Text>
               <Text style={S_.doneSub}>
-                {items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ')}{r.address_text ? ` · ${r.address_text.split(',')[0]}` : ''}
+                {items.map((it) => it.qty > 1 ? `${tradeTitle(it.type)} ×${it.qty}` : tradeTitle(it.type)).join(' · ')}{r.address_text ? ` · ${r.address_text.split(',')[0]}` : ''}
               </Text>
               <TouchableOpacity onPress={() => setShowSpots((s) => !s)} style={{ marginTop: 10 }}>
                 <Text style={[T.label, { fontSize: 10, color: C.mute }]}>{showSpots ? 'Hide spot detail ▲' : 'See each spot ▾'}</Text>
@@ -703,7 +704,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
             return (
               <View key={it.id} style={S_.detailItem}>
                 <View style={S_.rowBetween}>
-                  <Text style={[T.bodyStrong, { fontSize: 14 }]}>{it.type}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text>
+                  <Text style={[T.bodyStrong, { fontSize: 14 }]}>{tradeTitle(it.type)}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text>
                   {!isCancelled && <Text style={[T.data, { color: c >= it.qty ? C.green : C.mute }]}>{c}/{it.qty}</Text>}
                 </View>
                 {isCancelled
@@ -712,7 +713,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
                   ? <Text style={[T.small, { marginTop: 3 }]}>Waiting for a worker to accept…</Text>
                   : a.map((x, k) => (
                       <View key={x.id || k}>
-                        <OperatorCard a={x} tradeType={it.type} />
+                        <OperatorCard a={x} tradeType={tradeTitle(it.type)} />
                         <StageTracker a={x} spotLabel={it.qty > 1 ? `Spot ${k + 1}` : null} />
                       </View>
                     ))}
@@ -943,7 +944,7 @@ export function jobTitle(items) {
   if (list.length === 0) return 'Job';
   if (list.length === 1) {
     const it = list[0];
-    return it.qty > 1 ? `${it.type} · ${it.qty} needed` : it.type;
+    return it.qty > 1 ? `${tradeTitle(it.type)} · ${it.qty} needed` : tradeTitle(it.type);
   }
   // multiple trades: lead with the trade needing the most people (the "main" work),
   // then note how many other roles round out the job — "Excavator + 3 more".

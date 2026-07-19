@@ -16,12 +16,12 @@ const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Li
 // "Add more" folders, in order. Everything you DON'T already hold gets tucked into one of these,
 // collapsed by default, so the screen opens short instead of listing 40 tickets at once.
 const CATS = [
-  { key: 'baseline', label: 'The basics', sub: 'White Card, driver licence' },
-  { key: 'ticket', label: 'Tickets', sub: 'Traffic control, rail, asbestos…' },
-  { key: 'induction', label: 'Inductions', sub: 'Site & safety inductions' },
-  { key: 'licence', label: 'Trade licences', sub: 'Your trade qualifications' },
-  { key: 'hrwl', label: 'High-risk work licences', sub: 'Cranes, rigging, scaffolding…' },
-  { key: 'insurance', label: 'Insurance', sub: 'Public liability & more' },
+  { key: 'baseline', label: 'The basics', sub: 'White Card, driver licence', icon: 'crew', color: C.green },
+  { key: 'ticket', label: 'Tickets', sub: 'Traffic control, rail, asbestos…', icon: 'verified', color: C.indigo },
+  { key: 'induction', label: 'Inductions', sub: 'Site & safety inductions', icon: 'check', color: '#B87514' },
+  { key: 'licence', label: 'Trade licences', sub: 'Your trade qualifications', icon: 'jobs', color: '#2C6E8F' },
+  { key: 'hrwl', label: 'High-risk work licences', sub: 'Cranes, rigging, scaffolding…', icon: 'gear', color: '#C0492B' },
+  { key: 'insurance', label: 'Insurance', sub: 'Public liability & more', icon: 'insurance', color: C.green },
 ];
 const catOf = (t) => (t.needs_provider ? 'insurance' : (t.self_declared ? 'licence' : (t.tier || 'ticket')));
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -393,15 +393,20 @@ export default function CredentialsScreen({ onClose }) {
             <Text style={styles.sectionH}>ADD MORE</Text>
             {addCats.map(({ cat, items }) => {
               const open = !!openCat[cat.key];
+              const accent = cat.color || C.indigo;
               return (
-                <View key={cat.key} style={styles.folder}>
+                <View key={cat.key} style={[styles.folder, open && { borderColor: accent + '44', borderWidth: 1 }]}>
                   <TouchableOpacity style={styles.folderHead} activeOpacity={0.7}
                     onPress={() => setOpenCat((p) => ({ ...p, [cat.key]: !open }))}>
+                    <View style={[styles.folderGlyph, { backgroundColor: accent + '18' }]}>
+                      <Icon name={cat.icon || 'verified'} size={19} color={accent} strokeWidth={2.1} />
+                    </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.folderTitle}>{cat.label}</Text>
-                      <Text style={styles.folderSub}>{open ? cat.sub : `${items.length} ${items.length === 1 ? 'option' : 'options'}`}</Text>
+                      <Text style={styles.folderSub}>{cat.sub}</Text>
                     </View>
-                    <Text style={[styles.folderChev, open && { transform: [{ rotate: '90deg' }] }]}>›</Text>
+                    {!open && <View style={styles.folderCount}><Text style={styles.folderCountT}>{items.length}</Text></View>}
+                    <Icon name={open ? 'chevronUp' : 'chevronDown'} size={18} color={C.mute2} strokeWidth={2.4} />
                   </TouchableOpacity>
                   {open && <View style={styles.folderBody}>{items.map(renderRow)}</View>}
                 </View>
@@ -464,9 +469,11 @@ const styles = StyleSheet.create({
   sectionH: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.8, marginTop: 8, marginBottom: 10 },
   sectionSub: { fontSize: 12.5, color: C.mute, lineHeight: 17, marginTop: -4, marginBottom: 12 },
   folder: { backgroundColor: C.panel, borderRadius: R.lg, marginBottom: 10, ...shadowSm, overflow: 'hidden' },
-  folderHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 16 },
+  folderHead: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 14 },
+  folderGlyph: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   folderTitle: { fontSize: 15.5, fontWeight: '800', color: C.ink, letterSpacing: -0.2 },
-  folderSub: { fontSize: 12.5, color: C.mute, marginTop: 3, fontWeight: '600' },
-  folderChev: { fontSize: 24, color: C.mute2, fontWeight: '300', paddingHorizontal: 4 },
+  folderSub: { fontSize: 12.5, color: C.mute, marginTop: 2, fontWeight: '600' },
+  folderCount: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: C.canvas, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  folderCountT: { fontSize: 12, fontWeight: '800', color: C.mute },
   folderBody: { paddingHorizontal: 10, paddingBottom: 8 },
 });
