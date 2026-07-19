@@ -1,28 +1,38 @@
-// Invoice.js — the client-facing invoice/receipt for a completed job. Auto-generated from the settled
-// job (nothing typed by hand), shown after payment and shareable. The GST/seller labelling is kept as
-// a light config (GST off by default) so the exact tax-invoice wording can be switched on once the
-// accounting structure is confirmed — the numbers and layout don't change.
+// Invoice.js — the client-facing invoice for a completed job, built to the ATO tax-invoice rules.
+// Auto-generated from the settled job + the real Stripe charge (nothing typed). Model: the worker is
+// the SELLER, SiteCall facilitates. Seller ABN/licence come from a party-gated definer lookup (0070).
 //
-// Props: visible, request (a settled request with request_items[].assignments[].operator), payment
-// (from getPaymentForRequest — for the authoritative charged total + tip/travel + paid date), onClose.
+// ATO fields covered: "Tax invoice" heading (GST-registered only), seller name + ABN, date, item
+// descriptions (qty + price), GST as a separate line; buyer identity/ABN when total ≥ $1,000; NSW
+// contractor licence line for licensed trades. Not GST-registered → a plain "Invoice", no GST.
+//
+// Props: visible, request (settled request w/ request_items[].assignments[].operator), payment, onClose.
 import React, { useEffect, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, ScrollView, StyleSheet, Share, Platform } from 'react-native';
 import { C, R, S, T, shadowSm } from './theme';
 import { getMyIdentity } from './accountService';
+import { getInvoiceSellers } from './paymentsService';
 
-const money = (cents) => `$${((Number(cents) || 0) / 100).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const d$ = (dollars) => `$${(Number(dollars) || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtAbn = (abn) => {
+  const s = String(abn || '').replace(/\D/g, '');
+  return /^\d{11}$/.test(s) ? s.replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4') : (abn || '');
+};
 
 export default function Invoice({ visible, request, payment, onClose }) {
-  const [biz, setBiz] = useState(null);   // the client's own name/company for the "Bill to" block
-  useEffect(() => { if (visible) getMyIdentity().then(setBiz).catch(() => setBiz({})); }, [visible]);
+  const [biz, setBiz] = useState(null);        // buyer (the client — their own name/ABN)
+  const [sellers, setSellers] = useState([]);  // worker seller details (name/abn/licence/gst)
+  useEffect(() => {
+    if (!visible || !request) return;
+    getMyIdentity().then(setBiz).catch(() => setBiz({}));
+    getInvoiceSellers(request.id).then(setSellers).catch(() => setSellers([]));
+  }, [visible, request?.id]);
 
   if (!request) return null;
   const r = request;
   const items = r.request_items || [];
   const hours = Number(r.duration_hours) || 4;
 
-  // Line items straight from the job — labour billed rate x hours x qty, tasks billed rate x qty.
   const lines = items.map((it) => {
     const qty = Number(it.qty) || 1;
     const rate = Number(it.rate ?? it.rate_offered) || 0;
@@ -30,42 +40,45 @@ export default function Invoice({ visible, request, payment, onClose }) {
     const amount = isTask ? rate * qty : rate * hours * qty;
     return {
       label: it.type || 'Labour',
-      detail: isTask ? `${qty} × job @ ${d$(rate)}` : `${qty} × ${hours}h @ ${d$(rate)}/hr`,
+      detail: isTask ? `${qty} × job @ ${d$(rate)}` : `${qty} worker${qty > 1 ? 's' : ''} × ${hours}h @ ${d$(rate)}/hr`,
       amount,
     };
   });
-  const doneAssigns = items.flatMap((it) => (it.assignments || []).filter((a) => ['complete', 'approved'].includes(a.status)));
-  const workers = [...new Set(doneAssigns.map((a) => a.operator?.full_name).filter(Boolean))];
-  // GST only when a worker on the job is GST-registered (most aren't → no GST line at all). Prices are
-  // GST-inclusive, so we break out the 10% already inside the labour rather than adding anything on top.
-  const gstApplies = doneAssigns.some((a) => a.operator?.gst_registered);
 
   const labourOnly = lines.reduce((n, l) => n + l.amount, 0);
   const travel = (Number(payment?.travel_cents) || 0) / 100;
   const tip = (Number(payment?.tip_cents) || 0) / 100;
-  const lineSubtotal = labourOnly + travel + tip;
-  // The Stripe charge is the source of truth for what was actually paid; fall back to the computed sum.
-  const paidTotal = payment?.amount_cents != null ? Number(payment.amount_cents) / 100 : lineSubtotal;
-  const gst = gstApplies ? labourOnly / 11 : 0;   // GST-inclusive: 1/11th of the labour
+  const computed = labourOnly + travel + tip;
+  const paidTotal = payment?.amount_cents != null ? Number(payment.amount_cents) / 100 : computed;
+
+  const gstApplies = (sellers || []).some((sll) => sll.gst_registered);
+  const gst = gstApplies ? paidTotal / 11 : 0;         // GST-inclusive: 1/11th of the (inclusive) total
+  const exGst = paidTotal - gst;
+  const bigInvoice = paidTotal >= 1000;                 // ≥ $1,000 → buyer identity/ABN required
 
   const invNo = `SC-INV-${String(r.id || '').replace(/-/g, '').slice(-8).toUpperCase()}`;
   const issued = payment?.updated_at || payment?.created_at || r.approved_at || r.created_at;
-  const issuedStr = issued ? new Date(issued).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  const issuedStr = issued ? new Date(issued).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
   const billTo = biz?.company_name || biz?.legal_name || 'Client';
+  const billAbn = biz?.company_abn ? fmtAbn(biz.company_abn) : null;
+
+  const travelTip = [travel ? { label: 'Travel allowance', amount: travel } : null, tip ? { label: 'Tip', amount: tip } : null].filter(Boolean);
 
   async function share() {
+    const sellerLines = (sellers || []).map((sll) =>
+      `${sll.name || 'Contractor'}  ABN ${fmtAbn(sll.abn)}${sll.licence ? `  · NSW Lic ${sll.licence}` : ''}`);
     const body = [
-      `INVOICE ${invNo}`,
-      issuedStr && `Issued ${issuedStr}`,
-      `Bill to: ${billTo}`,
-      workers.length ? `Work by: ${workers.join(', ')} (via SiteCall)` : null,
-      r.address_text ? `Site: ${r.address_text}` : null,
+      gstApplies ? 'TAX INVOICE' : 'INVOICE',
+      ...sellerLines,
+      `Invoice No: ${invNo}`,
+      issuedStr && `Date issued: ${issuedStr}`,
+      `Bill to: ${billTo}${bigInvoice && billAbn ? `  ABN ${billAbn}` : ''}`,
       '',
       ...lines.map((l) => `${l.label} — ${l.detail}: ${d$(l.amount)}`),
-      travel ? `Travel allowance: ${d$(travel)}` : null,
-      tip ? `Tip: ${d$(tip)}` : null,
-      gstApplies ? `Incl. GST: ${d$(gst)}` : null,
-      `TOTAL PAID: ${d$(paidTotal)}`,
+      ...travelTip.map((l) => `${l.label}: ${d$(l.amount)}`),
+      gstApplies ? `Subtotal (excl. GST): ${d$(exGst)}` : null,
+      gstApplies ? `GST (10%): ${d$(gst)}` : null,
+      `Total${gstApplies ? ' (incl. GST)' : ''}: ${d$(paidTotal)}  — PAID`,
       '',
       'Facilitated by SiteCall. Paid securely via Stripe.',
     ].filter(Boolean).join('\n');
@@ -78,66 +91,65 @@ export default function Invoice({ visible, request, payment, onClose }) {
         <View style={s.sheet}>
           <View style={s.grip} />
           <View style={s.head}>
-            <View>
-              <Text style={s.brand}>SiteCall</Text>
-              <Text style={s.brandSub}>{gstApplies ? 'Tax invoice' : 'Invoice'} · facilitated marketplace</Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <View style={s.paidPill}><Text style={s.paidPillT}>PAID</Text></View>
-              <Text style={s.invNo}>{invNo}</Text>
-            </View>
+            <Text style={s.docType}>{gstApplies ? 'TAX INVOICE' : 'INVOICE'}</Text>
+            <View style={s.paidPill}><Text style={s.paidPillT}>PAID</Text></View>
           </View>
 
-          <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false}>
-            <View style={s.metaRow}>
+          <ScrollView style={{ maxHeight: 470 }} showsVerticalScrollIndicator={false}>
+            {/* SELLER (worker) — name, ABN, NSW licence */}
+            {(sellers || []).length ? (sellers || []).map((sll, i) => (
+              <View key={sll.operator_id || i} style={i > 0 ? { marginTop: 8 } : null}>
+                <Text style={s.sellerName}>{sll.name || 'Contractor'}</Text>
+                <Text style={s.sellerLine}>ABN {fmtAbn(sll.abn) || '—'}</Text>
+                {sll.licence ? <Text style={s.sellerLine}>NSW contractor licence {sll.licence}</Text> : null}
+              </View>
+            )) : (
+              <Text style={s.sellerLine}>Contractor details loading…</Text>
+            )}
+
+            <View style={s.metaGrid}>
+              <View style={s.metaCell}><Text style={s.metaLabel}>Invoice no.</Text><Text style={s.metaVal}>{invNo}</Text></View>
+              <View style={s.metaCell}><Text style={s.metaLabel}>Date issued</Text><Text style={s.metaVal}>{issuedStr || '—'}</Text></View>
+            </View>
+            <View style={[s.metaGrid, { marginTop: 8 }]}>
               <View style={{ flex: 1 }}>
                 <Text style={s.metaLabel}>Bill to</Text>
-                <Text style={s.metaVal}>{billTo}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.metaLabel}>Issued</Text>
-                <Text style={s.metaVal}>{issuedStr || '—'}</Text>
+                <Text style={s.metaVal}>{billTo}{bigInvoice && billAbn ? `  ·  ABN ${billAbn}` : ''}</Text>
+                {bigInvoice && !billAbn ? <Text style={s.warn}>Add your business ABN in Account for invoices over $1,000.</Text> : null}
               </View>
             </View>
-            {workers.length ? (
-              <View style={[s.metaRow, { marginTop: 10 }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.metaLabel}>Work by</Text>
-                  <Text style={s.metaVal}>{workers.join(', ')}</Text>
-                </View>
-                {r.address_text ? (
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.metaLabel}>Site</Text>
-                    <Text style={s.metaVal} numberOfLines={2}>{r.address_text}</Text>
-                  </View>
-                ) : null}
-              </View>
-            ) : null}
+            {r.address_text ? <Text style={[s.metaLabel, { marginTop: 8 }]}>Site: <Text style={s.siteVal}>{r.address_text}</Text></Text> : null}
 
             <View style={s.divider} />
+            <View style={s.lineHead}><Text style={s.lineHeadT}>Description</Text><Text style={s.lineHeadT}>Amount</Text></View>
             {lines.map((l, i) => (
               <View key={i} style={s.lineRow}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={s.lineLabel}>{l.label}</Text>
                   <Text style={s.lineDetail}>{l.detail}</Text>
                 </View>
                 <Text style={s.lineAmt}>{d$(l.amount)}</Text>
               </View>
             ))}
-            {travel ? <View style={s.lineRow}><Text style={[s.lineLabel, { flex: 1 }]}>Travel allowance</Text><Text style={s.lineAmt}>{d$(travel)}</Text></View> : null}
-            {tip ? <View style={s.lineRow}><Text style={[s.lineLabel, { flex: 1 }]}>Tip</Text><Text style={s.lineAmt}>{d$(tip)}</Text></View> : null}
+            {travelTip.map((l, i) => (
+              <View key={`e${i}`} style={s.lineRow}><Text style={[s.lineLabel, { flex: 1 }]}>{l.label}</Text><Text style={s.lineAmt}>{d$(l.amount)}</Text></View>
+            ))}
 
             <View style={s.divider} />
             {gstApplies ? (
-              <View style={s.totRow}><Text style={s.totLabel}>Includes GST (10%)</Text><Text style={s.totVal}>{d$(gst)}</Text></View>
+              <>
+                <View style={s.totRow}><Text style={s.totLabel}>Subtotal (excl. GST)</Text><Text style={s.totVal}>{d$(exGst)}</Text></View>
+                <View style={s.totRow}><Text style={s.totLabel}>GST (10%)</Text><Text style={s.totVal}>{d$(gst)}</Text></View>
+              </>
             ) : null}
-            <View style={[s.totRow, { marginTop: 4 }]}>
-              <Text style={s.grandLabel}>Total paid</Text>
+            <View style={[s.totRow, { marginTop: 6 }]}>
+              <Text style={s.grandLabel}>Total{gstApplies ? ' (incl. GST)' : ''}</Text>
               <Text style={s.grandVal}>{d$(paidTotal)}</Text>
             </View>
 
             <Text style={s.footer}>
-              Facilitated by SiteCall. Paid securely via Stripe.{gstApplies ? ' Includes GST as shown.' : ''}
+              Facilitated by SiteCall. Paid in full securely via Stripe — no payment due.
+              {(sellers || []).length > 1 ? ' This job engaged multiple contractors.' : ''}
             </Text>
           </ScrollView>
 
@@ -154,24 +166,29 @@ export default function Invoice({ visible, request, payment, onClose }) {
 const s = StyleSheet.create({
   scrim: { flex: 1, backgroundColor: 'rgba(12,12,20,0.55)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: C.canvas, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 22, paddingTop: 10, paddingBottom: 32 },
-  grip: { width: 40, height: 5, borderRadius: 3, backgroundColor: C.line, alignSelf: 'center', marginBottom: 16 },
-  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 },
-  brand: { fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5 },
-  brandSub: { fontSize: 12, color: C.mute, fontWeight: '600', marginTop: 1 },
-  paidPill: { backgroundColor: C.greenSoft, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  grip: { width: 40, height: 5, borderRadius: 3, backgroundColor: C.line, alignSelf: 'center', marginBottom: 14 },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  docType: { fontSize: 20, fontWeight: '900', color: C.ink, letterSpacing: 0.5 },
+  paidPill: { backgroundColor: C.greenSoft, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
   paidPillT: { color: C.green, fontWeight: '900', fontSize: 11, letterSpacing: 0.6 },
-  invNo: { fontSize: 12, color: C.mute, fontWeight: '700', marginTop: 6, fontVariant: ['tabular-nums'] },
-  metaRow: { flexDirection: 'row', gap: 16 },
+  sellerName: { fontSize: 16, fontWeight: '900', color: C.ink },
+  sellerLine: { fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 2, fontVariant: ['tabular-nums'] },
+  metaGrid: { flexDirection: 'row', gap: 16, marginTop: 14 },
+  metaCell: { flex: 1 },
   metaLabel: { fontSize: 10.5, fontWeight: '800', color: C.mute2, letterSpacing: 0.4, textTransform: 'uppercase' },
-  metaVal: { fontSize: 14, fontWeight: '700', color: C.ink, marginTop: 3, lineHeight: 19 },
-  divider: { height: 1, backgroundColor: C.line, marginVertical: 16 },
-  lineRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12 },
+  metaVal: { fontSize: 13.5, fontWeight: '700', color: C.ink, marginTop: 3, lineHeight: 18 },
+  siteVal: { fontSize: 12.5, fontWeight: '600', color: C.mute, textTransform: 'none', letterSpacing: 0 },
+  warn: { fontSize: 11, color: C.amber, fontWeight: '700', marginTop: 3 },
+  divider: { height: 1, backgroundColor: C.line, marginVertical: 15 },
+  lineHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  lineHeadT: { fontSize: 10.5, fontWeight: '800', color: C.mute2, letterSpacing: 0.4, textTransform: 'uppercase' },
+  lineRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 11 },
   lineLabel: { fontSize: 14.5, fontWeight: '700', color: C.ink },
   lineDetail: { fontSize: 12.5, color: C.mute, marginTop: 2 },
   lineAmt: { fontSize: 14.5, fontWeight: '800', color: C.ink, fontVariant: ['tabular-nums'] },
-  totRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  totRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   totLabel: { fontSize: 13, color: C.mute, fontWeight: '600' },
-  totVal: { fontSize: 13, color: C.mute, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  totVal: { fontSize: 13, color: C.ink, fontWeight: '700', fontVariant: ['tabular-nums'] },
   grandLabel: { fontSize: 16, fontWeight: '900', color: C.ink },
   grandVal: { fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, fontVariant: ['tabular-nums'] },
   footer: { fontSize: 11.5, color: C.mute2, marginTop: 18, lineHeight: 16 },

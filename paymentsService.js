@@ -81,6 +81,14 @@ export async function listMyPayouts() {
   return data || [];
 }
 
+// Invoice seller details (worker business name + ABN + NSW licence + GST status) for a job, gated to
+// the job's parties by a definer function (migration 0070). The ABN is otherwise column-locked.
+export async function getInvoiceSellers(requestId) {
+  const { data, error } = await supabase.rpc('get_invoice_sellers', { p_request_id: requestId });
+  if (error) return [];
+  return data || [];
+}
+
 // Client: the payment record (the Stripe charge) behind a job — for a real receipt. Client-readable
 // via RLS (client_id = auth.uid()). Returns the latest row for the request, or null.
 export async function getPaymentForRequest(requestId) {
