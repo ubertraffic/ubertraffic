@@ -18,7 +18,7 @@ const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T
 // display status: self-declared cover expired past its date shows Expired even when 'unverified'.
 const displayStatus = (held) => (held && held.expires_at && held.expires_at < todayISO()) ? 'expired' : (held ? held.status : 'none');
 const STATUS_COLOR = { verified: C.green, unverified: C.amber, expired: C.red, suspended: C.red, review: C.amber, none: C.mute };
-const STATUS_LABEL = { verified: '✓ Verified', unverified: 'Unverified', expired: 'Expired', suspended: 'Suspended', review: 'In review' };
+const STATUS_LABEL = { verified: '✓ Verified', unverified: 'Added', expired: 'Expired', suspended: 'Suspended', review: 'Checking' };
 
 export default function CredentialsScreen({ onClose }) {
   const [types, setTypes] = useState(null);
@@ -44,9 +44,9 @@ export default function CredentialsScreen({ onClose }) {
     setAbnBusy(true); setAbnMsg('');
     try {
       const r = await verifyMyAbn();
-      if (r && r.status === 'verified') { setAbnStatus('verified'); setAbnMsg('✓ Verified against the ABR.'); }
-      else setAbnMsg(r && r.detail ? `Needs a check: ${r.detail}` : 'Sent for manual review.');
-    } catch (e) { setAbnMsg('Verify failed: ' + (e.message || String(e))); } finally { setAbnBusy(false); }
+      if (r && r.status === 'verified') { setAbnStatus('verified'); setAbnMsg('✓ Your ABN is confirmed.'); }
+      else setAbnMsg(r && r.detail ? r.detail : 'Added — we’ll take a closer look for you.');
+    } catch (e) { setAbnMsg('Couldn’t check that just now — please try again.'); } finally { setAbnBusy(false); }
   }
   const [idSaved, setIdSaved] = useState(null);       // { legal_name, date_of_birth } or null
   const [idEditing, setIdEditing] = useState(false);
@@ -78,10 +78,10 @@ export default function CredentialsScreen({ onClose }) {
     setVerifying(id); setMsg('');
     try {
       const res = await verifyMyCredential(id);
-      if (res && res.status === 'verified') setMsg('✓ Verified against the NSW register.');
-      else setMsg(res && res.detail ? `Sent for review: ${res.detail}` : 'Sent for manual review.');
+      if (res && res.status === 'verified') setMsg('✓ Verified.');
+      else setMsg(res && res.detail ? res.detail : 'Added — we’ll check this one for you.');
       await refresh();
-    } catch (e) { setMsg('Verify failed: ' + (e.message || String(e))); } finally { setVerifying(null); }
+    } catch (e) { setMsg('Couldn’t check that just now — please try again.'); } finally { setVerifying(null); }
   }
 
   const refresh = useCallback(async () => {
@@ -175,11 +175,11 @@ export default function CredentialsScreen({ onClose }) {
             </>
           )}
           <Text style={styles.hint}>{adding.self_declared
-            ? "Saved as self-declared — we record what you enter and flag it as expired past its date. We don't verify it against a register."
-            : "You'll be able to upload a photo of the card and get it verified. For now it's saved as unverified — verified tickets unlock high-risk jobs."}</Text>
+            ? "We'll save this as you enter it and remind you before it expires. No register to check it against — just keep it current."
+            : "Save it now, then check it or add a photo. Verified tickets open up the jobs that need them."}</Text>
           {!!msg && <Text style={styles.err}>{msg}</Text>}
           <TouchableOpacity style={[styles.primary, busy && { opacity: 0.6 }]} onPress={save} disabled={busy}>
-            <Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save credential'}</Text>
+            <Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save'}</Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -190,8 +190,8 @@ export default function CredentialsScreen({ onClose }) {
     <View style={styles.screen}>
       <View style={styles.head}>
         {onClose && <TouchableOpacity onPress={onClose}><Text style={styles.back}>‹ Done</Text></TouchableOpacity>}
-        <Text style={styles.h1}>Tickets & expiry</Text>
-        <Text style={styles.tier}>Verified tickets unlock the jobs that require them.</Text>
+        <Text style={styles.h1}>Your tickets</Text>
+        <Text style={styles.tier}>Add your White Card and any licences — verified ones open up more jobs.</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
         {caps && (
@@ -199,20 +199,20 @@ export default function CredentialsScreen({ onClose }) {
             <View style={styles.capRow}>
               <Text style={styles.capIcon}>{caps.can_work ? '✓' : '○'}</Text>
               <Text style={[styles.capText, caps.can_work && styles.capOn]}>
-                {caps.can_work ? 'Cleared for site work' : 'Add a verified White Card to work sites'}
+                {caps.can_work ? 'Cleared for site work' : 'Add your White Card to work on sites'}
               </Text>
             </View>
             <View style={styles.capRow}>
               <Text style={styles.capIcon}>{caps.can_task ? '✓' : '○'}</Text>
               <Text style={[styles.capText, caps.can_task && styles.capOn]}>
-                {caps.can_task ? 'Cleared for driving tasks' : 'Add a verified licence + vehicle for tasks'}
+                {caps.can_task ? 'Cleared for driving tasks' : 'Add a licence + vehicle for driving tasks'}
               </Text>
             </View>
           </View>
         )}
         {/* Identity — legal name + DOB. The anchor a register/DVS check matches against. Sensitive PII. */}
         <View style={styles.abnCard}>
-          <Text style={styles.abnLabel}>Your identity</Text>
+          <Text style={styles.abnLabel}>About you</Text>
           {idSaved && !idEditing ? (
             <View style={styles.abnRow}>
               <View style={{ flex: 1 }}>
@@ -225,14 +225,14 @@ export default function CredentialsScreen({ onClose }) {
             </View>
           ) : (
             <>
-              <Text style={styles.abnHint}>Your full legal name and date of birth — used only to check your tickets & licences against the registers, never shown publicly.</Text>
+              <Text style={styles.abnHint}>Your full name and date of birth — used only to check your tickets, never shown to anyone.</Text>
               <Text style={styles.label}>Full legal name</Text>
               <TextInput style={styles.input} value={idName} onChangeText={setIdName} placeholder="As on your licence / White Card" placeholderTextColor={C.mute2} />
               <Text style={styles.label}>Date of birth</Text>
               <TextInput style={styles.input} value={idDob} onChangeText={(t) => setIdDob(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
               {!!idMsg && <Text style={styles.err}>{idMsg}</Text>}
               <TouchableOpacity style={[styles.abnSave, idBusy && { opacity: 0.5 }]} disabled={idBusy} onPress={saveIdentity}>
-                <Text style={styles.abnSaveT}>{idBusy ? 'Saving…' : 'Save identity'}</Text>
+                <Text style={styles.abnSaveT}>{idBusy ? 'Saving…' : 'Save'}</Text>
               </TouchableOpacity>
             </>
           )}
@@ -248,7 +248,7 @@ export default function CredentialsScreen({ onClose }) {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.abnValue}>{formatAbn(abnSaved)}</Text>
                   <Text style={[styles.abnOk, abnStatus !== 'verified' && { color: C.mute }]}>
-                    {abnStatus === 'verified' ? '✓ Verified against the ABR' : 'Valid format · not yet register-checked'}
+                    {abnStatus === 'verified' ? '✓ Confirmed with the ABR' : 'Saved — not checked yet'}
                   </Text>
                 </View>
                 <TouchableOpacity onPress={() => { setAbnInput(abnSaved); setAbnSaved(null); setAbnMsg(''); }}>
@@ -257,7 +257,7 @@ export default function CredentialsScreen({ onClose }) {
               </View>
               {abnStatus !== 'verified' && (
                 <TouchableOpacity style={[styles.abnSave, abnBusy && { opacity: 0.5 }]} disabled={abnBusy} onPress={verifyAbn}>
-                  <Text style={styles.abnSaveT}>{abnBusy ? 'Checking…' : 'Verify against the ABR'}</Text>
+                  <Text style={styles.abnSaveT}>{abnBusy ? 'Checking…' : 'Check my ABN'}</Text>
                 </TouchableOpacity>
               )}
               {!!abnMsg && <Text style={[styles.hint, { marginTop: 8 }]}>{abnMsg}</Text>}
@@ -314,7 +314,7 @@ export default function CredentialsScreen({ onClose }) {
                         onPress={() => verify(held.id)}
                         disabled={verifying === held.id}
                       >
-                        <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Verify'}</Text>
+                        <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Check'}</Text>
                       </TouchableOpacity>
                     )}
                     {/* photo ID toggle for the no-register interim */}
