@@ -168,9 +168,11 @@ export default function CredentialsScreen({ onClose }) {
   }
 
   // Partition: what you hold (shown up top) vs what you could add (grouped into collapsible folders).
-  const heldList = types.filter((t) => heldById[t.id]);
+  // `types` is null until loaded — guard so we never .filter(null) before the loading return below.
+  const typeList = types || [];
+  const heldList = typeList.filter((t) => heldById[t.id]);
   const notHeldByCat = {};
-  types.filter((t) => !heldById[t.id]).forEach((t) => { const k = catOf(t); (notHeldByCat[k] = notHeldByCat[k] || []).push(t); });
+  typeList.filter((t) => !heldById[t.id]).forEach((t) => { const k = catOf(t); (notHeldByCat[k] = notHeldByCat[k] || []).push(t); });
   const addCats = CATS.map((cat) => ({ cat, items: notHeldByCat[cat.key] || [] })).filter((g) => g.items.length > 0);
 
   function resetAddForm() { setAdding(null); setNumber(''); setExpiry(''); setProvider(''); setCardNumber(''); setCredState('NSW'); setMsg(''); }
