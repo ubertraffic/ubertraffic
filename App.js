@@ -2317,6 +2317,8 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
 // Australian financial year (1 Jul – 30 Jun) for the spend summaries.
 function auFyStartC(d = new Date()) { const july1 = new Date(d.getFullYear(), 6, 1); return d >= july1 ? july1 : new Date(d.getFullYear() - 1, 6, 1); }
 function auFyLabelC(d = new Date()) { const s = auFyStartC(d); return `FY${String(s.getFullYear()).slice(2)}–${String(s.getFullYear() + 1).slice(2)}`; }
+// Monday-anchored start of the current week (local midnight), for the "This week" spend window.
+function weekStartC(d = new Date()) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); const dow = (x.getDay() + 6) % 7; x.setDate(x.getDate() - dow); return x; }
 
 function ClientActivity({ session }) {
   const [mine, setMine] = useState(() => cacheGet('client-requests'));   // shares Requests' cache → instant
@@ -2324,29 +2326,41 @@ function ClientActivity({ session }) {
     try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); }
     catch { setMine((p) => (p == null ? [] : p)); }
   })(); }, []);
+  const [period, setPeriod] = useState('month');   // week · month · year (plain English, no "FY" jargon)
   const done = (mine || []).filter((r) => r.status === 'complete');
   const spent = done.reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
-  const fyStart = auFyStartC().getTime(), moStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+  const now = new Date();
+  const starts = { week: weekStartC(now).getTime(), month: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), year: auFyStartC(now).getTime() };
   const spentWhen = (r) => new Date(r.approved_at || r.created_at || 0).getTime();
-  const fySpent = done.filter((r) => spentWhen(r) >= fyStart).reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
-  const moSpent = done.filter((r) => spentWhen(r) >= moStart).reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
+  const inPeriod = done.filter((r) => spentWhen(r) >= starts[period]);
+  const periodSpent = inPeriod.reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
+  const periodCaption = period === 'week' ? 'this week'
+    : period === 'month' ? now.toLocaleDateString('en-AU', { month: 'long' })
+    : 'financial year so far';
+  const PERIODS = [['week', 'This week'], ['month', 'This month'], ['year', 'This year']];
   return (
     <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <Text style={T.eyebrow}>Activity</Text>
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 24 }]}>
-        <Text style={T.label}>Total spent · completed jobs</Text>
+        <Text style={T.label}>Total spent · all time</Text>
         <Text style={[T.dataBig, { fontSize: 34, color: C.ink, marginTop: 6 }]}>${spent.toLocaleString()}</Text>
         <Text style={[T.small, { marginTop: 2 }]}>{done.length} job{done.length !== 1 ? 's' : ''} completed</Text>
       </View>
-      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 4 }}>
-        <View style={[S_.card, { flex: 1, marginTop: 0 }]}>
-          <Text style={[T.label, { fontSize: 10 }]}>This year · {auFyLabelC()}</Text>
-          <Text style={[T.heading, { marginTop: 4 }]}>${fySpent.toLocaleString()}</Text>
-        </View>
-        <View style={[S_.card, { flex: 1, marginTop: 0 }]}>
-          <Text style={[T.label, { fontSize: 10 }]}>This month</Text>
-          <Text style={[T.heading, { marginTop: 4 }]}>${moSpent.toLocaleString()}</Text>
-        </View>
+      {/* Period selector — pick a window, the figure below reacts. No accounting jargon on the face. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+        {PERIODS.map(([key, label]) => {
+          const on = period === key;
+          return (
+            <TouchableOpacity key={key} style={[S_.segChip, on && S_.segChipOn]} onPress={() => setPeriod(key)} activeOpacity={0.85}>
+              <Text style={[S_.segT, on && S_.segTOn]}>{label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View style={[S_.card, { marginTop: 0, alignItems: 'center', paddingVertical: 18 }]}>
+        <Text style={[T.heading, { fontSize: 30, color: C.ink }]}>${periodSpent.toLocaleString()}</Text>
+        <Text style={[T.small, { marginTop: 3 }]}>{inPeriod.length} job{inPeriod.length !== 1 ? 's' : ''} · {periodCaption}</Text>
+        {period === 'year' && <Text style={[T.tiny, { color: C.mute2, marginTop: 4 }]}>Australian financial year · 1 Jul – 30 Jun</Text>}
       </View>
       <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
       {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
@@ -2354,6 +2368,17 @@ function ClientActivity({ session }) {
         : done.map((r) => <ActivityCard key={r.id} r={r} />)}
     </ScrollView>
   );
+}
+
+// Tidy a raw geocoded address for a receipt line: abbreviate the state, drop the country and any
+// duplicate/empty segments. "Windsor, New South Wales, 2756, Australia" → "Windsor NSW 2756".
+const AU_STATES = { 'new south wales': 'NSW', 'victoria': 'VIC', 'queensland': 'QLD', 'south australia': 'SA', 'western australia': 'WA', 'tasmania': 'TAS', 'northern territory': 'NT', 'australian capital territory': 'ACT' };
+function tidyAddress(addr) {
+  if (!addr) return '';
+  const parts = String(addr).split(',').map((s) => s.trim()).filter(Boolean)
+    .filter((s) => s.toLowerCase() !== 'australia')
+    .map((s) => AU_STATES[s.toLowerCase()] || s);
+  return parts.join(', ').replace(/,\s*(\d{4})/, ' $1');   // "…, NSW, 2756" → "…, NSW 2756"
 }
 
 function ActivityCard({ r }) {
@@ -2391,7 +2416,7 @@ function ActivityCard({ r }) {
           <View style={S_.actRow}><Text style={S_.actLabel}>Platform fee</Text><Text style={[S_.actVal, { color: C.mute }]}>−${fee.toLocaleString()}</Text></View>
           <View style={[S_.actRow, S_.actTotal]}><Text style={[S_.actLabel, { color: C.ink, fontWeight: '700' }]}>Paid to worker</Text><Text style={[S_.actVal, { color: C.green, fontWeight: '800' }]}>${net.toLocaleString()}</Text></View>
           <View style={[S_.actRow, { marginTop: 8 }]}><Text style={S_.actLabel}>Completed</Text><Text style={S_.actVal}>{d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} · {d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}</Text></View>
-          {r.address_text ? <View style={S_.actRow}><Text style={S_.actLabel}>Site</Text><Text style={[S_.actVal, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>{r.address_text}</Text></View> : null}
+          {r.address_text ? <View style={S_.actRow}><Text style={S_.actLabel}>Site</Text><Text style={[S_.actVal, { flex: 1, textAlign: 'right' }]} numberOfLines={2}>{tidyAddress(r.address_text)}</Text></View> : null}
           {paidWhen ? <View style={S_.actRow}><Text style={S_.actLabel}>Paid</Text><Text style={S_.actVal}>{paidWhen.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></View> : null}
           {ref ? <View style={S_.actRow}><Text style={S_.actLabel}>Receipt no.</Text><Text style={[S_.actVal, { fontVariant: ['tabular-nums'] }]}>SC-{ref}</Text></View> : null}
           {INVOICE_ENABLED && (

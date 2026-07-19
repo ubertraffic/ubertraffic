@@ -953,6 +953,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
           <MapHero
             height={Dimensions.get('window').height} framed={false} mode="work" me={myLoc} hideExpand
             offline={!profile.is_online} demand={demandHeat}
+            /* Pins are ambient info (trade + rate), like Uber's surge map — but tapping one is a natural
+               reflex, so a tap drops you back into the list where the job can actually be accepted. */
+            onWorkerTap={() => setMapOpen(false)}
             markers={profile.is_online ? [
               ...(opMapJobs || []),
               // available jobs as plain display pins (coords from the request) — no actions
@@ -1728,6 +1731,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
 function auFyStart(d = new Date()) { const july1 = new Date(d.getFullYear(), 6, 1); return d >= july1 ? july1 : new Date(d.getFullYear() - 1, 6, 1); }
 function auFyLabel(d = new Date()) { const s = auFyStart(d); return `FY${String(s.getFullYear()).slice(2)}–${String(s.getFullYear() + 1).slice(2)}`; }
 function monthStart(d = new Date()) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+function weekStart(d = new Date()) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); const dow = (x.getDay() + 6) % 7; x.setDate(x.getDate() - dow); return x; }
 
 export function OperatorEarnings({ session }) {
   const [assigns, setAssigns] = useState(() => cacheGet('operator-assignments'));   // instant paint
@@ -1740,17 +1744,23 @@ export function OperatorEarnings({ session }) {
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['assignments', 'payouts'], refresh);
   const [refreshing, setRefreshing] = useState(false);
+  const [earnPeriod, setEarnPeriod] = useState('month');   // week · month · year
   const onPull = useCallback(async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }, [refresh]);
 
   const paid = (assigns || []).filter((a) => a.status === 'approved');
   const pending = (assigns || []).filter((a) => a.status === 'complete');
   const totalPaid = paid.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
   const pendingValue = pending.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
-  // Tax-period summaries (net earned) — AU financial year + this month, for the worker's own records.
-  const fyStart = auFyStart().getTime(), moStart = monthStart().getTime();
+  // Net-earned by period, for the worker's own records. Plain-English window selector, no "FY" jargon.
+  const nowD = new Date();
+  const earnStarts = { week: weekStart(nowD).getTime(), month: monthStart(nowD).getTime(), year: auFyStart(nowD).getTime() };
   const paidWhen = (a) => new Date(a.paid_at || a.completed_at || 0).getTime();
-  const fyPaid = paid.filter((a) => paidWhen(a) >= fyStart).reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
-  const moPaid = paid.filter((a) => paidWhen(a) >= moStart).reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
+  const inEarnPeriod = paid.filter((a) => paidWhen(a) >= earnStarts[earnPeriod]);
+  const periodPaid = inEarnPeriod.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
+  const earnCaption = earnPeriod === 'week' ? 'this week'
+    : earnPeriod === 'month' ? nowD.toLocaleDateString('en-AU', { month: 'long' })
+    : 'financial year so far';
+  const EARN_PERIODS = [['week', 'This week'], ['month', 'This month'], ['year', 'This year']];
   // Map the real payout status onto each settled job, and flag any that didn't land.
   const poByAssign = {};
   for (const p of payouts) if (p.assignment_id && !poByAssign[p.assignment_id]) poByAssign[p.assignment_id] = p;
@@ -1780,16 +1790,21 @@ export function OperatorEarnings({ session }) {
         <Text style={[T.tiny, { marginTop: 6, color: C.mute2, textAlign: 'center', paddingHorizontal: 12 }]}>SiteCall keeps 10% of labour + $3 per task. Tips & travel are 100% yours.</Text>
       </View>
 
-      {/* Tax-period summary — for the worker's own records */}
-      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 4 }}>
-        <View style={[S_.card, { flex: 1, marginTop: 0 }]}>
-          <Text style={[T.label, { fontSize: 10 }]}>This year · {auFyLabel()}</Text>
-          <Text style={[T.heading, { marginTop: 4 }]}>${fyPaid.toLocaleString()}</Text>
-        </View>
-        <View style={[S_.card, { flex: 1, marginTop: 0 }]}>
-          <Text style={[T.label, { fontSize: 10 }]}>This month</Text>
-          <Text style={[T.heading, { marginTop: 4 }]}>${moPaid.toLocaleString()}</Text>
-        </View>
+      {/* Period summary — for the worker's own records. Pick a window; the figure reacts. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+        {EARN_PERIODS.map(([key, label]) => {
+          const on = earnPeriod === key;
+          return (
+            <TouchableOpacity key={key} style={[S_.segChip, on && S_.segChipOn]} onPress={() => setEarnPeriod(key)} activeOpacity={0.85}>
+              <Text style={[S_.segT, on && S_.segTOn]}>{label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View style={[S_.card, { marginTop: 0, alignItems: 'center', paddingVertical: 18 }]}>
+        <Text style={[T.heading, { fontSize: 30, color: C.green }]}>${periodPaid.toLocaleString()}</Text>
+        <Text style={[T.small, { marginTop: 3 }]}>{inEarnPeriod.length} job{inEarnPeriod.length !== 1 ? 's' : ''} · net {earnCaption}</Text>
+        {earnPeriod === 'year' && <Text style={[T.tiny, { color: C.mute2, marginTop: 4 }]}>Australian financial year · 1 Jul – 30 Jun</Text>}
       </View>
       <Text style={[T.tiny, { color: C.mute2, marginBottom: 8, paddingHorizontal: 2 }]}>Net earned (after fees), for your own tax records. Keep your invoices — you handle your own tax &amp; super.</Text>
 

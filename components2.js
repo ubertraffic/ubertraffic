@@ -287,14 +287,18 @@ export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onTogg
           </View>
           <View style={{ flex: 1 }}>
             <Text style={jc.trade} numberOfLines={1}>{it?.type}{multi ? `  ·  ${qty}` : ''}</Text>
-            {/* Apple-style sliding row — if when·distance·area·posted is too wide, it gently scrolls
-                side to side so nothing is ever cut off. */}
-            <SlidingText style={jc.meta}>
-              <Text style={{ color: urgent ? C.amber : C.mute, fontWeight: '800' }}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
-              {dist ? <Text style={jc.dist}>{`  ·  ${dist.replace(' away', '')}`}</Text> : null}
-              <Text>{`  ·  ${area}`}</Text>
-              {posted ? <Text style={jc.posted}>{`  ·  ${posted}`}</Text> : null}
-            </SlidingText>
+            {/* Two tidy fixed lines instead of one scrolling line — nothing is ever cut off, and the
+                two differentiators that make near/now jobs read apart from far/booked ones lead: */}
+            {/*  LINE 1 — WHEN + how far (the decision drivers), bold and coloured */}
+            <View style={jc.metaRow}>
+              <Text style={[jc.metaLead, { color: urgent ? C.amber : C.ink }]} numberOfLines={1}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
+              {dist ? (<><Text style={jc.metaDot}>·</Text><Text style={jc.dist} numberOfLines={1}>{dist.replace(' away', '')}</Text></>) : null}
+            </View>
+            {/*  LINE 2 — WHERE + how fresh (context), muted; area ellipsizes so posted always shows */}
+            <View style={jc.metaRow}>
+              <Text style={jc.metaArea} numberOfLines={1}>{area}</Text>
+              {posted ? (<><Text style={jc.metaDot}>·</Text><Text style={jc.posted} numberOfLines={1}>{posted}</Text></>) : null}
+            </View>
           </View>
           {rate != null && (
             <View style={{ alignItems: 'flex-end' }}>
@@ -375,7 +379,10 @@ const jc = StyleSheet.create({
   accentBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
   glyph: { width: 44, height: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   trade: { fontSize: 17, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
-  meta: { fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+  metaLead: { fontSize: 12.5, fontWeight: '800' },
+  metaDot: { fontSize: 12.5, color: C.mute2, fontWeight: '700', marginHorizontal: 5 },
+  metaArea: { fontSize: 12.5, color: C.mute, fontWeight: '700', flexShrink: 1 },
   posted: { fontSize: 12, color: C.mute2, fontWeight: '700' },
   dist: { fontSize: 12.5, color: C.green, fontWeight: '800' },
   payBig: { fontSize: 25, fontWeight: '900', color: C.ink, letterSpacing: -0.8 },

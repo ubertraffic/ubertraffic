@@ -468,12 +468,18 @@ export function SlidingText({ text, children, style }) {
 
   return (
     <View style={{ overflow: 'hidden', alignSelf: 'stretch' }} onLayout={(e) => setBoxW(e.nativeEvent.layout.width)}>
-      {/* hidden measurer: renders at natural width so we learn the true text width */}
-      <Text
-        style={[style, { position: 'absolute', opacity: 0 }]}
-        onLayout={(e) => setTextW(e.nativeEvent.layout.width)}
-        numberOfLines={1}
-      >{content}</Text>
+      {/* hidden measurer — MUST live in its own unconstrained wrapper. If the measurer <Text> is a
+          direct child of the stretched box, it inherits the box's width and gets truncated to it, so
+          its measured width == boxW and overflow is NEVER detected (the marquee never runs). An
+          absolutely-positioned View with no width shrinks to its content, letting the text lay out at
+          its true single-line width. */}
+      <View style={{ position: 'absolute', opacity: 0 }} pointerEvents="none">
+        <Text
+          style={style}
+          onLayout={(e) => setTextW(e.nativeEvent.layout.width)}
+          numberOfLines={1}
+        >{content}</Text>
+      </View>
       <Animated.Text
         style={[style, { transform: [{ translateX: x }] }]}
         numberOfLines={1}
