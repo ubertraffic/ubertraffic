@@ -130,6 +130,14 @@ export async function removeCapability(id) {
 export async function listMyDispatches() {
   const { data: u } = await supabase.auth.getUser();
 
+  // Self-heal FIRST: jobs are dispatched once, at post time, only to whoever was online then. A worker
+  // who came online later was never handed a dispatch row, so the job is invisible to them and stays
+  // that way through every pull-to-refresh. refresh_my_dispatches() re-runs the exact server-side
+  // eligibility for THIS operator against every open job and creates any missing dispatch — so opening
+  // or refreshing the feed guarantees every eligible job shows up (and is acceptable). Best-effort:
+  // never let a hiccup here blank the feed.
+  try { await supabase.rpc('refresh_my_dispatches'); } catch (_) { /* feed still renders below */ }
+
   const { data, error } = await supabase
     .from('dispatches')
     .select(`
