@@ -2259,8 +2259,10 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
         <Text style={S_.newBtnText}>＋ New request</Text>
       </TouchableOpacity>
 
-      {/* filter bar */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+      {/* filter bar — a plain row, NOT a horizontal ScrollView. A horizontal ScrollView nested in the
+          vertical page ScrollView has no intrinsic height and greedily expands to fill the screen,
+          which stretched these three chips to half the page. Three short chips never need to scroll. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, paddingVertical: 4 }}>
         {FILTERS.map(([key, label]) => {
           const n = counts[key] || 0;
           const on = filter === key;
@@ -2271,7 +2273,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+      </View>
 
       {!!msg && (
         <View style={msg.startsWith('✓') ? S_.successBanner : null}>
