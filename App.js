@@ -45,7 +45,7 @@ import { SH, S_ } from './styles';
 import { OperatorHome, OperatorJobs, OperatorEarnings, Account } from './screens';
 import { RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, tap, StepFade, PrimaryBtn, estTotal, jobCrewSize, jobTitle, jobSubtitle, Center } from './components2';
 import { logError } from './errorService';
-import { getPaymentForRequest } from './paymentsService';
+import { getPaymentForRequest, payoutStatus, startPayoutOnboarding } from './paymentsService';
 import Invoice, { INVOICE_ENABLED } from './Invoice';
 import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerLine, MatchCard, EmptyState, isStalledAssignment, requestHasStall, repLine, autoReleaseIn, friendly } from './components';
 
@@ -98,7 +98,7 @@ export default function App() {
   }, []);
 
   if (booting) return <Center><ActivityIndicator color={C.indigo} size="large" /></Center>;
-  if (session) return <Shell session={session} pushDeepLink={pushDeepLink} />;
+  if (session) return <Shell session={session} pushDeepLink={pushDeepLink} firstRunSide={authIntent?.side || null} />;
   // Signed out. Show the Welcome first (the single most important screen a new person sees), then
   // the auth form once they've chosen a side or tapped sign-in.
   if (!authIntent) return <Welcome onChoose={(side) => setAuthIntent({ mode: 'signup', side })}
@@ -319,11 +319,13 @@ const OP_TABS = [
   { key: 'account', icon: 'account', label: 'Account' },
 ];
 
-function Shell({ session, pushDeepLink }) {
+function Shell({ session, pushDeepLink, firstRunSide }) {
   // bind the screen cache to this user — if the account changes, the cache wipes itself so no
   // stale data from a previous session/account can ever paint. Safe by construction.
   cacheBindUser(session?.user?.id);
-  const [role, setRoleSide] = useState('client');  // client | operator — VIEW side only
+  // Default the VIEW to the side they signed up for (a fresh account has no capabilities yet, so
+  // loadName's capability check won't override this). Returning users get re-pointed by loadName.
+  const [role, setRoleSide] = useState(firstRunSide === 'work' ? 'operator' : 'client');  // client | operator — VIEW side only
   const [tab, setTab] = useState('home');
   // Floating island tab bar. Now that the home is a PINNED anchor (post bar + chips) with only a
   // short body to reveal, the hide-on-scroll behaviour felt twitchy and pointless — so the bar is
@@ -354,6 +356,12 @@ function Shell({ session, pushDeepLink }) {
   const [acct, setAcct] = useState(null);          // identity + capabilities (drives the gate)
   const [gate, setGate] = useState(null);          // { side } when user taps a locked side
   const [profileId, setProfileId] = useState(null);  // public profile being viewed
+  // First-run setup checklist. Only ever shown right after signup (firstRunSide is set by App from
+  // the side chosen on Welcome). `setupDone` = they tapped through the celebration; `exploring` =
+  // "I'll finish later". Either one retires the checklist for this session.
+  const [setupDone, setSetupDone] = useState(false);
+  const [exploring, setExploring] = useState(false);
+  const showSetup = !!firstRunSide && !!acct && !setupDone && !exploring;
 
   const loadName = useCallback(async () => {
     try {
@@ -439,6 +447,18 @@ function Shell({ session, pushDeepLink }) {
           persistently, so the popping toasts were redundant (competing peers). Kept the import
           so it's a one-line re-enable if we ever want it for events the tracker doesn't cover. */}
       {/* <MomentToasts /> */}
+      {showSetup && (
+        <View style={StyleSheet.absoluteFill}>
+          <SetupChecklist
+            side={firstRunSide}
+            acct={acct}
+            onOpenGate={(side) => setGate({ side })}
+            onRefresh={loadName}
+            onExplore={() => setExploring(true)}
+            onComplete={() => setSetupDone(true)}
+          />
+        </View>
+      )}
       <CapabilityGate
         gate={gate}
         onClose={() => setGate(null)}
@@ -526,6 +546,193 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
       </View>
       </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+/* ============================================================ SETUP CHECKLIST (first-run) */
+// The payoff after signup. Instead of dropping a new person into an empty app, we land them on a
+// short "get ready" checklist tailored to the side they chose on Welcome. Each step is either done
+// (green tick), actionable now (tap → real flow), or under review (background verification, e.g.
+// ABN/White Card). A live activity strip keeps it feeling alive. When every required step is done,
+// it turns into a celebration and hands them into the app. Verification reuses the CapabilityGate.
+function SetupChecklist({ side, acct, onOpenGate, onRefresh, onExplore, onComplete }) {
+  const isHire = side === 'hire';
+  const [payout, setPayout] = useState(null);       // work side only: connect-status result
+  const [payoutBusy, setPayoutBusy] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState(acct?.full_name || '');
+  const [savingName, setSavingName] = useState(false);
+  const [pulse, setPulse] = useState(null);
+
+  const hasName = !!(acct?.full_name && acct.full_name.trim());
+  const verified = isHire ? !!acct?.can_hire : !!(acct?.can_work || acct?.can_task);
+  const verifyPending = isHire
+    ? (acct?.company_verify_status === 'pending' || acct?.abn_status === 'pending')
+    : (acct?.worker_verify_status === 'pending');
+
+  // Work side needs a payout account before it's "ready". Re-check whenever verification changes
+  // (and after they return from Stripe and tap refresh).
+  const loadPayout = useCallback(() => {
+    if (isHire) return;
+    payoutStatus().then(setPayout).catch(() => setPayout({ payouts_enabled: false }));
+  }, [isHire]);
+  useEffect(() => { loadPayout(); }, [loadPayout, acct?.can_work, acct?.can_task]);
+  useEffect(() => { getPulseStats().then(setPulse).catch(() => {}); }, []);
+
+  const paidReady = isHire ? true : !!payout?.payouts_enabled;
+
+  async function saveName() {
+    const n = nameVal.trim();
+    if (n.length < 2) return;
+    setSavingName(true);
+    try { await updateMyName(n); setEditingName(false); onRefresh && (await onRefresh()); }
+    catch (_) {} finally { setSavingName(false); }
+  }
+  async function startPayout() {
+    setPayoutBusy(true);
+    try { await startPayoutOnboarding(); } catch (_) {} finally { setPayoutBusy(false); }
+  }
+
+  // Build the step list for this side. state ∈ 'done' | 'todo' | 'review' | 'loading'
+  const steps = [];
+  steps.push({
+    key: 'name',
+    title: isHire ? 'Your name or business' : 'Your name',
+    sub: isHire ? 'Shown to the workers you hire' : 'So clients know who to expect on site',
+    state: hasName ? 'done' : 'todo',
+  });
+  steps.push({
+    key: 'verify',
+    title: isHire ? 'Verify your business' : 'Verify your White Card',
+    sub: isHire ? 'Enter your ABN — we check it against the ABR' : 'Required for site work — checked before you can accept jobs',
+    state: verified ? 'done' : verifyPending ? 'review' : 'todo',
+  });
+  if (!isHire) steps.push({
+    key: 'payout',
+    title: 'Set up payouts',
+    sub: 'Link your bank so your pay lands fast',
+    state: paidReady ? 'done' : payout == null ? 'loading' : 'todo',
+  });
+
+  const total = steps.length;
+  const doneCount = steps.filter((s) => s.state === 'done').length;
+  const allDone = doneCount === total;
+  const pct = total ? doneCount / total : 0;
+
+  function handleStep(step) {
+    if (step.state === 'done' || step.state === 'review' || step.state === 'loading') return;
+    tap();
+    if (step.key === 'name') { setNameVal(acct?.full_name || ''); setEditingName(true); }
+    else if (step.key === 'verify') onOpenGate(side);
+    else if (step.key === 'payout') startPayout();
+  }
+
+  const activeNow = pulse?.active_now || 0;
+
+  return (
+    <View style={S_.setStage}>
+      <StatusBar barStyle="dark-content" />
+      <ScrollView contentContainerStyle={S_.setScroll} showsVerticalScrollIndicator={false}>
+        {/* header — celebration when finished, otherwise the progress hero */}
+        {allDone ? (
+          <View style={S_.setHeader}>
+            <View style={[S_.setBadge, { backgroundColor: isHire ? C.indigo : C.green }]}>
+              <Icon name="check" size={26} color="#fff" strokeWidth={3} />
+            </View>
+            <Text style={S_.setHero}>You're all set</Text>
+            <Text style={S_.setSub}>{isHire ? "You're ready to post jobs and hire." : "You're ready to find work and get paid."}</Text>
+          </View>
+        ) : (
+          <View style={S_.setHeader}>
+            <Text style={S_.setKicker}>{isHire ? 'GET READY TO HIRE' : 'GET READY TO WORK'}</Text>
+            <Text style={S_.setHero}>A couple of quick steps</Text>
+            <Text style={S_.setSub}>Finish these and you're ready to go. We'll verify the slow bits in the background.</Text>
+            <View style={S_.setProgWrap}>
+              <View style={S_.setProgTrack}>
+                <View style={[S_.setProgFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: isHire ? C.indigo : C.green }]} />
+              </View>
+              <Text style={S_.setProgT}>{doneCount} of {total} done</Text>
+            </View>
+          </View>
+        )}
+
+        {/* live strip — "this place is alive" */}
+        {activeNow > 0 && (
+          <View style={S_.setLive}>
+            <View style={S_.setLiveDot} />
+            <Text style={S_.setLiveT}><Text style={S_.setLiveNum}>{activeNow}</Text> {activeNow === 1 ? 'person' : 'people'} active on SiteCall right now</Text>
+          </View>
+        )}
+
+        {/* steps */}
+        <View style={S_.setSteps}>
+          {steps.map((s, i) => {
+            const accent = isHire ? C.indigo : C.green;
+            const isName = s.key === 'name';
+            return (
+              <View key={s.key}>
+                <PressableScale onPress={() => handleStep(s)} disabled={s.state !== 'todo'} style={S_.setStep}>
+                  <View style={[
+                    S_.setStepIcon,
+                    s.state === 'done' && { backgroundColor: accent, borderColor: accent },
+                    s.state === 'review' && { backgroundColor: C.panel2, borderColor: C.amber },
+                    s.state === 'todo' && { borderColor: accent },
+                  ]}>
+                    {s.state === 'done' ? <Icon name="check" size={16} color="#fff" strokeWidth={3} />
+                      : s.state === 'loading' ? <ActivityIndicator size="small" color={C.mute2} />
+                      : <Text style={[S_.setStepNum, s.state === 'review' && { color: C.amber }, s.state === 'todo' && { color: accent }]}>{i + 1}</Text>}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[S_.setStepTitle, s.state === 'done' && { color: C.mute }]}>{s.title}</Text>
+                    <Text style={S_.setStepSub}>
+                      {s.state === 'review' ? 'Under review — we’ll let you know when it clears' : s.sub}
+                    </Text>
+                  </View>
+                  {s.state === 'todo' && <Icon name="chevronRight" size={18} color={C.mute2} strokeWidth={2.4} />}
+                  {s.state === 'review' && <View style={S_.setPill}><Text style={S_.setPillT}>Reviewing</Text></View>}
+                </PressableScale>
+
+                {/* inline name editor */}
+                {isName && editingName && (
+                  <View style={S_.setInline}>
+                    <TextInput style={S_.setInput} value={nameVal} onChangeText={setNameVal}
+                      placeholder="e.g. Sam Rivers" placeholderTextColor={C.mute2}
+                      autoFocus autoCapitalize="words" editable={!savingName} />
+                    <View style={S_.setInlineBtns}>
+                      <TouchableOpacity onPress={() => setEditingName(false)} style={S_.setInlineCancel}>
+                        <Text style={S_.setInlineCancelT}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={saveName} disabled={savingName || nameVal.trim().length < 2}
+                        style={[S_.setInlineSave, (savingName || nameVal.trim().length < 2) && { opacity: 0.5 }]}>
+                        <Text style={S_.setInlineSaveT}>{savingName ? 'Saving…' : 'Save'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                {/* payout: after launching Stripe, a gentle re-check */}
+                {s.key === 'payout' && s.state === 'todo' && payout != null && (
+                  <TouchableOpacity onPress={loadPayout} style={S_.setRecheck} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                    <Text style={S_.setRecheckT}>Finished in the browser? Tap to refresh</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+
+      {/* footer action */}
+      <View style={S_.setFooter}>
+        {allDone
+          ? <PrimaryBtn label={isHire ? 'Start hiring' : 'Start working'} onPress={() => { tap(); onComplete && onComplete(); }} />
+          : (
+            <TouchableOpacity onPress={onExplore} style={S_.setExplore} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={S_.setExploreT}>I'll finish later — <Text style={S_.setExploreLink}>explore first</Text></Text>
+            </TouchableOpacity>
+          )}
+      </View>
+    </View>
   );
 }
 
