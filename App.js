@@ -991,10 +991,11 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
     if (!reqHasWorker(req, DONE_STATES)) { onError && onError(new Error('You can approve & pay once a worker has completed the job.'), reqId); return; }
     setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: estimateCentsFor(req), adj, approve: true });
   }
-  // Runs after the Stripe capture succeeds — mark the job approved + queue the rating.
+  // Runs AFTER the Stripe capture succeeds. Settlement already ran BEFORE capture (see beforeCapture
+  // on the PaySheet) so the worker is paid EXACTLY the DB-settled net_amount — here we only refresh
+  // and queue the rating.
   async function finalizePaidApproval(reqId, adj) {
     try {
-      await approveRequest(reqId, adj);
       const req = getReq(reqId);
       let assignmentId = null, rateeName = null;
       for (const it of (req?.request_items || [])) {
@@ -1015,6 +1016,7 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
       label={payReq?.label}
       estimateCents={payReq?.estimateCents}
       autoCapture={!!payReq?.approve}
+      beforeCapture={payReq?.approve ? (() => approveRequest(payReq.id, payReq.adj)) : undefined}
       onPaid={() => { if (payReq?.approve) finalizePaidApproval(payReq.id, payReq.adj); else reload(); }}
       onClose={() => { setPayReq(null); if (pendingRate) { onRateReady && onRateReady(pendingRate); setPendingRate(null); } }}
     />

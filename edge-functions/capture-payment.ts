@@ -70,7 +70,7 @@ Deno.serve(async (req) => {
     for (const it of (items as any[]) || []) itemById[it.id] = it;
 
     const { data: assigns } = await admin
-      .from("assignments").select("id, operator_id, request_item_id, status")
+      .from("assignments").select("id, operator_id, request_item_id, status, net_amount")
       .in("request_item_id", Object.keys(itemById))
       .in("status", ["complete", "approved"]);
     const toPay = ((assigns as any[]) || []).filter((a) => a.operator_id && itemById[a.request_item_id]);
@@ -115,9 +115,16 @@ Deno.serve(async (req) => {
       if (alreadyPaid.has(a.id)) { results.push({ operator_id: a.operator_id, skipped: "already_paid" }); continue; }
       const it = itemById[a.request_item_id];
       const isTask = it.price_mode === "job";
-      const base = isTask
-        ? Math.round(Number(it.rate || 0) * 100)
-        : Math.round(Number(it.rate || 0) * hours * 100 * (1 - feePct / 100));
+      // Prefer the DB-settled figure (assignments.net_amount, in dollars) — it is EXACTLY what the
+      // worker was shown, already including any approved extra hours and the correct platform fee.
+      // The app settles (approve_request → _settle_request) BEFORE this capture runs, so net_amount is
+      // populated. Fall back to computing the base only if it somehow isn't — never guess high.
+      const settledDollars = Number(a.net_amount);
+      const base = settledDollars > 0
+        ? Math.round(settledDollars * 100)
+        : (isTask
+            ? Math.round(Number(it.rate || 0) * 100)
+            : Math.round(Number(it.rate || 0) * hours * 100 * (1 - feePct / 100)));
       const net = base + perWorkerExtra;
       if (net < 1) { results.push({ operator_id: a.operator_id, skipped: "zero" }); continue; }
 

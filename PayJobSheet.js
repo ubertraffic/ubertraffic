@@ -12,7 +12,7 @@ import { startJobCheckout, checkJobPayment, latestPaymentFor, capturePayment } f
 
 const money = (cents) => `$${((Number(cents) || 0) / 100).toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-export default function PayJobSheet({ visible, requestId, label, estimateCents, autoCapture, onClose, onPaid }) {
+export default function PayJobSheet({ visible, requestId, label, estimateCents, autoCapture, beforeCapture, onClose, onPaid }) {
   const [phase, setPhase] = useState('intro');   // intro | opening | waiting | held | paid | error
   const [amount, setAmount] = useState(estimateCents || 0);
   const [tipCents, setTipCents] = useState(0);   // client tip — 100% to the worker
@@ -68,7 +68,13 @@ export default function PayJobSheet({ visible, requestId, label, estimateCents, 
   const [capturing, setCapturing] = useState(false);
   async function approveAndPay() {
     setCapturing(true); setErr('');
-    try { await capturePayment(requestId); setPhase('paid'); onPaid && onPaid(); }
+    try {
+      // SETTLE FIRST: record what each worker is owed (net_amount, incl. extra hours) BEFORE we move
+      // money, so the capture pays exactly the figure the worker was shown. Idempotent on retry.
+      if (beforeCapture) await beforeCapture();
+      await capturePayment(requestId);
+      setPhase('paid'); onPaid && onPaid();
+    }
     catch (e) { setErr(e.message || String(e)); }
     finally { setCapturing(false); }
   }
