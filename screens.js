@@ -413,7 +413,9 @@ function AbnGateSheet({ visible, onClose, onSaved }) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      {/* Scrim lives on the keyboard-avoider so the area the keyboard opens up is dimmed too —
+          otherwise the home (its "GO ONLINE" orb) shows through the gap between sheet and keyboard. */}
+      <KeyboardAvoidingView style={AG.kav} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={AG.backdrop}>
           <View style={AG.sheet}>
             <View style={AG.grip} />
@@ -464,7 +466,8 @@ function AbnGateSheet({ visible, onClose, onSaved }) {
   );
 }
 const AG = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(10,10,16,0.55)', justifyContent: 'flex-end' },
+  kav: { flex: 1, backgroundColor: 'rgba(10,10,16,0.6)' },
+  backdrop: { flex: 1, justifyContent: 'flex-end' },
   sheet: { backgroundColor: C.canvas, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 30, alignItems: 'center' },
   grip: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.line, marginBottom: 18 },
   iconWrap: { width: 56, height: 56, borderRadius: 28, backgroundColor: C.indigoSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
@@ -1691,8 +1694,21 @@ export function OperatorEarnings({ session }) {
   for (const p of payouts) if (p.assignment_id && !poByAssign[p.assignment_id]) poByAssign[p.assignment_id] = p;
   const troubled = payouts.filter((p) => p.status === 'failed' || p.status === 'pending');
 
+  const money = (n) => '$' + Number(n || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Group settled jobs by month → a tidy grouped ledger (one card per month) instead of a wall of
+  // identical cards. Each group carries its own subtotal, like Uber's earnings history.
+  const groups = [];
+  const gIndex = {};
+  for (const a of paid) {
+    const d = new Date(a.paid_at || a.completed_at || 0);
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    if (gIndex[key] == null) { gIndex[key] = groups.length; groups.push({ key, label: d.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), items: [], total: 0 }); }
+    const g = groups[gIndex[key]];
+    g.items.push(a); g.total += Number(a.net_amount) || 0;
+  }
+
   return (
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 140 }}>
       <Text style={T.eyebrow}>Earnings</Text>
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 26 }]}>
         <Text style={T.label}>Paid to you</Text>
@@ -1738,35 +1754,55 @@ export function OperatorEarnings({ session }) {
       <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
       {assigns === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
         : paid.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No settled jobs yet. Finish a job and get it approved to see earnings here.</Text>
-        : paid.map((a) => {
-          const po = poByAssign[a.id];
-          // Real transfer status when we have a ledger row; otherwise the settlement stands on its own.
-          const pill = po?.status === 'failed' ? { t: 'Payout failed', c: C.red }
-            : po?.status === 'pending' ? { t: 'Processing', c: C.amber }
-            : po?.status === 'paid' ? { t: 'Paid', c: C.green } : null;
-          return (
-          <View key={a.id} style={S_.card}>
-            <View style={S_.rowBetween}>
-              <Text style={T.heading}>{a.request_item?.type}</Text>
-              <Text style={T.money}>${Number(a.net_amount || 0).toLocaleString()}</Text>
+        : groups.map((g) => (
+          <View key={g.key} style={{ marginTop: 10 }}>
+            <View style={es.groupHead}>
+              <Text style={es.groupTitle}>{g.label}</Text>
+              <Text style={es.groupTotal}>{money(g.total)}</Text>
             </View>
-            <View style={S_.rowBetween}>
-              <Text style={[T.data, { color: C.mute, marginTop: 4, flex: 1 }]} numberOfLines={1}>{suburbOf(a.request_item?.request?.address_text)}</Text>
-              <Text style={[T.label, { fontSize: 9, marginTop: 4, marginLeft: 8 }]}>{a.paid_at ? new Date(a.paid_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}</Text>
+            <View style={es.groupCard}>
+              {g.items.map((a, i) => {
+                const po = poByAssign[a.id];
+                const pill = po?.status === 'failed' ? { t: 'Payout failed', c: C.red }
+                  : po?.status === 'pending' ? { t: 'Processing', c: C.amber }
+                  : po?.status === 'paid' ? { t: 'Paid', c: C.green } : null;
+                return (
+                  <View key={a.id} style={[es.row, i > 0 && es.rowDivider]}>
+                    <View style={es.icon}><Icon name={iconForType(a.request_item?.type)} size={17} color={C.green} strokeWidth={2.2} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={es.rowTitle} numberOfLines={1}>{a.request_item?.type}</Text>
+                      <Text style={es.rowSub} numberOfLines={1}>
+                        {suburbOf(a.request_item?.request?.address_text)}
+                        {a.paid_at ? ` · ${new Date(a.paid_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` : ''}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={es.rowAmt}>{money(a.net_amount)}</Text>
+                      {pill ? <Text style={[es.rowPill, { color: pill.c }]}>{pill.t}</Text> : null}
+                    </View>
+                  </View>
+                );
+              })}
             </View>
-            {pill && (
-              <View style={{ flexDirection: 'row', marginTop: 8 }}>
-                <View style={{ backgroundColor: pill.c + '18', borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3 }}>
-                  <Text style={{ color: pill.c, fontWeight: '800', fontSize: 10.5, letterSpacing: 0.2 }}>{pill.t}</Text>
-                </View>
-              </View>
-            )}
           </View>
-          );
-        })}
+        ))}
     </ScrollView>
   );
 }
+
+const es = StyleSheet.create({
+  groupHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingHorizontal: 4, marginBottom: 8 },
+  groupTitle: { fontSize: 13, fontWeight: '800', color: C.ink, letterSpacing: -0.2 },
+  groupTotal: { fontSize: 13, fontWeight: '800', color: C.mute },
+  groupCard: { backgroundColor: C.panel, borderRadius: R.lg, ...E.sm, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 13 },
+  rowDivider: { borderTopWidth: 1, borderTopColor: C.line },
+  icon: { width: 36, height: 36, borderRadius: 11, backgroundColor: C.green + '14', alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { fontSize: 15, fontWeight: '700', color: C.ink, letterSpacing: -0.2 },
+  rowSub: { fontSize: 12.5, color: C.mute, marginTop: 2 },
+  rowAmt: { fontSize: 15.5, fontWeight: '800', color: C.ink },
+  rowPill: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.2, marginTop: 3 },
+});
 
 /* ============================================================ ACCOUNT (both roles) */
 export function Account({ session, role, onNameSaved, onOpenProfile }) {

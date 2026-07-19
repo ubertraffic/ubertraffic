@@ -13,6 +13,17 @@ import Icon from './Icon';
 const formatAbn = (clean) => (clean || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4');
 
 const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Licence', induction: 'Induction', licence: 'Trade licence', insurance: 'Insurance' };
+// "Add more" folders, in order. Everything you DON'T already hold gets tucked into one of these,
+// collapsed by default, so the screen opens short instead of listing 40 tickets at once.
+const CATS = [
+  { key: 'baseline', label: 'The basics', sub: 'White Card, driver licence' },
+  { key: 'ticket', label: 'Tickets', sub: 'Traffic control, rail, asbestos…' },
+  { key: 'induction', label: 'Inductions', sub: 'Site & safety inductions' },
+  { key: 'licence', label: 'Trade licences', sub: 'Your trade qualifications' },
+  { key: 'hrwl', label: 'High-risk work licences', sub: 'Cranes, rigging, scaffolding…' },
+  { key: 'insurance', label: 'Insurance', sub: 'Public liability & more' },
+];
+const catOf = (t) => (t.needs_provider ? 'insurance' : (t.self_declared ? 'licence' : (t.tier || 'ticket')));
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T00:00:00').getTime());
 // display status: self-declared cover expired past its date shows Expired even when 'unverified'.
@@ -34,6 +45,7 @@ export default function CredentialsScreen({ onClose }) {
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
   const [evidenceFor, setEvidenceFor] = useState(null);   // credential_type id whose photo panel is open
+  const [openCat, setOpenCat] = useState({});             // which "add more" folder is expanded (collapsed by default)
   const [abnSaved, setAbnSaved] = useState(null);     // stored ABN (digits) or null
   const [abnStatus, setAbnStatus] = useState(null);   // 'valid' | 'verified' | null
   const [abnInput, setAbnInput] = useState('');
@@ -103,6 +115,63 @@ export default function CredentialsScreen({ onClose }) {
 
   const heldById = {};
   mine.forEach((c) => { heldById[c.credential_id] = c; });
+
+  // One row — reused for the "on file" list and inside the collapsible "add more" folders.
+  function renderRow(t) {
+    const held = heldById[t.id];
+    const ds = displayStatus(held);
+    const autoVerify = isAutoVerifiable(t);
+    // Photo-evidence path: held, not yet verified, and NO free register check.
+    const canEvidence = held && ds !== 'verified' && !autoVerify;
+    return (
+      <View key={t.id}>
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name}>{t.name}</Text>
+            <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${isoToDMY(held.expires_at)}` : ''}</Text>
+          </View>
+          {held ? (
+            <View style={styles.heldRight}>
+              {held.status !== 'verified' && autoVerify && (
+                <TouchableOpacity style={styles.verifyBtn} onPress={() => verify(held.id)} disabled={verifying === held.id}>
+                  <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Check'}</Text>
+                </TouchableOpacity>
+              )}
+              {canEvidence && (
+                <TouchableOpacity style={styles.photoBtn} onPress={() => setEvidenceFor(evidenceFor === t.id ? null : t.id)}>
+                  <Text style={styles.photoBtnT}>{held.evidence_url ? '📷 ✓' : '📷 ID'}</Text>
+                </TouchableOpacity>
+              )}
+              {(() => {
+                const selfDecl = !!t.self_declared;
+                const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
+                const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
+                return (
+                  <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
+                    <Text style={[styles.statusText, { color }]}>{label}</Text>
+                  </View>
+                );
+              })()}
+              <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(t)}>
+              <Text style={styles.addText}>+ Add</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        {canEvidence && evidenceFor === t.id && (
+          <CredentialEvidence credentialId={t.id} existingPath={held.evidence_url} onDone={() => refresh()} />
+        )}
+      </View>
+    );
+  }
+
+  // Partition: what you hold (shown up top) vs what you could add (grouped into collapsible folders).
+  const heldList = types.filter((t) => heldById[t.id]);
+  const notHeldByCat = {};
+  types.filter((t) => !heldById[t.id]).forEach((t) => { const k = catOf(t); (notHeldByCat[k] = notHeldByCat[k] || []).push(t); });
+  const addCats = CATS.map((cat) => ({ cat, items: notHeldByCat[cat.key] || [] })).filter((g) => g.items.length > 0);
 
   function resetAddForm() { setAdding(null); setNumber(''); setExpiry(''); setProvider(''); setCardNumber(''); setCredState('NSW'); setMsg(''); }
   async function save() {
@@ -193,7 +262,7 @@ export default function CredentialsScreen({ onClose }) {
         <Text style={styles.h1}>Your tickets</Text>
         <Text style={styles.tier}>Add your White Card and any licences — verified ones open up more jobs.</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 130 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
         {caps && (
           <View style={styles.capBanner}>
             <View style={styles.capRow}>
@@ -291,69 +360,37 @@ export default function CredentialsScreen({ onClose }) {
           )}
         </View>
         {!!msg && <Text style={styles.err}>{msg}</Text>}
-        {types.map((t) => {
-          const held = heldById[t.id];
-          const ds = displayStatus(held);
-          const autoVerify = isAutoVerifiable(t);
-          // Photo-evidence path: held, not yet verified, and NO free register check (driver's
-          // licence, HRWL, insurance, trade licences). The honest interim for those.
-          const canEvidence = held && ds !== 'verified' && !autoVerify;
-          return (
-            <View key={t.id}>
-              <View style={styles.row}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.name}>{t.name}</Text>
-                  <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${isoToDMY(held.expires_at)}` : ''}</Text>
-                </View>
-                {held ? (
-                  <View style={styles.heldRight}>
-                    {/* register check only where we actually have a live register (White Card etc.) */}
-                    {held.status !== 'verified' && autoVerify && (
-                      <TouchableOpacity
-                        style={styles.verifyBtn}
-                        onPress={() => verify(held.id)}
-                        disabled={verifying === held.id}
-                      >
-                        <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Check'}</Text>
-                      </TouchableOpacity>
-                    )}
-                    {/* photo ID toggle for the no-register interim */}
-                    {canEvidence && (
-                      <TouchableOpacity
-                        style={styles.photoBtn}
-                        onPress={() => setEvidenceFor(evidenceFor === t.id ? null : t.id)}
-                      >
-                        <Text style={styles.photoBtnT}>{held.evidence_url ? '📷 ✓' : '📷 ID'}</Text>
-                      </TouchableOpacity>
-                    )}
-                    {(() => {
-                      const selfDecl = !!t.self_declared;
-                      const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
-                      const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
-                      return (
-                        <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
-                          <Text style={[styles.statusText, { color }]}>{label}</Text>
-                        </View>
-                      );
-                    })()}
-                    <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(t)}>
-                    <Text style={styles.addText}>+ Add</Text>
+
+        {/* What you already hold — always visible, up top */}
+        {heldList.length > 0 && (
+          <>
+            <Text style={styles.sectionH}>ON FILE</Text>
+            {heldList.map(renderRow)}
+          </>
+        )}
+
+        {/* Everything else, tucked into collapsible folders so the screen opens short */}
+        {addCats.length > 0 && (
+          <>
+            <Text style={styles.sectionH}>ADD MORE</Text>
+            {addCats.map(({ cat, items }) => {
+              const open = !!openCat[cat.key];
+              return (
+                <View key={cat.key} style={styles.folder}>
+                  <TouchableOpacity style={styles.folderHead} activeOpacity={0.7}
+                    onPress={() => setOpenCat((p) => ({ ...p, [cat.key]: !open }))}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.folderTitle}>{cat.label}</Text>
+                      <Text style={styles.folderSub}>{open ? cat.sub : `${items.length} ${items.length === 1 ? 'option' : 'options'}`}</Text>
+                    </View>
+                    <Text style={[styles.folderChev, open && { transform: [{ rotate: '90deg' }] }]}>›</Text>
                   </TouchableOpacity>
-                )}
-              </View>
-              {canEvidence && evidenceFor === t.id && (
-                <CredentialEvidence
-                  credentialId={t.id}
-                  existingPath={held.evidence_url}
-                  onDone={() => refresh()}
-                />
-              )}
-            </View>
-          );
-        })}
+                  {open && <View style={styles.folderBody}>{items.map(renderRow)}</View>}
+                </View>
+              );
+            })}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -406,4 +443,11 @@ const styles = StyleSheet.create({
   err: { color: C.red, fontSize: 13, marginBottom: 10 },
   primary: { backgroundColor: C.indigo, borderRadius: R.lg, padding: 16, alignItems: 'center', marginTop: 20 },
   primaryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  sectionH: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.8, marginTop: 8, marginBottom: 10 },
+  folder: { backgroundColor: C.panel, borderRadius: R.lg, marginBottom: 10, ...shadowSm, overflow: 'hidden' },
+  folderHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 16 },
+  folderTitle: { fontSize: 15.5, fontWeight: '800', color: C.ink, letterSpacing: -0.2 },
+  folderSub: { fontSize: 12.5, color: C.mute, marginTop: 3, fontWeight: '600' },
+  folderChev: { fontSize: 24, color: C.mute2, fontWeight: '300', paddingHorizontal: 4 },
+  folderBody: { paddingHorizontal: 10, paddingBottom: 8 },
 });
