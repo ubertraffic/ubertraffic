@@ -13,6 +13,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator, TextInput } from 'reac
 import { C, S, R, T } from './theme';
 import { complianceReady, submitSignoff } from './complianceService';
 import { getMyProfile } from './operatorService';
+import { getMyIdentity } from './accountService';
 import { getPosition } from './location';
 import ProofPhoto from './ProofPhoto';
 
@@ -45,7 +46,13 @@ export default function CloseOutCard({ assignmentId, onComplete, onCancel }) {
   // signature can be checked against it — a sign-off should be the person's actual name.
   useEffect(() => {
     (async () => {
-      try { const p = await getMyProfile(); const n = (p && (p.legal_name || p.full_name)) || null; if (n) { setExpectedName(n); setSignName(n); } } catch (_) {}
+      try {
+        // legal_name lives behind the definer function now (column-REVOKEd on profiles, 0067); fall
+        // back to the display name so the sign-off still has a name to check against.
+        const [p, id] = await Promise.all([getMyProfile(), getMyIdentity().catch(() => ({}))]);
+        const n = (id && id.legal_name) || (p && p.full_name) || null;
+        if (n) { setExpectedName(n); setSignName(n); }
+      } catch (_) {}
     })();
   }, []);
 

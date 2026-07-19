@@ -132,16 +132,23 @@ export async function verifyMyAbn() {
 // hire gate (submitBusinessAbn → 'pending' → admin/ABR approves → company_verify_status).
 
 // Read only the company fields. Fails soft to {} at the caller if columns are missing.
+// The caller's OWN identity + business PII (legal_name, DOB, ABN, company ABN). These columns are
+// column-REVOKEd on profiles (migration 0067) so a counterparty can't read them over the raw API;
+// the owner reads them only through this SECURITY DEFINER function, which returns just their own row.
+export async function getMyIdentity() {
+  const { data, error } = await supabase.rpc('get_my_identity');
+  if (error) return {};
+  const row = Array.isArray(data) ? data[0] : data;
+  return row || {};
+}
+
 export async function getMyBusiness() {
   const { data: u } = await supabase.auth.getUser();
   if (!u || !u.user) throw new Error('Not signed in.');
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('company_name, company_abn, company_verify_status')
-    .eq('id', u.user.id)
-    .maybeSingle();
-  if (error) throw error;
-  return data || {};
+  // company_abn is column-REVOKEd (0067) → read the business PII via the definer function; only the
+  // non-sensitive status/name would be directly selectable, so we source it all from one place.
+  const id = await getMyIdentity();
+  return { company_name: id.company_name || null, company_abn: id.company_abn || null, company_verify_status: id.company_verify_status || null };
 }
 
 // Save the company / trading name (display + on invoices later). No verification — it's a label.

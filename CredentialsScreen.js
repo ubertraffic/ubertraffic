@@ -5,7 +5,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Activi
 import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential, isAutoVerifiable } from './credentialsService';
 import CredentialEvidence from './CredentialEvidence';
 import { getMyProfile } from './operatorService';
-import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn } from './accountService';
+import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn, getMyIdentity } from './accountService';
 import { formatDMY, dmyToISO, isoToDMY } from './dateFormat';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 import Icon from './Icon';
@@ -86,14 +86,17 @@ export default function CredentialsScreen({ onClose }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [t, m, p] = await Promise.all([listCredentialTypes(), listMyCredentials(), getMyProfile().catch(() => null)]);
+      // capabilities from the profile; the sensitive identity/ABN PII comes from the definer function
+      // (those columns are column-REVOKEd on profiles — 0067 — so a direct select can't read them).
+      const [t, m, p, id] = await Promise.all([
+        listCredentialTypes(), listMyCredentials(),
+        getMyProfile().catch(() => null), getMyIdentity().catch(() => ({})),
+      ]);
       setTypes(t); setMine(m);
-      if (p) {
-        setCaps({ can_work: p.can_work, can_task: p.can_task });
-        setAbnSaved(p.abn || null);
-        setAbnStatus(p.abn_status || null);
-        setIdSaved(p.legal_name ? { legal_name: p.legal_name, date_of_birth: p.date_of_birth } : null);
-      }
+      if (p) setCaps({ can_work: p.can_work, can_task: p.can_task });
+      setAbnSaved(id.abn || null);
+      setAbnStatus(id.abn_status || (p && p.abn_status) || null);
+      setIdSaved(id.legal_name ? { legal_name: id.legal_name, date_of_birth: id.date_of_birth } : null);
     } catch (e) { setMsg(e.message || String(e)); setTypes([]); }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
