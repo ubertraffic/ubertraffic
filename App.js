@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, PanResponder,
-  Animated, Dimensions, Pressable, Keyboard, Modal, Easing,
+  Animated, Dimensions, Pressable, Keyboard, Modal, Easing, Linking,
 } from 'react-native';
 import { supabase } from './supabaseClient';
 import PayJobSheet from './PayJobSheet';
@@ -595,6 +595,13 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
               <TouchableOpacity style={[S_.gateBtn, (busy || !num.trim()) && { opacity: 0.5 }]} onPress={submit} disabled={busy || !num.trim()}>
                 <Text style={S_.gateBtnT}>{busy ? 'Saving…' : submitLabel}</Text>
               </TouchableOpacity>
+              {/* Resource: many workers don't have their White Card yet — turn a dead-end into a path. */}
+              {!isHire && credId === 'white_card' && (
+                <TouchableOpacity style={{ paddingVertical: 10 }} activeOpacity={0.8}
+                  onPress={() => Linking.openURL('https://www.safework.nsw.gov.au/licences-and-registrations/general-construction-induction-training-white-cards').catch(() => {})}>
+                  <Text style={S_.gateResource}>Don’t have one yet? How to get a White Card →</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10 }}>
                 <Text style={S_.gateCancel}>Maybe later</Text>
               </TouchableOpacity>
@@ -850,6 +857,25 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
             )}
         </ScrollView>
         <View style={S_.setFooter}>
+          {/* Live earnings preview — honest, award-guided rates for the trades they've picked. This is
+              the money moment that gets a worker to finish setup. */}
+          {(() => {
+            const picks = Object.values(selTrades);
+            if (!picks.length) return null;
+            const rateOf = (name) => RATES[name] || [30, 42, 58];
+            const mids = picks.map((p) => rateOf(p.name)[1]);
+            const typical = Math.round(mids.reduce((a, b) => a + b, 0) / mids.length);
+            const top = Math.max(...picks.map((p) => rateOf(p.name)[2]));
+            return (
+              <View style={S_.earnPrev}>
+                <View style={{ flex: 1 }}>
+                  <Text style={S_.earnLabel}>You could earn</Text>
+                  <Text style={S_.earnBig}>~${typical}<Text style={S_.earnUnit}>/hr</Text></Text>
+                </View>
+                <Text style={S_.earnTop}>up to ${top}/hr{'\n'}on the best jobs</Text>
+              </View>
+            );
+          })()}
           <PrimaryBtn label={tradeCount > 0 ? `Save ${tradeCount} trade${tradeCount === 1 ? '' : 's'}` : 'Pick at least one'}
             onPress={saveTrades} busy={tradesBusy} disabled={tradeCount === 0} />
         </View>
@@ -896,6 +922,26 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
           <View style={S_.setLive}>
             <View style={S_.setLiveDot} />
             <Text style={S_.setLiveT}><Text style={S_.setLiveNum}>{activeNow}</Text> {activeNow === 1 ? 'person' : 'people'} active on SiteCall right now</Text>
+          </View>
+        )}
+
+        {/* How it works — a calm 3-beat explainer so expectations are set before they even finish */}
+        {!allDone && (
+          <View style={S_.hiwRow}>
+            {(isHire
+              ? [{ icon: 'requests', t: 'Post a job' }, { icon: 'users', t: 'Get matched' }, { icon: 'check', t: 'Work gets done' }]
+              : [{ icon: 'search', t: 'Get matched' }, { icon: 'labourer', t: 'Do the job' }, { icon: 'payment', t: 'Paid fast' }]
+            ).map((h, idx) => (
+              <React.Fragment key={h.t}>
+                {idx > 0 && <Icon name="chevronRight" size={15} color={C.mute2} strokeWidth={2.4} />}
+                <View style={S_.hiwStep}>
+                  <View style={[S_.hiwIcon, { backgroundColor: (isHire ? C.indigo : C.green) + '14' }]}>
+                    <Icon name={h.icon} size={17} color={isHire ? C.indigo : C.green} strokeWidth={2.2} />
+                  </View>
+                  <Text style={S_.hiwT}>{h.t}</Text>
+                </View>
+              </React.Fragment>
+            ))}
           </View>
         )}
 
