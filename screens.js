@@ -1,6 +1,6 @@
 // screens.js — Operator screens extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable, AppState } from 'react-native';
 import { C, R, S, E, M, T, Z } from './theme';
 import { SH, S_ } from './styles';
 import Icon, { iconForType } from './Icon';
@@ -21,6 +21,7 @@ import PayoutsScreen from './PayoutsScreen';
 import { amIAdmin } from './adminService';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
+import { payoutStatus, startPayoutOnboarding } from './paymentsService';
 import CloseOutCard from './CloseOutCard';
 import PrestartCard from './PrestartCard';
 import RunCloseOutCard from './RunCloseOutCard';
@@ -314,6 +315,74 @@ function BottomSheet({ activeKey, onRequestClose, render }) {
   );
 }
 
+// PayoutGateSheet — shown when a worker tries to go online / accept without a live payout account.
+// It opens Stripe's hosted onboarding, then re-checks when they return (AppState → active). The
+// moment payouts are enabled it calls onReady() so the worker flows straight back into working.
+function PayoutGateSheet({ visible, onClose, onReady }) {
+  const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [err, setErr] = useState('');
+  // While the sheet is up, re-check each time the app returns to the foreground (i.e. back from Stripe).
+  useEffect(() => {
+    if (!visible) return;
+    const sub = AppState.addEventListener('change', async (s) => {
+      if (s !== 'active') return;
+      setChecking(true);
+      const ok = await payoutStatus().then((r) => !!r?.payouts_enabled).catch(() => false);
+      setChecking(false);
+      if (ok) { tap('success'); onReady && onReady(); }
+    });
+    return () => sub.remove();
+  }, [visible, onReady]);
+
+  async function setup() {
+    setBusy(true); setErr('');
+    try { await startPayoutOnboarding(); }
+    catch (e) { setErr(e?.message || 'Could not open payout setup.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={PG.backdrop}>
+        <View style={PG.sheet}>
+          <View style={PG.grip} />
+          <View style={PG.iconWrap}><Icon name="payment" size={26} color={C.green} strokeWidth={2.2} /></View>
+          <Text style={PG.title}>Connect your bank to get paid</Text>
+          <Text style={PG.body}>
+            Before you take a job, set up payouts so your money lands the moment a client approves your
+            work. It takes about two minutes on Stripe’s secure page — SiteCall never sees your bank details.
+          </Text>
+          {checking
+            ? <View style={PG.checking}><ActivityIndicator color={C.green} /><Text style={PG.checkingT}>Checking your payout status…</Text></View>
+            : (
+              <TouchableOpacity style={[PG.primary, busy && { opacity: 0.6 }]} disabled={busy} onPress={setup} activeOpacity={0.9}>
+                <Text style={PG.primaryT}>{busy ? 'Opening…' : 'Set up payouts'}</Text>
+              </TouchableOpacity>
+            )}
+          {!!err && <Text style={PG.err}>{err}</Text>}
+          <TouchableOpacity onPress={onClose} activeOpacity={0.8} style={PG.later}><Text style={PG.laterT}>Not now</Text></TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+const PG = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(10,10,16,0.55)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: C.canvas, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 34, alignItems: 'center' },
+  grip: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.line, marginBottom: 18 },
+  iconWrap: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(34,197,94,0.12)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  title: { fontSize: 20, fontWeight: '900', letterSpacing: -0.4, color: C.ink, textAlign: 'center' },
+  body: { fontSize: 14, color: C.mute, lineHeight: 20, textAlign: 'center', marginTop: 10, paddingHorizontal: 4 },
+  primary: { backgroundColor: C.green, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', alignSelf: 'stretch', marginTop: 22 },
+  primaryT: { color: '#fff', fontWeight: '800', fontSize: 15.5 },
+  checking: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 24, height: 52 },
+  checkingT: { color: C.mute, fontWeight: '700', fontSize: 14 },
+  err: { color: C.red, fontSize: 13, marginTop: 12, textAlign: 'center' },
+  later: { paddingVertical: 14, marginTop: 6 },
+  laterT: { color: C.mute, fontWeight: '700', fontSize: 14 },
+});
+
 export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const [profile, setProfile] = useState(() => cacheGet('operator-profile'));   // instant paint, skips gate spinner
   const [loadFailed, setLoadFailed] = useState(false);  // profile load errored — show retry, not an endless spinner
@@ -347,6 +416,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const flood = useRef(new Animated.Value(0)).current;   // green colour-flood when going online
   const [onlineSince, setOnlineSince] = useState(null);  // when this shift started (for the live timer)
   const [endShift, setEndShift] = useState(false);       // "Nice work" end-of-shift sheet visible
+  const [payoutGate, setPayoutGate] = useState(false);   // "set up payouts before you can work" sheet (blocks go-online / accept)
   const [ratePrompt, setRatePrompt] = useState(null);    // { assignmentId } — rate the CLIENT after payout
   const ratePromptedRef = useRef(new Set());             // assignment ids already prompted this session
   const rateSeededRef = useRef(false);                   // seed existing-approved so we only prompt on NEW payouts
@@ -458,8 +528,21 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
       await refresh();
     } catch (e) { setMsg(friendly(e)); } finally { setBusy(false); }
   }
+  // PAYOUT GATE — a worker who hasn't connected their bank must NOT be able to take a job: they'd do
+  // the work, the client's card would be charged in full, and the transfer would fail with nowhere to
+  // land. So going online (and accepting) is blocked until Stripe payouts are enabled. Returns true if
+  // ready, false if we opened the gate. Fails CLOSED (an unknown status blocks) — money safety first.
+  async function ensurePayoutReady() {
+    const ok = await payoutStatus().then((s) => !!s?.payouts_enabled).catch(() => false);
+    if (!ok) { setPayoutGate(true); tap('medium'); return false; }
+    return true;
+  }
   // Going online with the payoff — a green colour-flood blooms from the orb as the map ignites.
   async function goLive() {
+    setBusy(true);
+    const ready = await ensurePayoutReady();
+    setBusy(false);
+    if (!ready) return;   // gate is up; don't flood or go online
     flood.setValue(0);
     Animated.timing(flood, { toValue: 1, duration: 640, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(() => flood.setValue(0));
     await toggleOnline();
@@ -470,6 +553,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     const d = (jobs || []).find((x) => x.request_item?.id === itemId);
     const it = d?.request_item; const r = it?.request;
     try {
+      // Safety net: a worker who was already online (from a prior session, before payouts were set up)
+      // still can't take a job until their bank is connected — same gate as going online.
+      if (!(await ensurePayoutReady())) { setBusy(false); setBusyId(null); return; }
       await acceptSpot(itemId); tap('success');
       // the accept-lock has already succeeded server-side — THIS is just the celebration
       setCelebrate({ type: it?.type, rate: it?.rate, suburb: suburbOf(r?.address_text), urgent: r?.when_type === 'now' });
@@ -951,6 +1037,11 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
       onClose={() => setRatePrompt(null)}
     />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
+    <PayoutGateSheet
+      visible={payoutGate}
+      onClose={() => setPayoutGate(false)}
+      onReady={() => { setPayoutGate(false); refresh(); }}
+    />
     <SkillDiscoverySheet skill={discSkill} excludeUserId={session.user.id} onClose={() => setDiscSkill(null)} onOpenProfile={onOpenProfile} />
     <CloseOutSheet
       assignmentId={closeOut}
@@ -1425,13 +1516,15 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   const [nameMsg, setNameMsg] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);   // server-checked; the panel only appears for admins
   const [helpOpen, setHelpOpen] = useState(false);
+  const [payReady, setPayReady] = useState(null);  // operator payout status → drives the live "Active/Set up" badge
 
   useEffect(() => {
     (async () => {
       try { const p = await getMyProfile(); if (p.full_name) { setSavedName(p.full_name); setName(p.full_name); cacheSet('profile-name', p.full_name); } } catch (_) {}
     })();
     (async () => { try { setIsAdmin(await amIAdmin()); } catch (_) {} })();
-  }, []);
+    if (role === 'operator') (async () => { try { const st = await payoutStatus(); setPayReady(!!st?.payouts_enabled); } catch (_) {} })();
+  }, [role, screen]);
 
   async function saveName() {
     if (!name.trim() || saving) return;
@@ -1518,7 +1611,7 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
         : [['company', 'Company & ABN', 'Manage', () => setScreen('business')], ['gear', 'Vehicles & plant', 'Manage', () => setScreen('rig')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
 
       <AccountSection title={role === 'operator' ? 'Payouts' : 'Business'} rows={role === 'operator'
-        ? [['payment', 'Payouts & bank', 'Set up', () => setScreen('payouts')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
+        ? [['payment', 'Payouts & bank', payReady === true ? 'Active' : payReady === false ? 'Set up' : '', () => setScreen('payouts')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
         : [['users', 'Team seats', 'Soon', () => setComingSoon('Team seats')], ['payment', 'Monthly billing', 'Soon', () => setComingSoon('Monthly billing')], ['trending', 'Spend reporting', 'Soon', () => setComingSoon('Spend reporting')]]} />
 
       <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Soon', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
