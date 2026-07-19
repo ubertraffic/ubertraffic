@@ -13,6 +13,12 @@ import { C, R, S, T, shadowSm } from './theme';
 import { getMyIdentity } from './accountService';
 import { getInvoiceSellers } from './paymentsService';
 
+// DORMANT until the invoice AUTHOR/structure is confirmed with the accountant (RCTI needs both parties
+// GST-registered; worker-issued needs the worker registered; SiteCall-issued is different again). The
+// generator stays off the user surface so nobody is shown a document whose structure may change — but
+// field capture (ABN, GST status, licence, ABR business name) continues so we're ready to switch it on.
+export const INVOICE_ENABLED = false;
+
 const d$ = (dollars) => `$${(Number(dollars) || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtAbn = (abn) => {
   const s = String(abn || '').replace(/\D/g, '');

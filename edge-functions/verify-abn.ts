@@ -89,10 +89,12 @@ Deno.serve(async (req) => {
       return json({ status: "review", detail: "ABN is active, but the name doesn't match the register — this needs manual confirmation." });
     }
 
-    const { error: upErr } = await admin.from("profiles").update({ abn_status: "verified" }).eq("id", user.id);
+    // Capture the REGISTERED name from the register (not free-text) — the seller name any invoice uses.
+    const entityName = (data.EntityName || (Array.isArray(data.BusinessName) ? data.BusinessName[0] : data.BusinessName) || "").toString().trim() || null;
+    const { error: upErr } = await admin.from("profiles").update({ abn_status: "verified", abn_entity_name: entityName }).eq("id", user.id);
     if (upErr) return json({ status: "review", detail: "Verified at ABR but DB update failed." });
 
-    return json({ status: "verified", detail: `Matched ${data.EntityName || "the ABR record"}.` });
+    return json({ status: "verified", detail: `Matched ${data.EntityName || "the ABR record"}.`, entity_name: entityName });
   } catch (e) {
     return json({ status: "review", detail: `Unexpected: ${(e as Error).message}` });
   }

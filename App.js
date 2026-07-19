@@ -46,7 +46,7 @@ import { OperatorHome, OperatorJobs, OperatorEarnings, Account } from './screens
 import { RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, tap, StepFade, PrimaryBtn, estTotal, jobCrewSize, jobTitle, jobSubtitle, Center } from './components2';
 import { logError } from './errorService';
 import { getPaymentForRequest } from './paymentsService';
-import Invoice from './Invoice';
+import Invoice, { INVOICE_ENABLED } from './Invoice';
 import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerLine, MatchCard, EmptyState, isStalledAssignment, requestHasStall, repLine, autoReleaseIn, friendly } from './components';
 
 /* ============================================================ ROOT */
@@ -1703,13 +1703,15 @@ function ActivityCard({ r }) {
           {r.address_text ? <View style={S_.actRow}><Text style={S_.actLabel}>Site</Text><Text style={[S_.actVal, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>{r.address_text}</Text></View> : null}
           {paidWhen ? <View style={S_.actRow}><Text style={S_.actLabel}>Paid</Text><Text style={S_.actVal}>{paidWhen.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></View> : null}
           {ref ? <View style={S_.actRow}><Text style={S_.actLabel}>Receipt no.</Text><Text style={[S_.actVal, { fontVariant: ['tabular-nums'] }]}>SC-{ref}</Text></View> : null}
-          <TouchableOpacity onPress={() => setShowInvoice(true)} activeOpacity={0.85} style={{ marginTop: 14, backgroundColor: C.indigoSoft, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}>
-            <Text style={{ color: C.indigo, fontWeight: '800', fontSize: 14 }}>View / share invoice</Text>
-          </TouchableOpacity>
+          {INVOICE_ENABLED && (
+            <TouchableOpacity onPress={() => setShowInvoice(true)} activeOpacity={0.85} style={{ marginTop: 14, backgroundColor: C.indigoSoft, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}>
+              <Text style={{ color: C.indigo, fontWeight: '800', fontSize: 14 }}>View / share invoice</Text>
+            </TouchableOpacity>
+          )}
           <Text style={[T.tiny, { color: C.mute2, marginTop: 10 }]}>🔒 Paid securely via Stripe. SiteCall never stores your card.</Text>
         </View>
       )}
-      <Invoice visible={showInvoice} request={r} payment={pay || null} onClose={() => setShowInvoice(false)} />
+      {INVOICE_ENABLED && <Invoice visible={showInvoice} request={r} payment={pay || null} onClose={() => setShowInvoice(false)} />}
     </View>
   );
 }
