@@ -186,6 +186,13 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
   const busyHere = busyId === it?.id;
   const accent = urgent ? C.amber : C.green;
   const accentSoft = urgent ? 'rgba(245,158,11,0.12)' : C.greenSoft;
+  // Booked jobs: show WHEN (the client's chosen start), so the badge isn't just a vague "Booked".
+  const startTime = (!urgent && r?.scheduled_at) ? (() => {
+    const dt = new Date(r.scheduled_at);
+    const day = dt.toLocaleDateString('en-AU', { weekday: 'short' });
+    const h = dt.getHours(); const hr = h % 12 || 12; const ap = h < 12 ? 'am' : 'pm';
+    return `${day} ${hr}${ap}`;
+  })() : null;
   return (
     <Animated.View style={[cardStyle, { marginBottom: 14 }]}>
       <View style={jc.card}>
@@ -218,7 +225,7 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
             })()}
           </View>
           <View style={[jc.badge, { backgroundColor: urgent ? 'rgba(245,158,11,0.14)' : C.panel2 }]}>
-            <Text style={[jc.badgeT, { color: urgent ? C.amber : C.mute }]}>{urgent ? '⚡ Now' : 'Booked'}</Text>
+            <Text style={[jc.badgeT, { color: urgent ? C.amber : C.mute }]}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
           </View>
         </View>
 

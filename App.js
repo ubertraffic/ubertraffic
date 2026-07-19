@@ -1100,6 +1100,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   const [when, setWhen] = useState('now');
   const [schedDay, setSchedDay] = useState(0);    // 0=today, 1=tomorrow, ... offset in days
   const [schedHour, setSchedHour] = useState(9);  // 24h local hour chosen for a booked job
+  const [duration, setDuration] = useState(4);    // expected job length (hrs) — drives every pay estimate
   const [contactName, setContactName] = useState('');   // optional site contact (who to ask for)
   const [contactPhone, setContactPhone] = useState(''); // optional site contact phone
   const [materialsCap, setMaterialsCap] = useState(''); // optional materials budget
@@ -1132,7 +1133,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
       Animated.parallel([
         Animated.timing(y, { toValue: SHEET_SCREEN_H, duration: 240, useNativeDriver: true }),
         Animated.timing(dim, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]).start(() => { setShown(false); setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
+      ]).start(() => { setShown(false); setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setDuration(4); setPickQ(''); setOpenCats({}); });
     }
   }, [visible]);
 
@@ -1173,10 +1174,10 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
       const isBooked = when === 'scheduled';
       const sched = isBooked ? scheduledISO() : null;
       if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
-      const newId = await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
+      const newId = await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: duration, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
       // estimate for the pay sheet (server still computes the authoritative charge) — mirrors the
-      // fee math: hourly items × 4h, job-priced as-is, + travel. Passed through so the sheet never flashes $0.
-      const estCents = items.reduce((s, it) => s + Math.round((Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : 4) * 100), 0) + Math.round((parseFloat(travel) || 0) * 100);
+      // fee math: hourly items × the chosen hours, job-priced as-is, + travel. Passed through so the sheet never flashes $0.
+      const estCents = items.reduce((s, it) => s + Math.round((Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : duration) * 100), 0) + Math.round((parseFloat(travel) || 0) * 100);
       const estLabel = items[0]?.type || 'Job';
       setPhase('sent');
       setTimeout(() => { onPosted && onPosted(newId, estCents, estLabel); }, 1100);   // let the "sent" beat land, then drop home
@@ -1442,6 +1443,23 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                     </ScrollView>
                   </View>
                 )}
+
+                {/* Expected hours — drives every pay estimate the worker sees. Only for hourly work
+                    (job-priced runs are per-job, so duration doesn't apply). */}
+                {items.some((it) => it.priceMode !== 'job') && (
+                  <View style={{ marginTop: 18 }}>
+                    <Text style={SH.optionalLabel}>How long, roughly?</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+                      {[2, 4, 6, 8, 10].map((h) => (
+                        <TouchableOpacity key={h} style={[SH.dayChip, duration === h && SH.dayChipOn]} onPress={() => { tap('light'); setDuration(h); }}>
+                          <Text style={[SH.dayChipT, duration === h && SH.dayChipTOn]}>{h === 10 ? 'Full day' : `${h} hrs`}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <Text style={[SH.optionalLabel, { marginTop: 8, fontWeight: '600', textTransform: 'none', letterSpacing: 0 }]}>Roughly — workers are paid for the hours actually worked.</Text>
+                  </View>
+                )}
+
                 <TouchableOpacity style={[SH.next, { marginTop: 16 }]} onPress={() => setPhase('review')}><Text style={SH.nextT}>Review ›</Text></TouchableOpacity>
               </>
             )}
@@ -1455,6 +1473,20 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                   <View style={SH.reviewDiv} />
                   <View style={SH.reviewRow}><Text style={SH.reviewMeta}>{loc || 'No location'}</Text></View>
                   <View style={SH.reviewRow}><Text style={SH.reviewMeta}>{when === 'now' ? 'Now — urgent' : (() => { const d = new Date(); d.setDate(d.getDate() + schedDay); d.setHours(schedHour, 0, 0, 0); return 'Booked · ' + d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }) + ' at ' + d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }); })()}</Text></View>
+                  {/* Estimated total for the chosen hours — the real number, not a fixed 4h */}
+                  {(() => {
+                    const hourly = items.some((i) => i.priceMode !== 'job');
+                    const est = items.reduce((s, it) => s + (Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : duration), 0) + (parseFloat(travel) || 0);
+                    return (
+                      <>
+                        <View style={SH.reviewDiv} />
+                        <View style={SH.reviewRow}>
+                          <Text style={SH.reviewName}>Estimated total{hourly ? ` · ${duration === 10 ? 'full day' : duration + 'h'}` : ''}</Text>
+                          <Text style={SH.reviewRate}>~${Math.round(est).toLocaleString()}</Text>
+                        </View>
+                      </>
+                    );
+                  })()}
                 </View>
                 {!!err && <Text style={SH.err}>{err}</Text>}
                 {/* Job details / duties — the "bio" workers read before accepting. Prominent (first,
