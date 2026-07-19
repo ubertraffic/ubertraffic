@@ -627,6 +627,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['dispatches', 'assignments'], refresh);
+  // Pre-fill the legal-name field from the name they already gave at signup, so becoming an operator
+  // never feels like "type your name AGAIN". They only edit it if it differs from their licence.
+  useEffect(() => { if (profile?.full_name && !idName) setIdName(profile.full_name); }, [profile?.full_name]);
   // shift clock — starts when the worker goes online (kept if already online on load), clears offline.
   useEffect(() => {
     if (profile?.is_online) setOnlineSince((s) => s || Date.now());
@@ -826,7 +829,17 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   if (capPicker) {
     return (
       <View style={[S_.fill, { padding: S.xl, paddingTop: 48 }]}>
-        <Text style={[T.eyebrow, { marginBottom: 14 }]}>Add a capability</Text>
+        {/* Clear header + back — this is the WORKER picking what they can do, not the job-post sheet
+            (they share the same picker UI, which is why a distinct header matters here). */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+          <TouchableOpacity onPress={() => setCapPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingRight: 12 }} activeOpacity={0.7}>
+            <Icon name="chevronLeft" size={22} color={C.ink} strokeWidth={2.4} />
+            <Text style={{ fontSize: 16, fontWeight: '700', color: C.ink }}>Back</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={[T.heading, { marginBottom: 4 }]}>What can you do?</Text>
+        <Text style={[T.body, { color: C.mute, marginBottom: 14 }]}>Add a trade or task you can take on — it’s how we match you to nearby work.</Text>
         <TradePicker onPick={addCapFromTrade} onCancel={() => setCapPicker(false)} />
       </View>
     );
@@ -836,9 +849,10 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     return (
       <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
         <Text style={T.eyebrow}>Start working</Text>
-        <Text style={[T.body, { marginTop: 8, marginBottom: 18 }]}>Set yourself up to receive jobs — verified, online, and matched to work near you.</Text>
+        <Text style={[T.body, { marginTop: 8, marginBottom: 18 }]}>One last thing before you can receive jobs: confirm your legal name and date of birth so we can check your tickets against the registers.</Text>
         <Text style={[T.label, { marginBottom: 6 }]}>Full legal name</Text>
         <TextInput style={S_.input} value={idName} onChangeText={setIdName} placeholder="As it appears on your licence / White Card" placeholderTextColor={C.mute2} />
+        <Text style={[T.small, { color: C.mute, marginTop: 6 }]}>We’ve filled in the name you signed up with — edit it only if your licence shows a different name.</Text>
         <Text style={[T.label, { marginBottom: 6, marginTop: 12 }]}>Date of birth</Text>
         <TextInput style={S_.input} value={idDob} onChangeText={(t) => setIdDob(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
         <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 18 }]}>Used only to check your tickets and licences against the registers — never shown publicly.</Text>
