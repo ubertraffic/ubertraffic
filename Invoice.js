@@ -10,9 +10,6 @@ import { Modal, View, Text, TouchableOpacity, ScrollView, StyleSheet, Share, Pla
 import { C, R, S, T, shadowSm } from './theme';
 import { getMyIdentity } from './accountService';
 
-const APPLY_GST = false;   // agent model: flip on once the seller/GST structure is confirmed with the accountant
-const GST_RATE = 0.10;
-
 const money = (cents) => `$${((Number(cents) || 0) / 100).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const d$ = (dollars) => `$${(Number(dollars) || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -37,16 +34,19 @@ export default function Invoice({ visible, request, payment, onClose }) {
       amount,
     };
   });
-  const workers = [...new Set(items.flatMap((it) => (it.assignments || [])
-    .filter((a) => ['complete', 'approved'].includes(a.status))
-    .map((a) => a.operator?.full_name).filter(Boolean)))];
+  const doneAssigns = items.flatMap((it) => (it.assignments || []).filter((a) => ['complete', 'approved'].includes(a.status)));
+  const workers = [...new Set(doneAssigns.map((a) => a.operator?.full_name).filter(Boolean))];
+  // GST only when a worker on the job is GST-registered (most aren't → no GST line at all). Prices are
+  // GST-inclusive, so we break out the 10% already inside the labour rather than adding anything on top.
+  const gstApplies = doneAssigns.some((a) => a.operator?.gst_registered);
 
+  const labourOnly = lines.reduce((n, l) => n + l.amount, 0);
   const travel = (Number(payment?.travel_cents) || 0) / 100;
   const tip = (Number(payment?.tip_cents) || 0) / 100;
-  const lineSubtotal = lines.reduce((n, l) => n + l.amount, 0) + travel + tip;
+  const lineSubtotal = labourOnly + travel + tip;
   // The Stripe charge is the source of truth for what was actually paid; fall back to the computed sum.
   const paidTotal = payment?.amount_cents != null ? Number(payment.amount_cents) / 100 : lineSubtotal;
-  const gst = APPLY_GST ? paidTotal - paidTotal / (1 + GST_RATE) : 0;
+  const gst = gstApplies ? labourOnly / 11 : 0;   // GST-inclusive: 1/11th of the labour
 
   const invNo = `SC-INV-${String(r.id || '').replace(/-/g, '').slice(-8).toUpperCase()}`;
   const issued = payment?.updated_at || payment?.created_at || r.approved_at || r.created_at;
@@ -64,7 +64,7 @@ export default function Invoice({ visible, request, payment, onClose }) {
       ...lines.map((l) => `${l.label} — ${l.detail}: ${d$(l.amount)}`),
       travel ? `Travel allowance: ${d$(travel)}` : null,
       tip ? `Tip: ${d$(tip)}` : null,
-      APPLY_GST ? `Incl. GST: ${d$(gst)}` : null,
+      gstApplies ? `Incl. GST: ${d$(gst)}` : null,
       `TOTAL PAID: ${d$(paidTotal)}`,
       '',
       'Facilitated by SiteCall. Paid securely via Stripe.',
@@ -80,7 +80,7 @@ export default function Invoice({ visible, request, payment, onClose }) {
           <View style={s.head}>
             <View>
               <Text style={s.brand}>SiteCall</Text>
-              <Text style={s.brandSub}>Invoice · facilitated marketplace</Text>
+              <Text style={s.brandSub}>{gstApplies ? 'Tax invoice' : 'Invoice'} · facilitated marketplace</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
               <View style={s.paidPill}><Text style={s.paidPillT}>PAID</Text></View>
@@ -128,7 +128,7 @@ export default function Invoice({ visible, request, payment, onClose }) {
             {tip ? <View style={s.lineRow}><Text style={[s.lineLabel, { flex: 1 }]}>Tip</Text><Text style={s.lineAmt}>{d$(tip)}</Text></View> : null}
 
             <View style={s.divider} />
-            {APPLY_GST ? (
+            {gstApplies ? (
               <View style={s.totRow}><Text style={s.totLabel}>Includes GST (10%)</Text><Text style={s.totVal}>{d$(gst)}</Text></View>
             ) : null}
             <View style={[s.totRow, { marginTop: 4 }]}>
@@ -137,7 +137,7 @@ export default function Invoice({ visible, request, payment, onClose }) {
             </View>
 
             <Text style={s.footer}>
-              Facilitated by SiteCall. Paid securely via Stripe.{APPLY_GST ? '' : ' GST not applied.'}
+              Facilitated by SiteCall. Paid securely via Stripe.{gstApplies ? ' Includes GST as shown.' : ''}
             </Text>
           </ScrollView>
 

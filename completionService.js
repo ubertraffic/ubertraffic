@@ -177,7 +177,7 @@ export async function listMyRequestsFull() {
     try {
       const { data: ops } = await supabase
         .from('profiles')
-        .select('id, full_name, rating, rating_count, jobs_done, vehicle_type')
+        .select('id, full_name, rating, rating_count, jobs_done, vehicle_type, gst_registered')
         .in('id', opIds);
       const byId = Object.fromEntries((ops || []).map((o) => [o.id, o]));
       rows.forEach((r) => (r.request_items || []).forEach((it) => (it.assignments || []).forEach((a) => {

@@ -62,7 +62,7 @@ function statusWords(s) {
 import { useRealtime } from './useRealtime';
 import { cacheGet, cacheSet, cacheClearAll } from './screenCache';
 import { setRole, setOnline, setVehicle, getMyProfile, updateMyName, setMyOperatorLocation, addCapability, listMyCapabilities, removeCapability, listMyDispatches, acceptSpot, listMyAssignments, getDemandHeat } from './operatorService';
-import { setMyIdentity, setMyAbn, verifyMyAbn, abnValid, normalizeAbn } from './accountService';
+import { setMyIdentity, setMyAbn, verifyMyAbn, abnValid, normalizeAbn, setGstRegistered } from './accountService';
 import { formatDMY, dmyToISO } from './dateFormat';
 import { getPosition, watchPosition } from './location';
 import { getUnreadCounts } from './messagesService';
@@ -391,9 +391,10 @@ const PG = StyleSheet.create({
 const ABR_APPLY_URL = 'https://www.abr.gov.au/business-super-funds-charities/applying-abn';
 function AbnGateSheet({ visible, onClose, onSaved }) {
   const [abn, setAbn] = useState('');
+  const [gst, setGst] = useState(false);   // registered for GST? default off — most workers aren't
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { if (visible) { setAbn(''); setErr(''); } }, [visible]);
+  useEffect(() => { if (visible) { setAbn(''); setGst(false); setErr(''); } }, [visible]);
 
   const clean = normalizeAbn(abn);
   const valid = abnValid(clean);
@@ -403,6 +404,7 @@ function AbnGateSheet({ visible, onClose, onSaved }) {
     setBusy(true); setErr('');
     try {
       await setMyAbn(clean);
+      try { await setGstRegistered(gst); } catch (_) { /* GST flag is best-effort; ABN is what gates earning */ }
       try { await verifyMyAbn(); } catch (_) { /* register verify is best-effort; format is saved */ }
       tap('success'); onSaved && onSaved();
     } catch (e) { setErr(e?.message || 'Could not save your ABN.'); }
@@ -434,6 +436,15 @@ function AbnGateSheet({ visible, onClose, onSaved }) {
             />
             {!!err && <Text style={AG.err}>{err}</Text>}
 
+            {/* GST — friendly + optional. Default off; most workers aren't registered. */}
+            <TouchableOpacity style={AG.gstRow} onPress={() => setGst((v) => !v)} activeOpacity={0.8}>
+              <View style={[AG.check, gst && AG.checkOn]}>{gst && <Text style={AG.checkT}>✓</Text>}</View>
+              <View style={{ flex: 1 }}>
+                <Text style={AG.gstT}>I’m registered for GST</Text>
+                <Text style={AG.gstHint}>Only if you earn over $75k/yr — most aren’t. Not sure? Leave it off.</Text>
+              </View>
+            </TouchableOpacity>
+
             <TouchableOpacity style={[AG.primary, (!valid || busy) && { opacity: 0.5 }]} disabled={!valid || busy} onPress={save} activeOpacity={0.9}>
               <Text style={AG.primaryT}>{busy ? 'Saving…' : 'Save ABN'}</Text>
             </TouchableOpacity>
@@ -460,6 +471,12 @@ const AG = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '900', letterSpacing: -0.4, color: C.ink, textAlign: 'center' },
   body: { fontSize: 14, color: C.mute, lineHeight: 20, textAlign: 'center', marginTop: 10, paddingHorizontal: 4 },
   input: { alignSelf: 'stretch', backgroundColor: C.panel, borderWidth: 1.5, borderColor: C.line, borderRadius: R.lg, paddingHorizontal: 16, paddingVertical: 15, fontSize: 18, fontWeight: '800', color: C.ink, letterSpacing: 1, textAlign: 'center', marginTop: 20 },
+  gstRow: { flexDirection: 'row', alignItems: 'center', gap: 12, alignSelf: 'stretch', marginTop: 16, paddingHorizontal: 2 },
+  check: { width: 24, height: 24, borderRadius: 7, borderWidth: 1.5, borderColor: C.line, alignItems: 'center', justifyContent: 'center' },
+  checkOn: { backgroundColor: C.indigo, borderColor: C.indigo },
+  checkT: { color: '#fff', fontWeight: '900', fontSize: 14 },
+  gstT: { fontSize: 14.5, fontWeight: '800', color: C.ink },
+  gstHint: { fontSize: 12, color: C.mute, marginTop: 2, lineHeight: 16 },
   primary: { backgroundColor: C.indigo, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', alignSelf: 'stretch', marginTop: 14 },
   primaryT: { color: '#fff', fontWeight: '800', fontSize: 15.5 },
   link: { paddingVertical: 14, marginTop: 4 },

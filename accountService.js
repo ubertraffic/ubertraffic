@@ -107,6 +107,16 @@ export async function setMyAbn(abn) {
   return { abn: clean, abn_status: 'valid' };
 }
 
+// Whether this worker is registered for GST (default false — most aren't). Drives whether their
+// invoices break out the 10% GST. Self-update on the caller's own row.
+export async function setGstRegistered(on) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) throw new Error('Not signed in.');
+  const { error } = await supabase.from('profiles').update({ gst_registered: !!on }).eq('id', u.user.id);
+  if (error) throw error;
+  return { gst_registered: !!on };
+}
+
 // Verify the caller's stored ABN against the free ABR ABN Lookup register (server-side Edge
 // Function 'verify-abn' — the GUID lives there, never in the app). Flips abn_status to 'verified'
 // on a real match. Returns { status: 'verified' | 'review', detail? }. Mirrors verifyMyCredential.
