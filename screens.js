@@ -1,6 +1,6 @@
 // screens.js — Operator screens extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable, AppState, Linking } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable, AppState, Linking, RefreshControl } from 'react-native';
 import { C, R, S, E, M, T, Z } from './theme';
 import { SH, S_ } from './styles';
 import Icon, { iconForType } from './Icon';
@@ -1320,6 +1320,8 @@ export function OperatorJobs({ session, onOpenProfile }) {
     try { setUnread(await getUnreadCounts(session.user.id)); } catch (_) {}
   }, [session.user.id]);
   useEffect(() => { refresh(); }, [refresh]);
+  const [refreshing, setRefreshing] = useState(false);
+  const onPull = useCallback(async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }, [refresh]);
   useEffect(() => {
     const t = setInterval(async () => { try { setUnread(await getUnreadCounts(session.user.id)); } catch (_) {} }, 10000);
     return () => clearInterval(t);
@@ -1415,10 +1417,14 @@ export function OperatorJobs({ session, onOpenProfile }) {
 
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.green} colors={[C.green]} />}>
       <Text style={T.eyebrow}>My jobs</Text>
       {assigns === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : assigns.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No accepted jobs yet.</Text>
+        : assigns.length === 0 ? (
+          <EmptyState icon="jobs" title="No jobs yet"
+            sub="When you accept a job it shows up here — with the map, chat and check-in all in one place." />
+        )
         : assigns.map((a) => {
           const committed = a.status === 'committed' || a.status === 'accepted';
           const next = committed ? ['en_route', 'Start journey']
@@ -1679,6 +1685,8 @@ export function OperatorEarnings({ session }) {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['assignments', 'payouts'], refresh);
+  const [refreshing, setRefreshing] = useState(false);
+  const onPull = useCallback(async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }, [refresh]);
 
   const paid = (assigns || []).filter((a) => a.status === 'approved');
   const pending = (assigns || []).filter((a) => a.status === 'complete');
@@ -1708,7 +1716,8 @@ export function OperatorEarnings({ session }) {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 140 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 140 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.green} colors={[C.green]} />}>
       <Text style={T.eyebrow}>Earnings</Text>
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 26 }]}>
         <Text style={T.label}>Paid to you</Text>
@@ -1753,7 +1762,10 @@ export function OperatorEarnings({ session }) {
 
       <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
       {assigns === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : paid.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No settled jobs yet. Finish a job and get it approved to see earnings here.</Text>
+        : paid.length === 0 ? (
+          <EmptyState icon="earnings" title="No earnings yet"
+            sub="Finish a job and get it approved — your pay lands here, grouped by month for your tax records." />
+        )
         : groups.map((g) => (
           <View key={g.key} style={{ marginTop: 10 }}>
             <View style={es.groupHead}>

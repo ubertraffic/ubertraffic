@@ -203,6 +203,19 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
               <Icon name="pin" size={12} color={C.mute} strokeWidth={2.2} />
               <Text style={jc.where} numberOfLines={1}>{suburbOf(r?.address_text) || 'Nearby'}</Text>
             </View>
+            {/* who you'd work for — so the worker never accepts blind */}
+            {(() => {
+              const rep = d.client_rep;
+              const rated = rep && rep.client_rating_count > 0;
+              return (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                  <Icon name="star" size={11} color={rated ? C.amber : C.mute2} strokeWidth={2.2} fill={rated ? C.amber : 'none'} />
+                  <Text style={{ fontSize: 11.5, color: C.mute, fontWeight: '700' }}>
+                    {rated ? `${Number(rep.client_rating).toFixed(1)} · ${rep.client_rating_count} job${rep.client_rating_count === 1 ? '' : 's'} posted` : 'New client'}
+                  </Text>
+                </View>
+              );
+            })()}
           </View>
           <View style={[jc.badge, { backgroundColor: urgent ? 'rgba(245,158,11,0.14)' : C.panel2 }]}>
             <Text style={[jc.badgeT, { color: urgent ? C.amber : C.mute }]}>{urgent ? '⚡ Now' : 'Booked'}</Text>

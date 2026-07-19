@@ -279,6 +279,8 @@ export const S_ = StyleSheet.create({
   loginAction: { marginTop: 24 },
   loginMsgErr: { color: C.red, marginTop: 16, fontSize: 13, lineHeight: 19, fontWeight: '600' },
   loginMsgInfo: { color: C.ink2, marginTop: 16, fontSize: 13, lineHeight: 19, fontWeight: '600' },
+  loginForgot: { marginTop: 14, alignItems: 'center', paddingVertical: 4 },
+  loginForgotT: { color: C.indigo, fontWeight: '700', fontSize: 13.5 },
   loginSwitch: { marginTop: 24, paddingVertical: 8, alignItems: 'center' },
   loginSwitchT: { fontSize: 14, color: C.mute, fontWeight: '500' },
   loginSwitchLink: { color: C.indigo, fontWeight: '800' },

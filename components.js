@@ -365,6 +365,7 @@ export function VouchCrewCard({ requestId }) {
   const [tags, setTags] = useState([]);
   const [busy, setBusy] = useState(false);
   const [vouched, setVouched] = useState({});  // user_id -> true once sent
+  const [verr, setVerr] = useState('');        // surfaced if a vouch fails to send
   useEffect(() => {
     let alive = true;
     coworkersOnJob(requestId).then((r) => { if (alive) setMates(r); }).catch(() => { if (alive) setMates([]); });
@@ -375,9 +376,9 @@ export function VouchCrewCard({ requestId }) {
   function toggleTag(t) { setTags((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]); }
   async function send() {
     if (!sel) return;
-    setBusy(true);
+    setBusy(true); setVerr('');
     try { await vouchForPeer(requestId, sel.user_id, tags); setVouched((v) => ({ ...v, [sel.user_id]: true })); setSel(null); setTags([]); }
-    catch (_) {} finally { setBusy(false); }
+    catch (e) { setVerr('Couldn’t send that vouch — please try again.'); } finally { setBusy(false); }
   }
   return (
     <>
@@ -409,6 +410,7 @@ export function VouchCrewCard({ requestId }) {
                 <TouchableOpacity style={[S_.rateSubmit, busy && { opacity: 0.6 }]} onPress={send} disabled={busy} activeOpacity={0.9}>
                   <Text style={S_.rateSubmitT}>{busy ? 'Sending…' : 'Send vouch'}</Text>
                 </TouchableOpacity>
+                {!!verr && <Text style={{ color: C.red, fontSize: 13, fontWeight: '600', textAlign: 'center', marginTop: 8 }}>{verr}</Text>}
                 <TouchableOpacity onPress={() => setSel(null)} style={{ paddingVertical: 10 }} activeOpacity={0.7}>
                   <Text style={S_.rateSkip}>Back</Text>
                 </TouchableOpacity>

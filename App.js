@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, PanResponder,
-  Animated, Dimensions, Pressable, Keyboard, Modal, Easing, Linking,
+  Animated, Dimensions, Pressable, Keyboard, Modal, Easing, Linking, RefreshControl,
 } from 'react-native';
 import { supabase } from './supabaseClient';
 import PayJobSheet from './PayJobSheet';
@@ -229,7 +229,7 @@ function Login({ intent, onBack }) {
         const { error } = await supabase.auth.signInWithPassword({ email: e, password });
         if (error) {
           if (/invalid login credentials/i.test(error.message)) {
-            setMsg('Wrong email or password. New here? Tap "Create account".');
+            setMsg('Wrong email or password. Forgot it? Tap “Forgot password?” below.');
           } else if (/email not confirmed/i.test(error.message)) {
             setMsg('Check your email to confirm your account, then sign in.'); setMsgTone('info');
           } else {
@@ -261,6 +261,20 @@ function Login({ intent, onBack }) {
         // success with immediate session → auth listener takes over
       }
     } catch (err) { setMsg(friendly(err)); } finally { setBusy(false); }
+  }
+
+  // Password recovery — sends a reset link to the entered email. Deliberately vague on whether the
+  // email exists (never reveals account existence), and needs a valid email in the field first.
+  async function resetPassword() {
+    const e = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(e)) { setMsg('Enter your email above first, then tap “Forgot password?”.'); setMsgTone('error'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(e);
+      if (error) { setMsg(friendly(error)); setMsgTone('error'); }
+      else { setMsg('If that email has an account, we’ve sent a link to reset your password. Check your inbox.'); setMsgTone('info'); }
+    } catch (err) { setMsg(friendly(err)); setMsgTone('error'); }
+    finally { setBusy(false); }
   }
 
   const isSignup = mode === 'signup';
@@ -325,6 +339,14 @@ function Login({ intent, onBack }) {
               ? <PrimaryBtn label="Continue" onPress={next} />
               : <PrimaryBtn label={isSignup ? 'Create account' : 'Sign in'} onPress={submit} busy={busy} />}
           </View>
+
+          {/* Forgot password — sign-in only, so the person can recover instead of making a duplicate account */}
+          {!isSignup && (
+            <TouchableOpacity onPress={resetPassword} disabled={busy} style={S_.loginForgot}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+              <Text style={S_.loginForgotT}>Forgot password?</Text>
+            </TouchableOpacity>
+          )}
 
           {!!msg && <Text style={msgTone === 'error' ? S_.loginMsgErr : S_.loginMsgInfo}>{msg}</Text>}
         </StepFade>
@@ -640,6 +662,7 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
   const [tradesBusy, setTradesBusy] = useState(false);
   const [capsCount, setCapsCount] = useState(null); // how many capabilities are on file (drives 'done')
   const [reqTix, setReqTix] = useState(null);       // tickets the chosen trades require (tailored verify)
+  const [payoutErr, setPayoutErr] = useState('');   // surfaced when opening Stripe fails (money — never silent)
 
   useEffect(() => {
     if (isHire) return;
@@ -708,8 +731,10 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
     finally { setSavingName(false); }
   }
   async function startPayout() {
-    setPayoutBusy(true);
-    try { await startPayoutOnboarding(); } catch (_) {} finally { setPayoutBusy(false); }
+    setPayoutBusy(true); setPayoutErr('');
+    try { await startPayoutOnboarding(); }
+    catch (e) { setPayoutErr(friendly ? friendly(e) : (e?.message || 'Couldn’t open payout setup — please try again.')); }
+    finally { setPayoutBusy(false); }
   }
   const toggleTrade = (t) => setSelTrades((prev) => {
     const n = { ...prev }; if (n[t.id]) delete n[t.id]; else n[t.id] = { id: t.id, name: t.name, kind: t.kind }; return n;
@@ -999,12 +1024,13 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
                   </View>
                 )}
 
-                {/* payout: after launching Stripe, a gentle re-check */}
+                {/* payout: after launching Stripe, a gentle re-check + any error (money is never silent) */}
                 {s.key === 'payout' && s.state === 'todo' && payout != null && (
                   <TouchableOpacity onPress={loadPayout} style={S_.setRecheck} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
                     <Text style={S_.setRecheckT}>Finished in the browser? Tap to refresh</Text>
                   </TouchableOpacity>
                 )}
+                {s.key === 'payout' && !!payoutErr && <Text style={S_.setInlineErr}>{payoutErr}</Text>}
               </View>
             );
           })}
@@ -1955,6 +1981,8 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
   }, []);
   useEffect(() => { load(); }, [load]);
   useRealtime(['assignments', 'requests'], load);
+  const [refreshing, setRefreshing] = useState(false);
+  const onPull = useCallback(async () => { setRefreshing(true); try { await load(); } finally { setRefreshing(false); } }, [load]);
 
   // Same Stripe flow as Home — posting authorises a hold, approving captures + pays the worker.
   const { payJob, beginApproval, PaySheet } = useClientPayFlow({
@@ -2146,7 +2174,8 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
 
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.indigo} colors={[C.indigo]} />}>
       <View style={S_.rowBetween}>
         <Text style={T.eyebrow}>My requests</Text>
         <LiveTag />
@@ -2175,7 +2204,15 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
         </View>
       )}
       {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : shown.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>{(mine || []).length === 0 ? 'No requests yet.' : filter === 'active' ? 'Nothing live right now.' : filter === 'ready' ? 'Nothing waiting on you.' : 'Nothing here yet.'}</Text>
+        : shown.length === 0 ? (
+          (mine || []).length === 0
+            ? <EmptyState icon="requests" title="Post your first job"
+                sub="Tell us what you need on site and skilled crews nearby get notified — often on site within the hour. You only pay once the work's done."
+                cta="＋ New request" onPress={() => setSheetOpen(true)} />
+            : <EmptyState icon="requests"
+                title={filter === 'active' ? 'Nothing live right now' : filter === 'ready' ? 'Nothing waiting on you' : 'Nothing here yet'}
+                sub={filter === 'active' ? 'Post a job and it’ll appear here while crews are matched.' : 'Jobs you’ve finished with will show under Past.'} />
+        )
         : shown.map((r) => <FullReqCard key={r.id} r={r} busy={busyId === r.id} defaultOpen={focusReq === r.id} onApprove={() => openReview(r.id)} onCancel={() => cancel(r.id)} onRepost={() => repost(r.id)} />)}
     </ScrollView>
     <RequestSheet
