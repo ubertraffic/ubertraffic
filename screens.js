@@ -1,6 +1,6 @@
 // screens.js — Operator screens extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable, AppState, Linking, RefreshControl } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable, AppState, Linking, RefreshControl, Share } from 'react-native';
 import { C, R, S, E, M, T, Z } from './theme';
 import { SH, S_ } from './styles';
 import Icon, { iconForType } from './Icon';
@@ -493,7 +493,7 @@ const AG = StyleSheet.create({
 // WorkerMoment — a full-screen celebratory beat for the two key worker moments: "you got paid" (after
 // a job settles) and "you're on shift" (after arriving on site). One clear hero + one action, so the
 // flow always tells the worker what just happened and what to do next.
-function WorkerMoment({ visible, kind, title, big, sub, cta, onClose }) {
+function WorkerMoment({ visible, kind, title, big, sub, cta, shareText, onClose }) {
   const pop = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!visible) return;
@@ -501,10 +501,18 @@ function WorkerMoment({ visible, kind, title, big, sub, cta, onClose }) {
     Animated.spring(pop, { toValue: 1, friction: 6, tension: 90, useNativeDriver: true }).start();
   }, [visible]);
   const accent = kind === 'paid' ? C.green : C.green;
+  async function share() {
+    try { await Share.share({ message: shareText }); } catch (_) { /* user cancelled — no-op */ }
+  }
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={WM.scrim}>
         <Animated.View style={[WM.card, { transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }], opacity: pop }]}>
+          {/* brand marker — makes the "I got paid" card recognisably SiteCall in a screenshot */}
+          <View style={WM.brandRow}>
+            <View style={WM.mark}><Icon name="pin" size={12} color="#fff" strokeWidth={2.6} /></View>
+            <Text style={WM.brandT}>SiteCall</Text>
+          </View>
           <View style={[WM.badge, { backgroundColor: accent + '1A' }]}>
             <Icon name={kind === 'paid' ? 'payment' : 'verified'} size={30} color={accent} strokeWidth={2.2} />
           </View>
@@ -514,6 +522,12 @@ function WorkerMoment({ visible, kind, title, big, sub, cta, onClose }) {
           <TouchableOpacity style={[WM.cta, { backgroundColor: accent }]} onPress={onClose} activeOpacity={0.9}>
             <Text style={WM.ctaT}>{cta}</Text>
           </TouchableOpacity>
+          {!!shareText && (
+            <TouchableOpacity style={WM.share} onPress={share} activeOpacity={0.8}>
+              <Icon name="trending" size={16} color={C.ink} strokeWidth={2.2} />
+              <Text style={WM.shareT}>Share your win</Text>
+            </TouchableOpacity>
+          )}
         </Animated.View>
       </View>
     </Modal>
@@ -521,7 +535,12 @@ function WorkerMoment({ visible, kind, title, big, sub, cta, onClose }) {
 }
 const WM = StyleSheet.create({
   scrim: { flex: 1, backgroundColor: 'rgba(10,12,16,0.62)', alignItems: 'center', justifyContent: 'center', padding: 28 },
-  card: { backgroundColor: C.canvas, borderRadius: 26, paddingHorizontal: 26, paddingTop: 30, paddingBottom: 24, alignItems: 'center', alignSelf: 'stretch', maxWidth: 400 },
+  card: { backgroundColor: C.canvas, borderRadius: 26, paddingHorizontal: 26, paddingTop: 22, paddingBottom: 24, alignItems: 'center', alignSelf: 'stretch', maxWidth: 400 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
+  mark: { width: 20, height: 20, borderRadius: 6, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center' },
+  brandT: { fontSize: 13, fontWeight: '800', color: C.ink, letterSpacing: -0.2 },
+  share: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 13, marginTop: 4 },
+  shareT: { fontSize: 14.5, fontWeight: '800', color: C.ink },
   badge: { width: 66, height: 66, borderRadius: 33, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   title: { fontSize: 15, fontWeight: '800', color: C.mute, letterSpacing: 0.3, textTransform: 'uppercase' },
   big: { fontSize: 40, fontWeight: '900', color: C.ink, letterSpacing: -1, marginTop: 8, textAlign: 'center' },
@@ -730,8 +749,13 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
       // still can't take a job until their bank is connected — same gate as going online.
       if (!(await ensurePayoutReady())) { setBusy(false); setBusyId(null); return; }
       await acceptSpot(itemId); tap('success');
-      // the accept-lock has already succeeded server-side — THIS is just the celebration
-      setCelebrate({ type: it?.type, rate: it?.rate, suburb: suburbOf(r?.address_text), urgent: r?.when_type === 'now' });
+      // the accept-lock has already succeeded server-side — THIS is the "you're on" recap (all the
+      // details the worker needs on site, in one screenshot-worthy card).
+      setCelebrate({
+        type: it?.type, qty: it?.qty || 1, rate: it?.rate, priceMode: it?.price_mode,
+        hours: r?.duration_hours || 4, suburb: suburbOf(r?.address_text), address: r?.address_text,
+        urgent: r?.when_type === 'now', scheduledAt: r?.scheduled_at || null, jobDetails: r?.job_details || null,
+      });
       await refresh();
     }
     catch (e) { setMsg('Accept failed: ' + friendly(e)); logError('accept', e, { correlationId: itemId, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
@@ -1232,6 +1256,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
       big={paidMoment ? `$${(Number(paidMoment.amount) || 0).toLocaleString()}` : ''}
       sub={`${paidMoment?.type || 'Job'} · sent to your bank`}
       cta="Rate the client"
+      shareText={paidMoment ? `Just earned $${(Number(paidMoment.amount) || 0).toLocaleString()} on SiteCall${paidMoment?.type ? ` doing ${String(paidMoment.type).toLowerCase()}` : ''} 💪 Get paid work on site near you.` : ''}
       onClose={() => { const m = paidMoment; setPaidMoment(null); if (m?.assignmentId) setRatePrompt({ assignmentId: m.assignmentId }); }}
     />
     <WorkerMoment

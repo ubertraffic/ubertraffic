@@ -153,6 +153,19 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
 // mission-keyed Work-home render stays readable as the spine grows (CLAUDE.md §2). Pure presentation
 // + callbacks; all decision facts a worker needs in ~2 seconds (Constitution Law 3): urgency, spots,
 // trade, location, the duties brief, pay + estimate.
+// "posted 4 min ago" — freshness signal (real, from the request's created_at).
+function agoLabel(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!(ms >= 0)) return null;
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, onAccept, onPass }) {
   const it = d.request_item; const r = it?.request;
   const qty = it?.qty || 1;
@@ -200,6 +213,7 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
   const cardRated = card && card.rating_count > 0;
   const travel = r?.travel_cents ? Math.round(r.travel_cents / 100) : 0;
   const materials = r?.materials_cap ? Math.round(Number(r.materials_cap)) : 0;
+  const posted = agoLabel(r?.created_at);
   // Count the estimated total UP from 0 on appear — a small hit of "look how much you'll make".
   const [countTarget, setCountTarget] = useState(0);
   useEffect(() => { setCountTarget(estTotal || 0); }, [estTotal]);
@@ -220,7 +234,10 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
             <Text style={jc.trade} numberOfLines={1}>{it?.type}{multi ? `  ·  ${qty}` : ''}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
               <Icon name="pin" size={12} color={C.mute} strokeWidth={2.2} />
-              <Text style={jc.where} numberOfLines={1}>{suburbOf(r?.address_text) || 'Nearby'}</Text>
+              <Text style={jc.where} numberOfLines={1}>
+                {suburbOf(r?.address_text) || 'Nearby'}
+                {posted ? <Text style={jc.posted}>{`  ·  ${posted}`}</Text> : null}
+              </Text>
             </View>
           </View>
           <View style={[jc.badge, { backgroundColor: urgent ? 'rgba(245,158,11,0.14)' : C.panel2 }]}>
@@ -322,6 +339,7 @@ const jc = StyleSheet.create({
   glyph: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   trade: { fontSize: 17.5, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
   where: { fontSize: 13, color: C.mute, fontWeight: '600' },
+  posted: { fontSize: 12, color: C.mute2, fontWeight: '700' },
   badge: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
   badgeT: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.2 },
   client: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, backgroundColor: C.panel2, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10 },

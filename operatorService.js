@@ -136,7 +136,7 @@ export async function listMyDispatches() {
       id, status,
       request_item:request_items (
         id, kind, type, qty, hire, rate, rate_offered, price_mode,
-        request:requests ( id, address_text, when_type, duration_hours, scheduled_at, job_details, client_id, travel_cents, materials_cap )
+        request:requests ( id, address_text, when_type, duration_hours, scheduled_at, job_details, client_id, travel_cents, materials_cap, created_at )
       )
     `)
     .eq('operator_id', u.user.id)
