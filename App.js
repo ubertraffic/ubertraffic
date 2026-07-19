@@ -623,6 +623,25 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
   const [nameErr, setNameErr] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [pulse, setPulse] = useState(null);
+  // Trades (work side): the "what can you do" multi-select. Picking trades creates capabilities, which
+  // is what makes jobs show up in the feed — value-first, before any credential is asked for.
+  const [tradesOpen, setTradesOpen] = useState(false);
+  const [tax, setTax] = useState(null);
+  const [selTrades, setSelTrades] = useState({});   // trade_id -> trade object
+  const [tradeQ, setTradeQ] = useState('');
+  const [tradesBusy, setTradesBusy] = useState(false);
+  const [capsCount, setCapsCount] = useState(null); // how many capabilities are on file (drives 'done')
+
+  useEffect(() => {
+    if (isHire) return;
+    loadTaxonomy().then(setTax).catch(() => setTax({ categories: [], trades: [] }));
+    listMyCapabilities().then((caps) => {
+      setCapsCount(caps.length);
+      const seed = {};
+      caps.forEach((c) => { if (c.trade_id) seed[c.trade_id] = { id: c.trade_id, name: c.type, kind: c.kind }; });
+      setSelTrades(seed);
+    }).catch(() => setCapsCount(0));
+  }, [isHire]);
 
   // Work "details" = name + DOB + becoming an operator (role flips to 'operator', which persists), so
   // the app never asks for the name/DOB a second time. Hire "details" = just a display name.
@@ -673,6 +692,30 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
     setPayoutBusy(true);
     try { await startPayoutOnboarding(); } catch (_) {} finally { setPayoutBusy(false); }
   }
+  const toggleTrade = (t) => setSelTrades((prev) => {
+    const n = { ...prev }; if (n[t.id]) delete n[t.id]; else n[t.id] = { id: t.id, name: t.name, kind: t.kind }; return n;
+  });
+  async function saveTrades() {
+    setTradesBusy(true);
+    try {
+      const existing = await listMyCapabilities();
+      const existingByTrade = {}; existing.forEach((c) => { if (c.trade_id) existingByTrade[c.trade_id] = c; });
+      const selIds = Object.keys(selTrades);
+      for (const id of selIds) {
+        if (!existingByTrade[id]) {
+          const t = selTrades[id];
+          const legacyKind = t.kind === 'plant' ? 'gear' : t.kind;
+          await addCapability(legacyKind, t.name, t.id);
+        }
+      }
+      for (const c of existing) if (c.trade_id && !selTrades[c.trade_id]) await removeCapability(c.id);
+      const fresh = await listMyCapabilities();
+      setCapsCount(fresh.length);
+      onSubmitted && onSubmitted('trades');
+      setTradesOpen(false);
+      onRefresh && (await onRefresh());
+    } catch (_) {} finally { setTradesBusy(false); }
+  }
 
   // Build the step list for this side. state ∈ 'done' | 'todo' | 'review' | 'loading'
   const steps = [];
@@ -681,6 +724,13 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
     title: isHire ? 'Your name or business' : 'Your details',
     sub: isHire ? 'Shown to the workers you hire' : 'Name + date of birth — so we can check your tickets',
     state: hasName ? 'done' : 'todo',
+  });
+  const tradeCount = Object.keys(selTrades).length;
+  if (!isHire) steps.push({
+    key: 'trades',
+    title: 'What work can you do?',
+    sub: tradeCount > 0 ? `${tradeCount} selected — tap to change` : 'Pick your trades so we can match you to jobs',
+    state: (capsCount == null) ? 'loading' : ((capsCount > 0 || !!sub.trades) ? 'done' : 'todo'),
   });
   steps.push({
     key: 'verify',
@@ -708,6 +758,7 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
     if (step.state === 'done' || step.state === 'review' || step.state === 'loading') return;
     tap();
     if (step.key === 'name') { setNameVal(acct?.full_name || ''); setEditingName(true); }
+    else if (step.key === 'trades') setTradesOpen(true);
     else if (step.key === 'verify') onOpenGate(side);
     else if (step.key === 'payout') startPayout();
   }
@@ -722,6 +773,56 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
         <StatusBar barStyle="dark-content" />
         <View style={S_.setBrandMark}><Icon name="pin" size={24} color="#fff" strokeWidth={2.4} /></View>
         <Text style={S_.setLoadingT}>Setting things up…</Text>
+      </View>
+    );
+  }
+
+  // Trades multi-select — pick the work you do. Selecting creates capabilities, which is what makes
+  // jobs appear in the feed. No credentials here; that's the separate (later) "verify to accept" gate.
+  if (tradesOpen) {
+    const featured = tax ? featuredTrades(tax, 14) : [];
+    const results = (tax && tradeQ.trim()) ? searchTrades(tax, tradeQ) : [];
+    const list = tradeQ.trim() ? results : featured;
+    return (
+      <View style={S_.setStage}>
+        <StatusBar barStyle="dark-content" />
+        <View style={S_.tradesTop}>
+          <TouchableOpacity onPress={() => setTradesOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }} activeOpacity={0.7}>
+            <Icon name="chevronLeft" size={22} color={C.ink} strokeWidth={2.4} />
+            <Text style={{ fontSize: 16, fontWeight: '700', color: C.ink }}>Back</Text>
+          </TouchableOpacity>
+          <Text style={S_.setHero}>What work can you do?</Text>
+          <Text style={S_.setSub}>Pick everything you can take on — it's how we match you to nearby jobs. You can always change this later.</Text>
+          <View style={S_.tradesSearch}>
+            <Icon name="search" size={16} color={C.mute} strokeWidth={2.2} />
+            <TextInput style={S_.tradesSearchInput} value={tradeQ} onChangeText={setTradeQ}
+              placeholder="Search — traffic, cleaner, excavator…" placeholderTextColor={C.mute2} autoCorrect={false} />
+            {!!tradeQ && <TouchableOpacity onPress={() => setTradeQ('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={{ color: C.mute2, fontWeight: '700', fontSize: 15 }}>✕</Text></TouchableOpacity>}
+          </View>
+        </View>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 20 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {!tax ? <ActivityIndicator color={C.green} style={{ marginTop: 20 }} />
+            : list.length === 0 ? <Text style={[S_.setSub, { marginTop: 16 }]}>No match — try another word.</Text>
+            : (
+              <View style={S_.tradesWrap}>
+                {list.map((t) => {
+                  const on = !!selTrades[t.id];
+                  return (
+                    <TouchableOpacity key={t.id} onPress={() => { tap(); toggleTrade(t); }} activeOpacity={0.85}
+                      style={[S_.tradeChip, on && S_.tradeChipOn]}>
+                      {on && <Icon name="check" size={15} color="#fff" strokeWidth={3} />}
+                      <Text style={[S_.tradeChipT, on && S_.tradeChipTOn]}>{t.name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+        </ScrollView>
+        <View style={S_.setFooter}>
+          <PrimaryBtn label={tradeCount > 0 ? `Save ${tradeCount} trade${tradeCount === 1 ? '' : 's'}` : 'Pick at least one'}
+            onPress={saveTrades} busy={tradesBusy} disabled={tradeCount === 0} />
+        </View>
       </View>
     );
   }
