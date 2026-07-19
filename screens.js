@@ -564,6 +564,8 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
   const [capsOpen, setCapsOpen] = useState(false);     // "What I supply" expanded to the full editor (collapsed by default — the home stays calm)
+  const [mapOpen, setMapOpen] = useState(false);       // feed-first home: the map is a secondary view, opened on demand
+  const [refreshing, setRefreshing] = useState(false); // pull-to-refresh on the feed
   const [readiness, setReadiness] = useState({});      // trade_id -> { ready, missing[] }
   const [myLoc, setMyLoc] = useState(null);            // operator's own location for the map
   const [opMapJobs, setOpMapJobs] = useState([]);      // operator's assigned job sites
@@ -647,6 +649,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['dispatches', 'assignments'], refresh);
+  const onPull = useCallback(async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }, [refresh]);
   // When the unified setup flow finishes (Shell bumps setupVersion), re-read the profile so the
   // home reflects the new operator/verified state immediately instead of the stale "not set up" view.
   useEffect(() => { if (setupVersion) refresh(); }, [setupVersion, refresh]);
@@ -935,9 +938,10 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
   return (
     <>
     {immersive ? (
-      <View style={{ flex: 1 }}>
-        {/* full-bleed green work map — ambient decision context */}
-        <View style={StyleSheet.absoluteFill}>
+      <View style={{ flex: 1, backgroundColor: C.canvas }}>
+        {/* MAP — a SECONDARY view now (research: workers pick discrete jobs from a list, not a map).
+            Always mounted so it never reloads, but hidden behind the feed until the worker opens it. */}
+        <View style={StyleSheet.absoluteFill} pointerEvents={mapOpen ? 'auto' : 'none'}>
           <MapHero
             height={Dimensions.get('window').height} framed={false} mode="work" me={myLoc}
             offline={!profile.is_online} demand={demandHeat} markers={profile.is_online ? opMapJobs : []}
@@ -954,20 +958,28 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
             onHubAction={(j) => { if (j.kind === 'accept' && j._left > 0 && j.itemId) accept(j.itemId); }}
             commandSummary={(() => { const near = (jobs || []).filter((d) => !passed.has(d.request_item?.id)).length; return profile.is_online ? (near > 0 ? `${near} job${near > 1 ? 's' : ''} nearby` : 'Finding work near you') : 'Go online to get work'; })()}
           />
+          {mapOpen && (
+            <TouchableOpacity onPress={() => setMapOpen(false)} activeOpacity={0.9}
+              style={{ position: 'absolute', top: 14, left: 16, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.panel, borderRadius: 999, paddingLeft: 10, paddingRight: 16, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8 }}>
+              <Icon name="chevronLeft" size={18} color={C.ink} strokeWidth={2.4} />
+              <Text style={{ fontSize: 14, fontWeight: '800', color: C.ink }}>List</Text>
+            </TouchableOpacity>
+          )}
         </View>
-        {/* GREEN COLOUR-FLOOD — blooms up from the orb as you go online */}
-        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '44%', left: '50%', marginLeft: -65, marginTop: -65, width: 130, height: 130, borderRadius: 65, backgroundColor: C.green, opacity: flood.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 0.85, 0] }), transform: [{ scale: flood.interpolate({ inputRange: [0, 1], outputRange: [0.2, 18] }) }] }} />
-        {/* floating green sheet — dashboard-forward for the worker; the orb crowns it. Sits higher
-            when online so the job card + its Accept/Pass fit above the floating tab bar. */}
-        <View style={{ position: 'absolute', left: 0, right: 0, top: profile.is_online ? '30%' : '40%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
-          {/* control PINNED above the scroll — orb centres itself; the online pill stretches wide.
-              Pinning it (not inside the scroll) keeps a press-and-hold from being stolen by scrolling. */}
-          <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
+
+        {/* FEED-FIRST — the hero. An opaque canvas layer over the map; goes transparent when the map
+            is opened. This replaces the floating-sheet metaphor (which read as a draggable bottom sheet
+            it wasn't), so there's no false swipe affordance anymore. */}
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: C.canvas, opacity: mapOpen ? 0 : 1 }]} pointerEvents={mapOpen ? 'none' : 'auto'}>
+          {/* GREEN COLOUR-FLOOD — a calm bloom the moment you go online */}
+          <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 70, left: '50%', marginLeft: -65, width: 130, height: 130, borderRadius: 65, backgroundColor: C.green, opacity: flood.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 0.7, 0] }), transform: [{ scale: flood.interpolate({ inputRange: [0, 1], outputRange: [0.2, 16] }) }] }} />
+          {/* CONTROL — the go-online toggle + today's earnings, pinned above the feed */}
+          <View style={{ paddingTop: 14, paddingBottom: 8, paddingHorizontal: 16 }}>
             <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={handleGoOffline} earningsToday={opEarn.today} onlineSince={onlineSince} />
           </View>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 180 }} showsVerticalScrollIndicator={false}>
-            {/* Earnings dashboard — offline only. When online the pill already shows today's total, so
-                we hand the space to the job feed instead (keeps the card's Accept above the tab bar). */}
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 150, paddingTop: 2 }} showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.green} colors={[C.green]} />}>
+            {/* Offline: earnings dashboard + demand nudge. Online: hand it all to the feed. */}
             {!profile.is_online && (
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
                 <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
@@ -980,7 +992,6 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
                 </View>
               </View>
             )}
-            {/* demand line — where the work is right now (offline only; WorkFeed carries the online header) */}
             {!profile.is_online && (
               <>
                 <View style={[S_.rowBetween, { marginBottom: 10 }]}>
@@ -1021,6 +1032,13 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
               );
             })()}
           </ScrollView>
+
+          {/* MAP toggle — opens the map for spatial context (secondary, not the hero) */}
+          <TouchableOpacity onPress={() => setMapOpen(true)} activeOpacity={0.9}
+            style={{ position: 'absolute', right: 16, bottom: 108, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.ink, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 10 }}>
+            <Icon name="navigate" size={16} color="#fff" strokeWidth={2.2} />
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>Map</Text>
+          </TouchableOpacity>
         </View>
       </View>
     ) : (

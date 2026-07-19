@@ -66,6 +66,34 @@ export function RateCard({ it, onChange }) {
 //   'active'  — on a job → the feed RECEDES to one quiet line; the job's tracker dominates (Law 1).
 //   'find'    — online + free → the feed LEADS with a bold header + live count (Laws 1,2,13).
 //   'offline' — not online → jobs hidden; the online toggle is the mission.
+// FindingPulse — a live "we're searching for work near you" radar. Concentric rings ripple outward
+// from a green node — the calm, honest signal that the app is actively looking (not a fake counter).
+function FindingPulse() {
+  const r1 = useRef(new Animated.Value(0)).current;
+  const r2 = useRef(new Animated.Value(0)).current;
+  const r3 = useRef(new Animated.Value(0)).current;
+  const rings = [r1, r2, r3];
+  useEffect(() => {
+    const anims = rings.map((v, i) => Animated.loop(Animated.sequence([
+      Animated.delay(i * 700),
+      Animated.timing(v, { toValue: 1, duration: 2100, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ])));
+    anims.forEach((a) => a.start());
+    return () => anims.forEach((a) => a.stop());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <View style={{ width: 132, height: 132, alignItems: 'center', justifyContent: 'center' }}>
+      {rings.map((v, i) => (
+        <Animated.View key={i} pointerEvents="none" style={{ position: 'absolute', width: 132, height: 132, borderRadius: 66, borderWidth: 2, borderColor: C.green, opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }), transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.28, 1] }) }] }} />
+      ))}
+      <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center', shadowColor: C.green, shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 }}>
+        <Icon name="signal" size={22} color="#fff" strokeWidth={2.3} />
+      </View>
+    </View>
+  );
+}
+
 export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpandedBios, onAccept, onPass, onDismissDone, myLoc }) {
   const nearCount = (jobs || []).filter((d) => !passed.has(d.request_item?.id)).length;
 
@@ -131,7 +159,13 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
         )}
       </View>
       {jobs === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : jobs.length === 0 ? <EmptyState icon="crew" title="You're first in line" sub="You're visible to sites nearby. New work drops here the moment it's posted — you'll see it before anyone else." />
+        : jobs.length === 0 ? (
+          <View style={{ alignItems: 'center', marginTop: 34, paddingHorizontal: 24 }}>
+            <FindingPulse />
+            <Text style={{ fontSize: 19, fontWeight: '800', color: C.ink, letterSpacing: -0.3, marginTop: 24 }}>Finding work near you</Text>
+            <Text style={{ fontSize: 14, color: C.mute, textAlign: 'center', marginTop: 8, lineHeight: 20 }}>You're first in line. New jobs land here the moment they're posted — you'll see them before anyone else.</Text>
+          </View>
+        )
         : visible.length === 0 ? <EmptyState icon="crew" title="You're all caught up" sub="You've passed on the jobs nearby for now. New ones will appear here as they're posted." />
         : visible.map((d, i) => (
           <AvailableJobCard
