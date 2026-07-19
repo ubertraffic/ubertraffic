@@ -209,6 +209,15 @@ export async function getReputationExtras(userId) {
   return row || { rehire_count: 0, tag_counts: {}, vouch_count: 0, vouchers: [] };
 }
 
+// A client's reputation from the workers who've worked for them (avg score + count). Best-effort —
+// a miss just leaves the client rating hidden, never blocks the profile. Migration 0066.
+export async function getClientReputation(userId) {
+  const { data, error } = await supabase.rpc('get_client_reputation', { p_user_id: userId });
+  if (error) return null;
+  const row = Array.isArray(data) ? data[0] : data;
+  return row || null;
+}
+
 // Stage 2: owner edits their own headline + bio (length-capped server-side).
 export async function updateMyProfileBio(headline, bio) {
   const { error } = await supabase.rpc('update_my_profile_bio', { p_headline: headline, p_bio: bio });

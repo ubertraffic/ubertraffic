@@ -607,7 +607,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
           {r.status !== 'complete' && r.status !== 'cancelled' && (
             confirmCancel ? (
               <View style={{ marginTop: 12, gap: 8 }}>
-                <Text style={[T.small, { color: C.amber }]}>Cancel this job? Any workers on it will be released.</Text>
+                <Text style={[T.small, { color: C.amber }]}>Cancel this job? Any workers on it will be released. You won’t be charged — any card hold is released back to you.</Text>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <TouchableOpacity style={[S_.dangerBtn, { flex: 1 }]} onPress={onCancel} disabled={busy}>
                     <Text style={S_.dangerBtnT}>Yes, cancel job</Text>

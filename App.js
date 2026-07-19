@@ -1156,7 +1156,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
   // Approval → Stripe capture runs through useClientPayFlow (beginApproval), same as the Requests tab.
   async function cancel(reqId) {
     setBusy(true); setMsg('');
-    try { await cancelRequest(reqId); await load(); } catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); }
+    try { await cancelRequest(reqId); await load(); setMsg('Job cancelled — you haven’t been charged, and any card hold has been released.'); } catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); }
   }
   async function repost(reqId) {
     setBusy(true); setMsg('');
@@ -1464,7 +1464,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
   // Approval → Stripe capture now runs through useClientPayFlow (beginApproval), same as Home.
   async function cancel(reqId) {
     setBusy(true); setBusyId(reqId); setMsg('');
-    try { await cancelRequest(reqId); await load(); setMsg('Job cancelled.'); }
+    try { await cancelRequest(reqId); await load(); setMsg('Job cancelled — you haven’t been charged, and any card hold has been released.'); }
     catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); setBusyId(null); }
   }
   async function repost(reqId) {
