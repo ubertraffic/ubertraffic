@@ -677,7 +677,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
   // landing straight on a "Complete job" button.
   useEffect(() => {
     if (!myAssigns || !assignsLoadedRef.current) return;
-    const onSite = myAssigns.filter((a) => a.status === 'on_site' && !(prestartNeeds || []).includes(a.id));
+    const onSite = myAssigns.filter((a) => a.status === 'on_site' && prestartNeeds[a.id] !== true);
     if (!shiftSeededRef.current) { onSite.forEach((a) => shiftShownRef.current.add(a.id)); shiftSeededRef.current = true; return; }
     const fresh = onSite.find((a) => !shiftShownRef.current.has(a.id));
     if (fresh && !shiftMoment) { shiftShownRef.current.add(fresh.id); tap('success'); setShiftMoment({ type: fresh.request_item?.type }); }

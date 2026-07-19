@@ -47,13 +47,13 @@ export default function AcceptCelebration({ data, onDone }) {
   const rateStr = data.rate ? `$${data.rate}${isJob ? '/job' : '/hr'}` : null;
   const est = (data.rate && !isJob && data.hours) ? `≈ $${Math.round(data.rate * data.hours).toLocaleString()} for the ${data.hours}h job` : null;
 
+  // Keep it to three rows so the whole card fits one screen (hours already live in the Pay sub-line).
   const rows = isDone
     ? [data.suburb && { icon: 'pin', label: 'Where', value: data.suburb }].filter(Boolean)
     : [
         rateStr && { icon: 'payment', label: 'Pay', value: rateStr, sub: est },
         { icon: 'calendar', label: 'When', value: whenLine(data) },
         (data.suburb || data.address) && { icon: 'pin', label: 'Where', value: data.suburb || data.address },
-        !isJob && data.hours && { icon: 'activity', label: 'About', value: `${data.hours} hours` },
       ].filter(Boolean);
 
   return (
@@ -90,7 +90,7 @@ export default function AcceptCelebration({ data, onDone }) {
           )}
 
           {!isDone && data.jobDetails ? (
-            <Text style={s.duties} numberOfLines={3}>“{data.jobDetails}”</Text>
+            <Text style={s.duties} numberOfLines={2}>“{data.jobDetails}”</Text>
           ) : null}
 
           <TouchableOpacity style={s.cta} onPress={close} activeOpacity={0.9}>
