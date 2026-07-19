@@ -120,37 +120,68 @@ const WELCOME_SIDES = [
     blurb: 'Find nearby jobs, get paid fast, and work when it suits you.' },
 ];
 function Welcome({ onChoose, onSignIn }) {
+  // Live proof — a real, quiet signal that this place is busy. Hidden entirely when there's nothing
+  // to show yet (e.g. a fresh install with the bots cleared), so it never reads as fake.
+  const [pulse, setPulse] = useState(null);
+  useEffect(() => { getPulseStats().then(setPulse).catch(() => {}); }, []);
+  const jobsToday = pulse?.jobs_completed_today || 0;
+  const activeNow = pulse?.active_now || 0;
+  const proof = jobsToday > 0
+    ? { n: jobsToday, tail: jobsToday === 1 ? 'job done today around Sydney' : 'jobs done today around Sydney' }
+    : activeNow > 0
+      ? { n: activeNow, tail: activeNow === 1 ? 'person active right now' : 'people active right now' }
+      : null;
+
   return (
     <View style={S_.wStage}>
       <StatusBar barStyle="dark-content" />
       <View style={S_.wTop}>
-        <View style={S_.wBrandRow}>
-          <View style={S_.wMark}><Icon name="pin" size={20} color="#fff" strokeWidth={2.4} /></View>
-          <Text style={S_.wBrandWord}>SiteCall</Text>
-        </View>
-        <Text style={S_.wHero}>Work starts here.</Text>
-        <Text style={S_.wSub}>Tell us what brings you in — you can switch sides any time.</Text>
+        <Entrance delay={0}>
+          <View style={S_.wBrandRow}>
+            <View style={S_.wMark}><Icon name="pin" size={20} color="#fff" strokeWidth={2.4} /></View>
+            <Text style={S_.wBrandWord}>SiteCall</Text>
+          </View>
+        </Entrance>
+        <Entrance delay={70}><Text style={S_.wHero}>Work starts here.</Text></Entrance>
+        <Entrance delay={130}><Text style={S_.wSub}>Skilled trades and labour, on site fast — or paid work near you. Tell us what brings you in.</Text></Entrance>
+        {proof && (
+          <Entrance delay={190}>
+            <View style={S_.wProof}>
+              <View style={S_.wProofDot} />
+              <Text style={S_.wProofT}><Text style={S_.wProofNum}>{proof.n}</Text> {proof.tail}</Text>
+            </View>
+          </Entrance>
+        )}
       </View>
 
       <View style={S_.wCards}>
-        {WELCOME_SIDES.map((s) => (
-          <PressableScale key={s.side} onPress={() => { tap(); onChoose(s.side); }} style={S_.wCard}>
-            <View style={[S_.wIconChip, { backgroundColor: s.accent }]}>
-              <Icon name={s.icon} size={22} color="#fff" strokeWidth={2.2} />
-            </View>
-            <View style={S_.wCardBody}>
-              <Text style={S_.wCardTitle}>{s.title}</Text>
-              <Text style={S_.wCardBlurb}>{s.blurb}</Text>
-            </View>
-            <Icon name="chevronRight" size={20} color={C.mute2} strokeWidth={2.4} />
-          </PressableScale>
+        {WELCOME_SIDES.map((s, i) => (
+          <Entrance key={s.side} delay={250 + i * 90}>
+            <PressableScale onPress={() => { tap(); onChoose(s.side); }} style={S_.wCard}>
+              <View style={[S_.wIconChip, { backgroundColor: s.accent }]}>
+                <Icon name={s.icon} size={22} color="#fff" strokeWidth={2.2} />
+              </View>
+              <View style={S_.wCardBody}>
+                <Text style={S_.wCardTitle}>{s.title}</Text>
+                <Text style={S_.wCardBlurb}>{s.blurb}</Text>
+              </View>
+              <View style={[S_.wCardGo, { backgroundColor: s.accent }]}>
+                <Icon name="chevronRight" size={18} color="#fff" strokeWidth={2.6} />
+              </View>
+            </PressableScale>
+          </Entrance>
         ))}
       </View>
 
-      <TouchableOpacity onPress={onSignIn} style={S_.wSignIn}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
-        <Text style={S_.wSignInT}>Already have an account? <Text style={S_.wSignInLink}>Sign in</Text></Text>
-      </TouchableOpacity>
+      <Entrance delay={440}>
+        <View style={S_.wBottom}>
+          <TouchableOpacity onPress={onSignIn} style={S_.wSignIn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+            <Text style={S_.wSignInT}>Already have an account? <Text style={S_.wSignInLink}>Sign in</Text></Text>
+          </TouchableOpacity>
+          <Text style={S_.wTrust}>Free to join · Sydney &amp; NSW · Switch sides any time</Text>
+        </View>
+      </Entrance>
     </View>
   );
 }
