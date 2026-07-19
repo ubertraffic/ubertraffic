@@ -1101,6 +1101,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   const [schedDay, setSchedDay] = useState(0);    // 0=today, 1=tomorrow, ... offset in days
   const [schedHour, setSchedHour] = useState(9);  // 24h local hour chosen for a booked job
   const [duration, setDuration] = useState(4);    // expected job length (hrs) — drives every pay estimate
+  const [openAddons, setOpenAddons] = useState({});   // which optional extras are revealed (progressive, not a wall of boxes)
   const [contactName, setContactName] = useState('');   // optional site contact (who to ask for)
   const [contactPhone, setContactPhone] = useState(''); // optional site contact phone
   const [materialsCap, setMaterialsCap] = useState(''); // optional materials budget
@@ -1133,7 +1134,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
       Animated.parallel([
         Animated.timing(y, { toValue: SHEET_SCREEN_H, duration: 240, useNativeDriver: true }),
         Animated.timing(dim, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]).start(() => { setShown(false); setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setDuration(4); setPickQ(''); setOpenCats({}); });
+      ]).start(() => { setShown(false); setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setDuration(4); setOpenAddons({}); setPickQ(''); setOpenCats({}); });
     }
   }, [visible]);
 
@@ -1489,33 +1490,75 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                   })()}
                 </View>
                 {!!err && <Text style={SH.err}>{err}</Text>}
-                {/* Job details / duties — the "bio" workers read before accepting. Prominent (first,
-                    above the other optionals) and taught by the placeholder so clients write something useful. */}
-                <Text style={SH.optionalLabel}>What's the job? <Text style={SH.optionalHint}>(what they'll be doing — workers see this before accepting)</Text></Text>
+
+                {/* The ONE field that matters — what the worker will actually do (they read it before
+                    accepting). Everything else is opt-in below, so this isn't a wall of empty boxes. */}
+                <Text style={SH.optionalLabel}>What's the job? <Text style={SH.optionalHint}>(workers read this before accepting)</Text></Text>
                 <TextInput
                   style={[SH.optionalInput, { minHeight: 76, textAlignVertical: 'top', paddingTop: 10 }]}
                   value={jobDetails}
                   onChangeText={(t) => setJobDetails(t.slice(0, 300))}
-                  placeholder="e.g. Directing traffic at the north entrance from 6am. Hi-vis and own boots. About 6 hours."
+                  placeholder="e.g. Directing traffic at the north entrance from 6am. Hi-vis and own boots."
                   placeholderTextColor={C.mute2}
                   multiline
                   maxLength={300}
                 />
-                <Text style={SH.optionalLabel}>Site contact <Text style={SH.optionalHint}>(optional — who to ask for)</Text></Text>
-                <TextInput style={SH.optionalInput} value={contactName} onChangeText={setContactName} placeholder="Name on site" placeholderTextColor={C.mute2} />
-                <TextInput style={SH.optionalInput} value={contactPhone} onChangeText={setContactPhone} placeholder="Their phone" placeholderTextColor={C.mute2} keyboardType="phone-pad" />
-                {items.some((i) => i.run) && (
-                  <>
-                    <Text style={SH.optionalLabel}>Where to buy? <Text style={SH.optionalHint}>(which shop — so they know where to go)</Text></Text>
-                    <TextInput style={SH.optionalInput} value={pickupText} onChangeText={(t) => setPickupText(t.slice(0, 120))} placeholder="e.g. Bunnings Alexandria" placeholderTextColor={C.mute2} />
-                  </>
-                )}
-                <Text style={SH.optionalLabel}>Materials budget <Text style={SH.optionalHint}>(optional — if they'll buy parts)</Text></Text>
-                <TextInput style={SH.optionalInput} value={materialsCap} onChangeText={setMaterialsCap} placeholder="$0 cap you'll cover" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
-                <Text style={SH.optionalLabel}>Travel allowance <Text style={SH.optionalHint}>(optional — paid 100% to the worker)</Text></Text>
-                <TextInput style={SH.optionalInput} value={travel} onChangeText={setTravel} placeholder="$ toward their travel" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
-                <Text style={[SH.optionalHint, { marginTop: -4, marginBottom: 4 }]}>Guide: the ATO rate is 88c/km — e.g. a 20km round trip ≈ $18.</Text>
-                <TouchableOpacity style={[SH.send, !canSend && { opacity: 0.4 }]} disabled={!canSend || busy} onPress={send}><Text style={SH.sendT}>{busy ? 'Sending…' : 'Send request →'}</Text></TouchableOpacity>
+
+                {/* Optional extras — tap only what's relevant. Materials/pickup appear only for runs. */}
+                {(() => {
+                  const runJob = items.some((i) => i.run);
+                  const chips = [
+                    { key: 'contact', label: 'Site contact', has: !!(contactName || contactPhone) },
+                    { key: 'travel', label: 'Travel allowance', has: !!travel },
+                    runJob && { key: 'pickup', label: 'Where to buy', has: !!pickupText },
+                    runJob && { key: 'materials', label: 'Materials budget', has: !!materialsCap },
+                  ].filter(Boolean);
+                  const open = (k) => !!openAddons[k];
+                  return (
+                    <>
+                      <Text style={[SH.optionalLabel, { marginTop: 18 }]}>Add more <Text style={SH.optionalHint}>(optional)</Text></Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+                        {chips.map((c) => {
+                          const on = open(c.key) || c.has;
+                          return (
+                            <TouchableOpacity key={c.key} onPress={() => { tap('light'); setOpenAddons((p) => ({ ...p, [c.key]: !on })); }}
+                              style={[SH.addChip, on && SH.addChipOn]} activeOpacity={0.85}>
+                              <Text style={[SH.addChipT, on && SH.addChipTOn]}>{on ? '✓ ' : '＋ '}{c.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      {(open('contact') || !!(contactName || contactPhone)) && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={SH.optionalHint}>Who to ask for on site</Text>
+                          <TextInput style={SH.optionalInput} value={contactName} onChangeText={setContactName} placeholder="Name on site" placeholderTextColor={C.mute2} />
+                          <TextInput style={SH.optionalInput} value={contactPhone} onChangeText={setContactPhone} placeholder="Their phone" placeholderTextColor={C.mute2} keyboardType="phone-pad" />
+                        </View>
+                      )}
+                      {(open('travel') || !!travel) && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={SH.optionalHint}>Paid 100% to the worker · ATO guide 88c/km (a 20km round trip ≈ $18)</Text>
+                          <TextInput style={SH.optionalInput} value={travel} onChangeText={setTravel} placeholder="$ toward their travel" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
+                        </View>
+                      )}
+                      {runJob && (open('pickup') || !!pickupText) && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={SH.optionalHint}>Which shop — so they know where to go</Text>
+                          <TextInput style={SH.optionalInput} value={pickupText} onChangeText={(t) => setPickupText(t.slice(0, 120))} placeholder="e.g. Bunnings Alexandria" placeholderTextColor={C.mute2} />
+                        </View>
+                      )}
+                      {runJob && (open('materials') || !!materialsCap) && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={SH.optionalHint}>A cap you'll cover for parts they buy</Text>
+                          <TextInput style={SH.optionalInput} value={materialsCap} onChangeText={setMaterialsCap} placeholder="$0 cap" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
+                        </View>
+                      )}
+                    </>
+                  );
+                })()}
+
+                <TouchableOpacity style={[SH.send, !canSend && { opacity: 0.4 }]} disabled={!canSend || busy} onPress={send}><Text style={SH.sendT}>{busy ? 'Sending…' : 'Post job →'}</Text></TouchableOpacity>
                 <TouchableOpacity onPress={() => setPhase('when')} style={{ marginTop: 12, alignItems: 'center' }}><Text style={SH.back}>‹ back</Text></TouchableOpacity>
               </>
             )}

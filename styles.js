@@ -73,6 +73,10 @@ export const SH = StyleSheet.create({
   dayChipOn: { backgroundColor: C.indigo, borderColor: C.indigo },
   dayChipT: { fontSize: 13.5, fontWeight: '700', color: C.ink },
   dayChipTOn: { color: '#fff' },
+  addChip: { backgroundColor: C.panel, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: C.line },
+  addChipOn: { backgroundColor: C.indigoSoft, borderColor: C.indigo },
+  addChipT: { fontSize: 13.5, fontWeight: '800', color: C.ink2 || C.ink },
+  addChipTOn: { color: C.indigo },
 });
 
 export const S_ = StyleSheet.create({
