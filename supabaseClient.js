@@ -25,3 +25,15 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: false, // React Native, not web
   },
 });
+
+// The signed-in user's id, robust to a transient getUser() blip. getUser() makes a NETWORK call and
+// can momentarily resolve to a null user (token refresh / flaky signal); callers that then read
+// `.user.id` crash with "Cannot read property 'id' of null" — an intermittent, hard-to-reproduce
+// error. getSession() reads the locally-stored session with NO network, so it covers the gap.
+// Returns null only when genuinely signed out.
+export async function currentUserId() {
+  const viaUser = (await supabase.auth.getUser())?.data?.user?.id;
+  if (viaUser) return viaUser;
+  const viaSession = (await supabase.auth.getSession())?.data?.session?.user?.id;
+  return viaSession || null;
+}

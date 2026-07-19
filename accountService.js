@@ -6,16 +6,16 @@
 //   - the UI "which side am I viewing" toggle lives in the app, not here
 //
 // Screens call these; no direct supabase in the UI (CLAUDE.md §2).
-import { supabase } from './supabaseClient';
+import { supabase, currentUserId } from './supabaseClient';
 
 // Read the current user's identity + capability snapshot.
 export async function getMyAccount() {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in.');
   const { data, error } = await supabase
     .from('profiles')
     .select('id, account_type, can_work, can_hire, worker_verify_status, company_verify_status')
-    .eq('id', u.user.id)
+    .eq('id', uid)
     .single();
   if (error) throw error;
   return data;
@@ -26,11 +26,11 @@ export async function getMyAccount() {
 // changing it later is a deliberate, gated action (not a free toggle).
 export async function setAccountType(type) {
   if (type !== 'worker' && type !== 'company') throw new Error('Invalid account type.');
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
   const { error } = await supabase
     .from('profiles')
     .update({ account_type: type })
-    .eq('id', u.user.id);
+    .eq('id', uid);
   if (error) throw error;
 }
 
@@ -94,8 +94,8 @@ export function abnValid(abn) {
 // Save the worker's own ABN on their profile. Only stores when the checksum passes; status is
 // 'valid' (format checked), never 'verified' — that's the later server-side ABR step.
 export async function setMyAbn(abn) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in.');
   const clean = normalizeAbn(abn);
   if (clean.length === 9) throw new Error('That looks like an ACN (9 digits). Enter your 11-digit ABN — every company has one linked to its ACN.');
   if (!/^\d{11}$/.test(clean)) throw new Error('An ABN is 11 digits.');
@@ -105,7 +105,7 @@ export async function setMyAbn(abn) {
   const { data, error } = await supabase
     .from('profiles')
     .update({ abn: clean, abn_status: 'valid' })
-    .eq('id', u.user.id)
+    .eq('id', uid)
     .select('id')
     .maybeSingle();
   if (error) throw error;
@@ -116,9 +116,9 @@ export async function setMyAbn(abn) {
 // Whether this worker is registered for GST (default false — most aren't). Drives whether their
 // invoices break out the 10% GST. Self-update on the caller's own row.
 export async function setGstRegistered(on) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in.');
-  const { error } = await supabase.from('profiles').update({ gst_registered: !!on }).eq('id', u.user.id);
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in.');
+  const { error } = await supabase.from('profiles').update({ gst_registered: !!on }).eq('id', uid);
   if (error) throw error;
   return { gst_registered: !!on };
 }
@@ -159,8 +159,8 @@ export async function getMyIdentity() {
 }
 
 export async function getMyBusiness() {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in.');
   // company_abn is column-REVOKEd (0067) → read the business PII via the definer function; only the
   // non-sensitive status/name would be directly selectable, so we source it all from one place.
   const id = await getMyIdentity();
@@ -169,11 +169,11 @@ export async function getMyBusiness() {
 
 // Save the company / trading name (display + on invoices later). No verification — it's a label.
 export async function setMyCompanyName(name) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in.');
   const n = (name || '').trim();
   if (n.length < 2) throw new Error('Enter your company or trading name.');
-  const { error } = await supabase.from('profiles').update({ company_name: n }).eq('id', u.user.id);
+  const { error } = await supabase.from('profiles').update({ company_name: n }).eq('id', uid);
   if (error) throw error;
   return { company_name: n };
 }
@@ -181,13 +181,13 @@ export async function setMyCompanyName(name) {
 // Save the business ABN. Format + checksum ONLY (client-side, honest: NOT register-verified).
 // The verified flip is the existing hire gate (submitBusinessAbn), never self-granted here.
 export async function setMyCompanyAbn(abn) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in.');
   const clean = normalizeAbn(abn);
   if (clean.length === 9) throw new Error('That looks like an ACN (9 digits). Enter your company’s 11-digit ABN instead.');
   if (!/^\d{11}$/.test(clean)) throw new Error('An ABN is 11 digits.');
   if (!abnValid(clean)) throw new Error('That ABN doesn’t check out — double-check the number.');
-  const { data, error } = await supabase.from('profiles').update({ company_abn: clean }).eq('id', u.user.id).select('id').maybeSingle();
+  const { data, error } = await supabase.from('profiles').update({ company_abn: clean }).eq('id', uid).select('id').maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('Couldn’t save your ABN. Please try again — if it keeps failing, let us know.');
   return { company_abn: clean };
@@ -198,8 +198,8 @@ export async function setMyCompanyAbn(abn) {
 // clear purpose line, used only for verification, never shown publicly. Stored on the profile;
 // if the display full_name isn't set yet, seed it from the legal name so the app still shows a name.
 export async function setMyIdentity(legalName, dob) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in.');
   const name = (legalName || '').trim();
   if (name.length < 2) throw new Error('Enter your full legal name.');
   const d = (dob || '').trim();
@@ -207,9 +207,9 @@ export async function setMyIdentity(legalName, dob) {
   const parsed = new Date(d + 'T00:00:00');
   if (isNaN(parsed.getTime()) || parsed > new Date()) throw new Error('Enter a valid date of birth.');
   const patch = { legal_name: name, date_of_birth: d };
-  const { data: p } = await supabase.from('profiles').select('full_name').eq('id', u.user.id).maybeSingle();
+  const { data: p } = await supabase.from('profiles').select('full_name').eq('id', uid).maybeSingle();
   if (!p || !p.full_name) patch.full_name = name;   // seed the display name if empty
-  const { error } = await supabase.from('profiles').update(patch).eq('id', u.user.id);
+  const { error } = await supabase.from('profiles').update(patch).eq('id', uid);
   if (error) throw error;
   return { legal_name: name, date_of_birth: d };
 }

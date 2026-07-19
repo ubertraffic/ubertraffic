@@ -1,5 +1,5 @@
 // credentialsService.js — the ONE place the app reads/writes credentials (Pillar 2).
-import { supabase } from './supabaseClient';
+import { supabase, currentUserId } from './supabaseClient';
 
 // Registers we can auto-verify against a live API. Everything else (driver's licence, HRWL,
 // insurance, trade licences) has NO free register check — those take the photo-evidence interim.
@@ -28,12 +28,12 @@ export async function listCredentialTypes() {
 
 // the current operator's held credentials
 export async function listMyCredentials() {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in — please log in again.');
   const { data, error } = await supabase
     .from('operator_credentials')
     .select('id, credential_id, number, card_number, issued_at, expires_at, state, status, evidence_url, verified_at, provider')
-    .eq('operator_id', u.user.id)
+    .eq('operator_id', uid)
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data || [];
@@ -42,13 +42,13 @@ export async function listMyCredentials() {
 // add / update one of the operator's credentials (self-declared -> unverified).
 // `provider` is used by cover that has an issuer (e.g. public-liability insurance); null otherwise.
 export async function addMyCredential({ credential_id, number, card_number, expires_at, state, provider }) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in — please log in again.');
   const { error } = await supabase
     .from('operator_credentials')
     .upsert(
       {
-        operator_id: u.user.id,
+        operator_id: uid,
         credential_id,
         number: (number && number.trim()) ? number.trim() : null,
         card_number: (card_number && card_number.trim()) ? card_number.trim() : null,
@@ -95,9 +95,9 @@ export async function verifyMyCredential(id) {
 // Upload the photo to the private bucket. Stable path per credential → a re-take overwrites the
 // old image (no pile-up / no image history to leak). Returns the stored path.
 export async function uploadCredentialEvidence(credentialId, fileUri) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
-  const path = `${u.user.id}/${credentialId}.jpg`;
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in — please log in again.');
+  const path = `${uid}/${credentialId}.jpg`;
   const res = await fetch(fileUri);
   const blob = await res.blob();
   const { error } = await supabase.storage
@@ -110,12 +110,12 @@ export async function uploadCredentialEvidence(credentialId, fileUri) {
 // Attach the uploaded photo to the credential and mark it 'review'. Honest: a photo on file is not
 // a check — it's a submission for manual review. Scoped to the caller's own credential row (RLS too).
 export async function setCredentialEvidence(credentialId, path) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in — please log in again.');
   const { error } = await supabase
     .from('operator_credentials')
     .update({ evidence_url: path, status: 'review' })
-    .eq('operator_id', u.user.id)
+    .eq('operator_id', uid)
     .eq('credential_id', credentialId);
   if (error) throw error;
 }
@@ -149,8 +149,8 @@ export async function readinessForTrades(tradeIds) {
   const ids = (tradeIds || []).filter(Boolean);
   if (ids.length === 0) return {};
 
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in — please log in again.');
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -163,7 +163,7 @@ export async function readinessForTrades(tradeIds) {
     supabase
       .from('operator_credentials')
       .select('credential_id, status, expires_at')
-      .eq('operator_id', u.user.id)
+      .eq('operator_id', uid)
       .eq('status', 'verified'),
   ]);
   if (rErr) throw rErr;
@@ -197,8 +197,8 @@ export async function readinessForTrades(tradeIds) {
 export async function requiredTicketsForTrades(tradeIds) {
   const ids = (tradeIds || []).filter(Boolean);
   if (ids.length === 0) return [];
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) return [];
+  const uid = await currentUserId();
+  if (!uid) return [];
   const today = new Date().toISOString().slice(0, 10);
   const [{ data: reqs }, { data: creds }] = await Promise.all([
     supabase
@@ -209,7 +209,7 @@ export async function requiredTicketsForTrades(tradeIds) {
     supabase
       .from('operator_credentials')
       .select('credential_id, status, expires_at')
-      .eq('operator_id', u.user.id),
+      .eq('operator_id', uid),
   ]);
   const state = {};
   (creds || []).forEach((c) => { state[c.credential_id] = c; });
