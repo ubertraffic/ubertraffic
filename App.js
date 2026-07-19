@@ -63,6 +63,10 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [booting, setBooting] = useState(true);
   const [pushDeepLink, setPushDeepLink] = useState(null);   // { request_id } from a tapped push
+  // First-run routing: null → show the Welcome (choose-your-side) screen; once the user picks a
+  // side (or taps "sign in") we set { mode, side } and hand off to the auth form. Never touched
+  // once a session exists — returning users skip straight past it.
+  const [authIntent, setAuthIntent] = useState(null);   // null | { mode: 'signin'|'signup', side: 'hire'|'work'|null }
 
   // Register this device for push whenever we have a signed-in user. Safe no-op in Snack
   // (no native module) — activates automatically in an EAS build. Also wires tap→deep-link.
@@ -94,13 +98,69 @@ export default function App() {
   }, []);
 
   if (booting) return <Center><ActivityIndicator color={C.indigo} size="large" /></Center>;
-  return session ? <Shell session={session} pushDeepLink={pushDeepLink} /> : <Login />;
+  if (session) return <Shell session={session} pushDeepLink={pushDeepLink} />;
+  // Signed out. Show the Welcome first (the single most important screen a new person sees), then
+  // the auth form once they've chosen a side or tapped sign-in.
+  if (!authIntent) return <Welcome onChoose={(side) => setAuthIntent({ mode: 'signup', side })}
+                                    onSignIn={() => setAuthIntent({ mode: 'signin', side: null })} />;
+  return <Login intent={authIntent} onBack={() => setAuthIntent(null)} />;
 
 }
 
+/* ============================================================ WELCOME (choose your side) */
+// The first thing a new person sees. Deliberately ONE decision — which side are you here for —
+// framed by benefit, the way Uber/DoorDash/Airtasker open. No fields, no friction; the two cards
+// ARE the call to action. Whatever they pick seeds the signup so setup is tailored from step one.
+const WELCOME_SIDES = [
+  { side: 'hire', icon: 'users', accent: C.indigo,
+    title: 'I need workers on site',
+    blurb: 'Post a job and get skilled trades and labourers on site — often within the hour.' },
+  { side: 'work', icon: 'labourer', accent: C.green,
+    title: 'I want paid work',
+    blurb: 'Find nearby jobs, get paid fast, and work when it suits you.' },
+];
+function Welcome({ onChoose, onSignIn }) {
+  return (
+    <View style={S_.wStage}>
+      <StatusBar barStyle="dark-content" />
+      <View style={S_.wTop}>
+        <View style={S_.wBrandRow}>
+          <View style={S_.wMark}><Icon name="pin" size={20} color="#fff" strokeWidth={2.4} /></View>
+          <Text style={S_.wBrandWord}>SiteCall</Text>
+        </View>
+        <Text style={S_.wHero}>Work starts here.</Text>
+        <Text style={S_.wSub}>Tell us what brings you in — you can switch sides any time.</Text>
+      </View>
+
+      <View style={S_.wCards}>
+        {WELCOME_SIDES.map((s) => (
+          <PressableScale key={s.side} onPress={() => { tap(); onChoose(s.side); }} style={S_.wCard}>
+            <View style={[S_.wIconChip, { backgroundColor: s.accent }]}>
+              <Icon name={s.icon} size={22} color="#fff" strokeWidth={2.2} />
+            </View>
+            <View style={S_.wCardBody}>
+              <Text style={S_.wCardTitle}>{s.title}</Text>
+              <Text style={S_.wCardBlurb}>{s.blurb}</Text>
+            </View>
+            <Icon name="chevronRight" size={20} color={C.mute2} strokeWidth={2.4} />
+          </PressableScale>
+        ))}
+      </View>
+
+      <TouchableOpacity onPress={onSignIn} style={S_.wSignIn}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+        <Text style={S_.wSignInT}>Already have an account? <Text style={S_.wSignInLink}>Sign in</Text></Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 /* ============================================================ LOGIN */
-function Login() {
-  const [mode, setMode] = useState('signin');   // 'signin' | 'signup' — explicit, never guessed
+function Login({ intent, onBack }) {
+  // `intent` arrives from the Welcome screen: which mode to open in, and (for signup) the side the
+  // person chose. We stash that side so the first-run setup checklist can tailor itself immediately.
+  const [mode, setMode] = useState(intent?.mode || 'signin');   // 'signin' | 'signup' — explicit, never guessed
+  const chosenSide = intent?.side || null;
   const [step, setStep] = useState(1);           // signup PACING only (presentation): 1 = email, 2 = password
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -153,6 +213,9 @@ function Login() {
           }
           setBusy(false); return;
         }
+        // Remember the side they chose on Welcome so the first-run checklist opens on the right foot
+        // (Shell reads this once on load). Survives the email-confirm round-trip via the local cache.
+        if (chosenSide) cacheSet('onboard-side', chosenSide);
         if (!data.session) {
           // Email confirmation is on — no session yet. Tell them honestly.
           setMsg('Account created. Check your email to confirm, then sign in.'); setMsgTone('info');
@@ -164,7 +227,8 @@ function Login() {
   }
 
   const isSignup = mode === 'signup';
-  const heroTitle = !isSignup ? 'Welcome back' : step === 1 ? "Let's get you set up" : 'Create a password';
+  const sideVerb = chosenSide === 'hire' ? "Let's get you hiring" : chosenSide === 'work' ? "Let's get you earning" : "Let's get you set up";
+  const heroTitle = !isSignup ? 'Welcome back' : step === 1 ? sideVerb : 'Create a password';
   const heroHelp  = !isSignup ? 'Sign in to your account' : step === 1 ? 'Start with your email' : 'At least 6 characters';
   const showEmail = !isSignup || step === 1;
   const showPass  = !isSignup || step === 2;
@@ -180,12 +244,12 @@ function Login() {
         </View>
 
         <StepFade phase={`${mode}-${step}`}>
-          {isSignup && step === 2 && (
-            <TouchableOpacity onPress={() => { setStep(1); setMsg(''); }} style={S_.loginBack}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
-              <Text style={S_.loginBackT}>‹ Back</Text>
-            </TouchableOpacity>
-          )}
+          {/* Back always returns one step: signup step 2 → email; otherwise → the Welcome screen. */}
+          <TouchableOpacity
+            onPress={() => { if (isSignup && step === 2) { setStep(1); setMsg(''); } else { onBack && onBack(); } }}
+            style={S_.loginBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+            <Text style={S_.loginBackT}>‹ Back</Text>
+          </TouchableOpacity>
 
           {/* HERO — one dominant element per step */}
           <Text style={S_.loginHero}>{heroTitle}</Text>
