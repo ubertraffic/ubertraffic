@@ -957,25 +957,29 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
         </View>
         {/* GREEN COLOUR-FLOOD — blooms up from the orb as you go online */}
         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '44%', left: '50%', marginLeft: -65, marginTop: -65, width: 130, height: 130, borderRadius: 65, backgroundColor: C.green, opacity: flood.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 0.85, 0] }), transform: [{ scale: flood.interpolate({ inputRange: [0, 1], outputRange: [0.2, 18] }) }] }} />
-        {/* floating green sheet — dashboard-forward for the worker; the orb crowns it */}
-        <View style={{ position: 'absolute', left: 0, right: 0, top: '40%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
+        {/* floating green sheet — dashboard-forward for the worker; the orb crowns it. Sits higher
+            when online so the job card + its Accept/Pass fit above the floating tab bar. */}
+        <View style={{ position: 'absolute', left: 0, right: 0, top: profile.is_online ? '30%' : '40%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
           {/* control PINNED above the scroll — orb centres itself; the online pill stretches wide.
               Pinning it (not inside the scroll) keeps a press-and-hold from being stolen by scrolling. */}
           <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
             <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={handleGoOffline} earningsToday={opEarn.today} onlineSince={onlineSince} />
           </View>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 150 }} showsVerticalScrollIndicator={false}>
-            {/* earnings — the worker's emotional anchor (wired to real totals in a later pass) */}
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-              <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>Today</Text>
-                <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.today}</Text>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 180 }} showsVerticalScrollIndicator={false}>
+            {/* Earnings dashboard — offline only. When online the pill already shows today's total, so
+                we hand the space to the job feed instead (keeps the card's Accept above the tab bar). */}
+            {!profile.is_online && (
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+                <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>Today</Text>
+                  <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.today}</Text>
+                </View>
+                <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>This week</Text>
+                  <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.week}</Text>
+                </View>
               </View>
-              <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>This week</Text>
-                <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.week}</Text>
-              </View>
-            </View>
+            )}
             {/* demand line — where the work is right now (offline only; WorkFeed carries the online header) */}
             {!profile.is_online && (
               <>

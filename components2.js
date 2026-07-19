@@ -231,6 +231,10 @@ export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onTogg
   const materials = r?.materials_cap ? Math.round(Number(r.materials_cap)) : 0;
   const posted = agoLabel(r?.created_at);
   const dist = (myLoc && r?.lat != null && r?.lng != null) ? distanceLabel(distanceKm(myLoc.lat, myLoc.lng, Number(r.lat), Number(r.lng))) : null;
+  // Show the SUBURB, not the exact street — shorter for the compact line, and the precise address is
+  // saved for after they accept (privacy). If the first segment is a street number, use the next one.
+  const addrParts = (r?.address_text || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const area = (/^\d/.test(addrParts[0] || '') && addrParts[1]) ? addrParts[1] : (addrParts[0] || 'Nearby');
   // Count the estimated total UP from 0 on appear — a small hit of "look how much you'll make".
   const [countTarget, setCountTarget] = useState(0);
   useEffect(() => { setCountTarget(estTotal || 0); }, [estTotal]);
@@ -251,8 +255,8 @@ export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onTogg
             <Text style={jc.trade} numberOfLines={1}>{it?.type}{multi ? `  ·  ${qty}` : ''}</Text>
             <Text style={jc.meta} numberOfLines={1}>
               <Text style={{ color: urgent ? C.amber : C.mute, fontWeight: '800' }}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
-              {`  ·  ${suburbOf(r?.address_text) || 'Nearby'}`}
               {dist ? <Text style={jc.dist}>{`  ·  ${dist.replace(' away', '')}`}</Text> : null}
+              {`  ·  ${area}`}
               {posted ? <Text style={jc.posted}>{`  ·  ${posted}`}</Text> : null}
             </Text>
           </View>
