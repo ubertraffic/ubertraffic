@@ -1867,7 +1867,7 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
         : [['company', 'Company & ABN', 'Manage', () => setScreen('business')], ['gear', 'Vehicles & plant', 'Manage', () => setScreen('rig')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
 
       <AccountSection title={role === 'operator' ? 'Payouts' : 'Business'} rows={role === 'operator'
-        ? [['payment', 'Payouts & bank', payReady === true ? 'Active' : payReady === false ? 'Set up' : '', () => setScreen('payouts')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
+        ? [['payment', 'Payouts & bank', payReady === true ? 'Active' : payReady === false ? 'Set up' : '', () => setScreen('payouts')], ['earnings', 'Payout speed', 'Manage', () => setScreen('payouts')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
         : [['users', 'Team seats', 'Soon', () => setComingSoon('Team seats')], ['payment', 'Monthly billing', 'Soon', () => setComingSoon('Monthly billing')], ['trending', 'Spend reporting', 'Soon', () => setComingSoon('Spend reporting')]]} />
 
       <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Soon', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
