@@ -386,6 +386,7 @@ pending credentials, pending ABNs, user search, active jobs, and per-user creden
 | 0064 | fee_10pct_labour | the 10%-labour / 0%-task fee model across all three settlement functions |
 | **0065** | **abn_unique** | **one verified ABN per account** (partial unique indexes) — _this cycle_ |
 | **0066** | **client_reputation** | **`get_client_reputation()`** — a client's rating from workers — _this cycle_ |
+| **0067** | **pii_column_lockdown** | **column-REVOKE** of `legal_name`/`date_of_birth`/`abn`/`company_abn` on `profiles` + `get_my_identity()` so only the owner reads their own PII (closes the RLS-audit finding) — _this cycle_ |
 
 **Key tables (main columns):**
 - **requests** — client, status, when_type, address + lat/lng, duration_hours, scheduled_at, site
@@ -492,8 +493,17 @@ money-reassurance; and a **client's reputation** (from workers) now shows on the
 - **`verify-credential`** is deployed server-side but its source isn't in this repo — worth
   committing for completeness.
 
+### Security posture (audited 19 July 2026 against the live DB)
+A full RLS + grants audit was run against the production database. Result: **solid.** RLS is on for
+every user-data table; the public `anon` role can't read any user data; both sensitive storage
+buckets are private and party-scoped; money tables are owner-read / service-write; GPS traces are
+locked to the two parties; and `operator_credentials` RLS *enforces* "can't self-verify". One finding
+— counterparty-readable PII columns on `profiles` — was found and **fixed** (migration 0067: column
+REVOKE + `get_my_identity()`). No secret key is in the app bundle (only the public anon key, by
+design). Minor/no-action: `spatial_ref_sys` (PostGIS reference table) has RLS off — no PII, restorable.
+
 ### Before real money / launch
-- Redeploy the updated Edge Functions and run migrations **0065** + **0066**.
+- Redeploy the updated Edge Functions and run migrations **0065** + **0066** + **0067**.
 - Set up the Stripe **webhook endpoint** (+ `STRIPE_WEBHOOK_SECRET`, Verify JWT OFF).
 - Run one full job **end-to-end in Stripe test mode** and confirm the worker's transfer amount in the
   Stripe dashboard matches what their app showed.
