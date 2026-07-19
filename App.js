@@ -98,13 +98,18 @@ export default function App() {
     return () => { cancelled = true; sub.subscription.unsubscribe(); };
   }, []);
 
-  if (booting) return <Center><ActivityIndicator color={C.indigo} size="large" /></Center>;
+  if (booting) return <View style={S_.authCanvas}><ActivityIndicator color={C.indigo} size="large" /></View>;
   if (session) return <Shell session={session} pushDeepLink={pushDeepLink} firstRunSide={authIntent?.side || null} />;
-  // Signed out. Show the Welcome first (the single most important screen a new person sees), then
-  // the auth form once they've chosen a side or tapped sign-in.
-  if (!authIntent) return <Welcome onChoose={(side) => setAuthIntent({ mode: 'signup', side })}
-                                    onSignIn={() => setAuthIntent({ mode: 'signin', side: null })} />;
-  return <Login intent={authIntent} onBack={() => setAuthIntent(null)} />;
+  // Signed out. Welcome and the auth form live on ONE shared canvas and CROSS-FADE between each other,
+  // so choosing a side / going back never hard-cuts — it feels like one continuous surface.
+  return (
+    <CrossFade keyId={authIntent ? 'auth' : 'welcome'} style={S_.authCanvas}>
+      {authIntent
+        ? <Login intent={authIntent} onBack={() => setAuthIntent(null)} />
+        : <Welcome onChoose={(side) => setAuthIntent({ mode: 'signup', side })}
+                   onSignIn={() => setAuthIntent({ mode: 'signin', side: null })} />}
+    </CrossFade>
+  );
 
 }
 
@@ -403,7 +408,9 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
   // from a home's "finish setup" prompt (setupManual). This is what replaced the old, separate
   // "Start working" form — there is now a single setup flow for each side.
   const setupSide = firstRunSide || setupManual;
-  const showSetup = !!setupSide && !!acct && !setupDone && !exploring;
+  // Show the setup surface the instant we know we'll need it — even before the profile finishes
+  // loading — so entering the app after signup lands on a calm branded cover, never a flash of the map.
+  const showSetup = !!setupSide && !setupDone && !exploring;
   const openSetup = (side) => { setSetupSubmitted({}); setSetupDone(false); setExploring(false); setSetupManual(side); };
   const finishSetup = () => { setSetupDone(true); setSetupVersion((v) => v + 1); loadName(); };
 
@@ -528,13 +535,16 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
   React.useEffect(() => { if (gate) { setDone(false); setErr(''); setNum(''); setBusy(false); } }, [gate]);
   if (!gate) return null;
   const isHire = gate.side === 'hire';
-  const title = isHire ? 'Get verified to hire' : 'Get verified to work';
+  const isTask = gate.side === 'task';
+  const title = isHire ? 'Add your ABN' : isTask ? 'Add your driver licence' : 'Add your White Card';
   const need = isHire
-    ? 'To post paid jobs we verify your business against the Australian Business Register. Enter your ABN to submit for verification.'
-    : gate.side === 'task'
-      ? 'Driving tasks (Bunnings/parts runs) need a verified driver\'s licence. Enter your licence number to submit for verification.'
-      : 'Site work needs a verified White Card. Enter your White Card number to submit for verification.';
-  const inputLabel = isHire ? 'ABN (11 digits)' : gate.side === 'task' ? 'Driver licence number' : 'White Card number';
+    ? "Pop in your ABN and we'll confirm your business in the background. You can carry on while we check."
+    : isTask
+      ? "Pop in your licence number and we'll check it in the background. You can carry on while we do."
+      : "Pop in your White Card number and we'll check it in the background. You can carry on while we do.";
+  const inputLabel = isHire ? 'ABN' : isTask ? 'Driver licence number' : 'White Card number';
+  const inputHint = isHire ? '11 digits' : 'the number on your card';
+  const submitLabel = isHire ? 'Add ABN' : 'Add card';
 
   async function submit() {
     setBusy(true); setErr('');
@@ -558,15 +568,15 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
         <View style={S_.gateCard}>
           {done ? (
             <>
-              <View style={S_.gatePendingBadge}><Text style={S_.gatePendingBadgeT}>Under review</Text></View>
-              <Text style={S_.gateTitle}>Submitted for verification</Text>
+              <View style={S_.gatePendingBadge}><Text style={S_.gatePendingBadgeT}>Checking</Text></View>
+              <Text style={S_.gateTitle}>Nice — that’s in</Text>
               <Text style={S_.gateSub}>
                 {isHire
-                  ? 'We\'re checking your ABN against the business register. You\'ll be able to hire once it\'s approved.'
-                  : 'We\'re verifying your credential. You\'ll be able to accept jobs once it\'s approved — usually quickly.'}
+                  ? "We’re confirming your business now. You can start straight away — we’ll let you know the moment it’s done."
+                  : "We’re checking your ticket now. Have a look around in the meantime — we’ll let you know the moment it’s done."}
               </Text>
               <TouchableOpacity style={S_.gateBtn} onPress={() => { onUnlocked && onUnlocked(); }}>
-                <Text style={S_.gateBtnT}>Done</Text>
+                <Text style={S_.gateBtnT}>Great</Text>
               </TouchableOpacity>
             </>
           ) : (
@@ -576,16 +586,16 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
               <Text style={S_.gateInputLabel}>{inputLabel}</Text>
               <TextInput
                 style={S_.gateInput} value={num} onChangeText={setNum}
-                placeholder={inputLabel} placeholderTextColor={C.mute2}
+                placeholder={inputHint} placeholderTextColor={C.mute2}
                 keyboardType={isHire ? 'number-pad' : 'default'}
                 autoCapitalize="characters"
               />
               {!!err && <Text style={S_.gateErr}>{err}</Text>}
               <TouchableOpacity style={[S_.gateBtn, (busy || !num.trim()) && { opacity: 0.5 }]} onPress={submit} disabled={busy || !num.trim()}>
-                <Text style={S_.gateBtnT}>{busy ? 'Submitting…' : 'Submit for verification'}</Text>
+                <Text style={S_.gateBtnT}>{busy ? 'Saving…' : submitLabel}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10 }}>
-                <Text style={S_.gateCancel}>Not now</Text>
+                <Text style={S_.gateCancel}>Maybe later</Text>
               </TouchableOpacity>
             </>
           )}
@@ -674,8 +684,8 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
   });
   steps.push({
     key: 'verify',
-    title: isHire ? 'Verify your business' : 'Verify your White Card',
-    sub: isHire ? 'Enter your ABN — we check it against the ABR' : 'Required for site work — checked before you can accept jobs',
+    title: isHire ? 'Add your ABN' : 'Add your White Card',
+    sub: isHire ? 'Pop in your ABN — we confirm your business for you' : 'Pop in your card number — we check it for you',
     state: verified ? 'done' : verifyPending ? 'review' : 'todo',
   });
   if (!isHire) steps.push({
@@ -704,9 +714,22 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
 
   const activeNow = pulse?.active_now || 0;
 
+  // Branded cover while the profile loads — this is what masks the app-entry moment right after
+  // signup, so the transition into the checklist is flush instead of flashing the map behind it.
+  if (!acct) {
+    return (
+      <View style={[S_.setStage, { alignItems: 'center', justifyContent: 'center' }]}>
+        <StatusBar barStyle="dark-content" />
+        <View style={S_.setBrandMark}><Icon name="pin" size={24} color="#fff" strokeWidth={2.4} /></View>
+        <Text style={S_.setLoadingT}>Setting things up…</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={S_.setStage}>
       <StatusBar barStyle="dark-content" />
+      <Entrance from={12} style={S_.fill}>
       <ScrollView contentContainerStyle={S_.setScroll} showsVerticalScrollIndicator={false}>
         {/* header — celebration when finished, otherwise the progress hero */}
         {allDone ? (
@@ -765,11 +788,11 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
                   <View style={{ flex: 1 }}>
                     <Text style={[S_.setStepTitle, s.state === 'done' && { color: C.mute }]}>{s.title}</Text>
                     <Text style={S_.setStepSub}>
-                      {s.state === 'review' ? 'Under review — we’ll let you know when it clears' : s.sub}
+                      {s.state === 'review' ? 'We’re checking this for you — you can keep going' : s.sub}
                     </Text>
                   </View>
                   {s.state === 'todo' && <Icon name="chevronRight" size={18} color={C.mute2} strokeWidth={2.4} />}
-                  {s.state === 'review' && <View style={S_.setPill}><Text style={S_.setPillT}>Reviewing</Text></View>}
+                  {s.state === 'review' && <View style={S_.setPill}><Text style={S_.setPillT}>Checking</Text></View>}
                 </PressableScale>
 
                 {/* inline details editor — name (both sides) + DOB (work side, for register checks) */}
@@ -820,6 +843,7 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
             </TouchableOpacity>
           )}
       </View>
+      </Entrance>
     </View>
   );
 }

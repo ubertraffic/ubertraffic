@@ -178,6 +178,8 @@ export const S_ = StyleSheet.create({
   arriveConfirm: { backgroundColor: C.green, borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 18 },
   arriveConfirmT: { color: '#fff', fontSize: 15, fontWeight: '800' },
   arriveCancel: { color: C.mute, fontSize: 13.5, textAlign: 'center', fontWeight: '600' },
+  // Shared canvas that the Welcome + auth form cross-fade on top of (no white flash between them).
+  authCanvas: { flex: 1, backgroundColor: C.canvas, alignItems: 'stretch', justifyContent: 'center' },
   // Welcome (choose-your-side) — the first screen. One decision, benefit-framed, generous space.
   wStage: { flex: 1, backgroundColor: C.canvas, paddingHorizontal: 24, paddingTop: 88, paddingBottom: 40, justifyContent: 'space-between' },
   wTop: {},
@@ -204,6 +206,8 @@ export const S_ = StyleSheet.create({
   wTrust: { fontSize: 12, color: C.mute2, fontWeight: '600', textAlign: 'center' },
   // Setup checklist (first-run) — the guided "get ready" landing after signup.
   setStage: { flex: 1, backgroundColor: C.canvas },
+  setBrandMark: { width: 52, height: 52, borderRadius: 15, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center', ...E.indigo, marginBottom: 16 },
+  setLoadingT: { fontSize: 15, color: C.mute, fontWeight: '600' },
   setScroll: { paddingHorizontal: 24, paddingTop: 76, paddingBottom: 24 },
   setHeader: { marginBottom: 20 },
   setBadge: { width: 56, height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
