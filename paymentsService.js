@@ -57,6 +57,32 @@ export async function payoutStatus() {
   return invoke('connect-status', {});
 }
 
+// Worker: my payout ledger — the ACTUAL Stripe transfers (not inferred from settlement columns).
+// Worker-readable via RLS (operator_id = auth.uid()). Surfaces real status: paid / pending / failed,
+// so a payout that didn't land (e.g. account not ready) shows the truth instead of looking "paid".
+export async function listMyPayouts() {
+  const { data, error } = await supabase
+    .from('payouts')
+    .select('id, request_id, assignment_id, amount_cents, currency, status, detail, created_at')
+    .order('created_at', { ascending: false });
+  if (error) return [];
+  return data || [];
+}
+
+// Client: the payment record (the Stripe charge) behind a job — for a real receipt. Client-readable
+// via RLS (client_id = auth.uid()). Returns the latest row for the request, or null.
+export async function getPaymentForRequest(requestId) {
+  const { data, error } = await supabase
+    .from('payments')
+    .select('id, amount_cents, currency, status, stripe_payment_intent, tip_cents, travel_cents, created_at, updated_at')
+    .eq('request_id', requestId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return data || null;
+}
+
 // The most recent payment on a request (client-readable) — for showing state without a poll.
 export async function latestPaymentFor(requestId) {
   const { data, error } = await supabase

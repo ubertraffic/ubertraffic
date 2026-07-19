@@ -21,7 +21,7 @@ import PayoutsScreen from './PayoutsScreen';
 import { amIAdmin } from './adminService';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
-import { payoutStatus, startPayoutOnboarding } from './paymentsService';
+import { payoutStatus, startPayoutOnboarding, listMyPayouts } from './paymentsService';
 import CloseOutCard from './CloseOutCard';
 import PrestartCard from './PrestartCard';
 import RunCloseOutCard from './RunCloseOutCard';
@@ -1458,17 +1458,23 @@ export function OperatorJobs({ session, onOpenProfile }) {
 /* ============================================================ OPERATOR · EARNINGS */
 export function OperatorEarnings({ session }) {
   const [assigns, setAssigns] = useState(() => cacheGet('operator-assignments'));   // instant paint
+  const [payouts, setPayouts] = useState([]);   // the real Stripe transfer ledger (status truth)
   const refresh = useCallback(async () => {
     try { const d = await listMyAssignments(); setAssigns(d); cacheSet('operator-assignments', d); }
     catch { setAssigns((p) => (p == null ? [] : p)); }
+    try { setPayouts(await listMyPayouts()); } catch (_) {}
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
-  useRealtime(['assignments'], refresh);
+  useRealtime(['assignments', 'payouts'], refresh);
 
   const paid = (assigns || []).filter((a) => a.status === 'approved');
   const pending = (assigns || []).filter((a) => a.status === 'complete');
   const totalPaid = paid.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
   const pendingValue = pending.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
+  // Map the real payout status onto each settled job, and flag any that didn't land.
+  const poByAssign = {};
+  for (const p of payouts) if (p.assignment_id && !poByAssign[p.assignment_id]) poByAssign[p.assignment_id] = p;
+  const troubled = payouts.filter((p) => p.status === 'failed' || p.status === 'pending');
 
   return (
     <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
@@ -1490,10 +1496,27 @@ export function OperatorEarnings({ session }) {
         </View>
       )}
 
+      {troubled.length > 0 && (
+        <View style={[S_.card, { borderWidth: 1, borderColor: C.red, backgroundColor: C.red + '0D' }]}>
+          <Text style={[T.label, { color: C.red }]}>{troubled.some((p) => p.status === 'failed') ? 'A payout didn’t go through' : 'A payout is still processing'}</Text>
+          <Text style={[T.small, { marginTop: 3, lineHeight: 18 }]}>
+            {troubled.some((p) => p.status === 'failed')
+              ? 'Your pay for a completed job couldn’t be sent. This is almost always because payouts aren’t fully set up — open Account → Payouts & bank to finish, and we’ll retry automatically.'
+              : 'Your pay is on its way — bank transfers can take a moment to show. Check back shortly.'}
+          </Text>
+        </View>
+      )}
+
       <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
       {assigns === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
         : paid.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No settled jobs yet. Finish a job and get it approved to see earnings here.</Text>
-        : paid.map((a) => (
+        : paid.map((a) => {
+          const po = poByAssign[a.id];
+          // Real transfer status when we have a ledger row; otherwise the settlement stands on its own.
+          const pill = po?.status === 'failed' ? { t: 'Payout failed', c: C.red }
+            : po?.status === 'pending' ? { t: 'Processing', c: C.amber }
+            : po?.status === 'paid' ? { t: 'Paid', c: C.green } : null;
+          return (
           <View key={a.id} style={S_.card}>
             <View style={S_.rowBetween}>
               <Text style={T.heading}>{a.request_item?.type}</Text>
@@ -1503,8 +1526,16 @@ export function OperatorEarnings({ session }) {
               <Text style={[T.data, { color: C.mute, marginTop: 4, flex: 1 }]} numberOfLines={1}>{suburbOf(a.request_item?.request?.address_text)}</Text>
               <Text style={[T.label, { fontSize: 9, marginTop: 4, marginLeft: 8 }]}>{a.paid_at ? new Date(a.paid_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}</Text>
             </View>
+            {pill && (
+              <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                <View style={{ backgroundColor: pill.c + '18', borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3 }}>
+                  <Text style={{ color: pill.c, fontWeight: '800', fontSize: 10.5, letterSpacing: 0.2 }}>{pill.t}</Text>
+                </View>
+              </View>
+            )}
           </View>
-        ))}
+          );
+        })}
     </ScrollView>
   );
 }

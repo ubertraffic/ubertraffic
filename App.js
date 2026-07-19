@@ -45,6 +45,7 @@ import { SH, S_ } from './styles';
 import { OperatorHome, OperatorJobs, OperatorEarnings, Account } from './screens';
 import { RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, tap, StepFade, PrimaryBtn, estTotal, jobCrewSize, jobTitle, jobSubtitle, Center } from './components2';
 import { logError } from './errorService';
+import { getPaymentForRequest } from './paymentsService';
 import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerLine, MatchCard, EmptyState, isStalledAssignment, requestHasStall, repLine, autoReleaseIn, friendly } from './components';
 
 /* ============================================================ ROOT */
@@ -1665,12 +1666,18 @@ function ClientActivity({ session }) {
 
 function ActivityCard({ r }) {
   const [open, setOpen] = useState(false);
+  const [pay, setPay] = useState(null);   // the Stripe payment behind this job (fetched lazily on expand)
   const items = r.request_items || [];
   const total = Number(r.settle_total || 0);
   const fee = Number(r.settle_fee || 0);
   const net = Number(r.settle_net || 0);
   const d = new Date(r.created_at);
   const summary = items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ');
+  // Pull the real payment record the first time the receipt is opened — the reference + paid date
+  // turn "Settled" into a receipt the client can trust and keep.
+  useEffect(() => { if (open && pay === null) getPaymentForRequest(r.id).then((p) => setPay(p || false)); }, [open]);
+  const paidWhen = pay && (pay.updated_at || pay.created_at) ? new Date(pay.updated_at || pay.created_at) : null;
+  const ref = pay?.stripe_payment_intent ? String(pay.stripe_payment_intent).slice(-8).toUpperCase() : null;
   return (
     <TouchableOpacity style={S_.card} activeOpacity={0.75} onPress={() => setOpen((o) => !o)}>
       <View style={S_.rowBetween}>
@@ -1690,6 +1697,9 @@ function ActivityCard({ r }) {
           <View style={[S_.actRow, S_.actTotal]}><Text style={[S_.actLabel, { color: C.ink, fontWeight: '700' }]}>Paid to worker</Text><Text style={[S_.actVal, { color: C.green, fontWeight: '800' }]}>${net.toLocaleString()}</Text></View>
           <View style={[S_.actRow, { marginTop: 8 }]}><Text style={S_.actLabel}>Completed</Text><Text style={S_.actVal}>{d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} · {d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}</Text></View>
           {r.address_text ? <View style={S_.actRow}><Text style={S_.actLabel}>Site</Text><Text style={[S_.actVal, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>{r.address_text}</Text></View> : null}
+          {paidWhen ? <View style={S_.actRow}><Text style={S_.actLabel}>Paid</Text><Text style={S_.actVal}>{paidWhen.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></View> : null}
+          {ref ? <View style={S_.actRow}><Text style={S_.actLabel}>Receipt no.</Text><Text style={[S_.actVal, { fontVariant: ['tabular-nums'] }]}>SC-{ref}</Text></View> : null}
+          <Text style={[T.tiny, { color: C.mute2, marginTop: 10 }]}>🔒 Paid securely via Stripe. SiteCall never stores your card.</Text>
         </View>
       )}
     </TouchableOpacity>
