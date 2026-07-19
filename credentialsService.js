@@ -191,6 +191,45 @@ export async function readinessForTrades(tradeIds) {
 // (e.g. "this worker holds: White Card, Traffic Blue Card" on the review-before-approve
 // screen). Returns just the names. Requires RLS to permit a client to read the verified
 // credentials of an operator assigned to their job (see B4 RLS note).
+// The tickets a worker's chosen trades REQUIRE — deduped across trades, each tagged with whether the
+// worker already holds it (and whether it's verified/unexpired). Drives the "tailored tickets" UI:
+// instead of the whole catalogue, show exactly what THIS worker needs for the work they picked.
+export async function requiredTicketsForTrades(tradeIds) {
+  const ids = (tradeIds || []).filter(Boolean);
+  if (ids.length === 0) return [];
+  const { data: u } = await supabase.auth.getUser();
+  if (!u || !u.user) return [];
+  const today = new Date().toISOString().slice(0, 10);
+  const [{ data: reqs }, { data: creds }] = await Promise.all([
+    supabase
+      .from('trade_requirements')
+      .select('credential_id, requirement, credential:credential_types ( name, tier )')
+      .in('trade_id', ids)
+      .eq('requirement', 'required'),
+    supabase
+      .from('operator_credentials')
+      .select('credential_id, status, expires_at')
+      .eq('operator_id', u.user.id),
+  ]);
+  const state = {};
+  (creds || []).forEach((c) => { state[c.credential_id] = c; });
+  const byId = {};
+  (reqs || []).forEach((r) => {
+    if (byId[r.credential_id]) return;
+    const c = state[r.credential_id];
+    const verified = !!c && c.status === 'verified' && (!c.expires_at || c.expires_at >= today);
+    byId[r.credential_id] = {
+      credential_id: r.credential_id,
+      name: r.credential?.name || r.credential_id,
+      tier: r.credential?.tier || null,
+      held: !!c,
+      verified,
+      status: c?.status || null,
+    };
+  });
+  return Object.values(byId);
+}
+
 export async function verifiedCredentialsFor(operatorId) {
   if (!operatorId) return [];
   const today = new Date().toISOString().slice(0, 10);

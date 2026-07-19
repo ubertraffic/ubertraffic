@@ -34,7 +34,7 @@ import SearchingScreen from './SearchingScreen';
 import ProofPhotoTest from './ProofPhotoTest';
 import TradePicker from './TradePicker';
 import CredentialsScreen from './CredentialsScreen';
-import { readinessForTrades, verifiedCredentialsFor } from './credentialsService';
+import { readinessForTrades, verifiedCredentialsFor, requiredTicketsForTrades } from './credentialsService';
 import Icon, { iconForType } from './Icon';
 import TabBar from './TabBar';
 import RoleToggle from './RoleToggle';
@@ -506,7 +506,7 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
             acct={acct}
             submitted={setupSubmitted}
             onSubmitted={markSubmitted}
-            onOpenGate={(side) => setGate({ side })}
+            onOpenGate={(g) => setGate(typeof g === 'string' ? { side: g } : g)}
             onRefresh={loadName}
             onExplore={() => { setExploring(true); setSetupManual(null); }}
             onComplete={() => { finishSetup(); setSetupManual(null); }}
@@ -536,15 +536,17 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
   if (!gate) return null;
   const isHire = gate.side === 'hire';
   const isTask = gate.side === 'task';
-  const title = isHire ? 'Add your ABN' : isTask ? 'Add your driver licence' : 'Add your White Card';
+  // Which credential this gate is for. The checklist can pass a specific one (credId/credName) so we
+  // ask for exactly the ticket the worker's trades need; otherwise fall back to the side's default.
+  const credId = gate.credId || (isTask ? 'drivers_licence' : 'white_card');
+  const credName = gate.credName || (isTask ? 'driver licence' : 'White Card');
+  const title = isHire ? 'Add your ABN' : `Add your ${credName}`;
   const need = isHire
     ? "Pop in your ABN and we'll confirm your business in the background. You can carry on while we check."
-    : isTask
-      ? "Pop in your licence number and we'll check it in the background. You can carry on while we do."
-      : "Pop in your White Card number and we'll check it in the background. You can carry on while we do.";
-  const inputLabel = isHire ? 'ABN' : isTask ? 'Driver licence number' : 'White Card number';
+    : `Pop in your ${credName} number and we'll check it in the background. You can carry on while we do.`;
+  const inputLabel = isHire ? 'ABN' : `${credName} number`;
   const inputHint = isHire ? '11 digits' : 'the number on your card';
-  const submitLabel = isHire ? 'Add ABN' : 'Add card';
+  const submitLabel = isHire ? 'Add ABN' : 'Add ticket';
 
   async function submit() {
     setBusy(true); setErr('');
@@ -552,7 +554,6 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
       if (isHire) {
         await submitBusinessAbn(num);
       } else {
-        const credId = gate.side === 'task' ? 'drivers_licence' : 'white_card';
         await submitCredential(credId, num || null, null);
       }
       setDone(true);
@@ -631,6 +632,7 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
   const [tradeQ, setTradeQ] = useState('');
   const [tradesBusy, setTradesBusy] = useState(false);
   const [capsCount, setCapsCount] = useState(null); // how many capabilities are on file (drives 'done')
+  const [reqTix, setReqTix] = useState(null);       // tickets the chosen trades require (tailored verify)
 
   useEffect(() => {
     if (isHire) return;
@@ -642,6 +644,16 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
       setSelTrades(seed);
     }).catch(() => setCapsCount(0));
   }, [isHire]);
+
+  // Whenever the picked trades change, recompute exactly which tickets those trades require. This is
+  // what makes the "verify" step feel custom-built — it names the worker's actual tickets.
+  const tradeKey = Object.keys(selTrades).sort().join(',');
+  useEffect(() => {
+    if (isHire) return;
+    const ids = Object.keys(selTrades);
+    if (!ids.length) { setReqTix([]); return; }
+    requiredTicketsForTrades(ids).then(setReqTix).catch(() => setReqTix([]));
+  }, [isHire, tradeKey, acct?.can_work]);
 
   // Work "details" = name + DOB + becoming an operator (role flips to 'operator', which persists), so
   // the app never asks for the name/DOB a second time. Hire "details" = just a display name.
@@ -732,10 +744,20 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
     sub: tradeCount > 0 ? `${tradeCount} selected — tap to change` : 'Pick your trades so we can match you to jobs',
     state: (capsCount == null) ? 'loading' : ((capsCount > 0 || !!sub.trades) ? 'done' : 'todo'),
   });
+  // Tailored verify — name the exact tickets the worker's chosen trades need, not a generic "White Card".
+  const reqNames = (reqTix || []).map((t) => t.name);
+  const nextTicket = (reqTix || []).find((t) => !t.held) || (reqTix || []).find((t) => !t.verified) || null;
+  const verifyTitle = isHire ? 'Add your ABN'
+    : reqNames.length === 1 ? `Add your ${reqNames[0]}`
+    : reqNames.length > 1 ? 'Add your tickets'
+    : 'Add your White Card';
+  const verifySub = isHire ? 'Pop in your ABN — we confirm your business for you'
+    : reqNames.length ? `For your trades: ${reqNames.join(', ')}`
+    : 'Pop in your card number — we check it for you';
   steps.push({
     key: 'verify',
-    title: isHire ? 'Add your ABN' : 'Add your White Card',
-    sub: isHire ? 'Pop in your ABN — we confirm your business for you' : 'Pop in your card number — we check it for you',
+    title: verifyTitle,
+    sub: verifySub,
     state: verified ? 'done' : verifyPending ? 'review' : 'todo',
   });
   if (!isHire) steps.push({
@@ -759,7 +781,11 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
     tap();
     if (step.key === 'name') { setNameVal(acct?.full_name || ''); setEditingName(true); }
     else if (step.key === 'trades') setTradesOpen(true);
-    else if (step.key === 'verify') onOpenGate(side);
+    else if (step.key === 'verify') {
+      // Open the gate for the exact ticket their trades need next; fall back to the side default.
+      if (!isHire && nextTicket) onOpenGate({ side: 'work', credId: nextTicket.credential_id, credName: nextTicket.name });
+      else onOpenGate({ side });
+    }
     else if (step.key === 'payout') startPayout();
   }
 

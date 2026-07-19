@@ -2,9 +2,9 @@
 // Self-contained. Props: onClose()
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
-import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential, isAutoVerifiable } from './credentialsService';
+import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential, isAutoVerifiable, requiredTicketsForTrades } from './credentialsService';
 import CredentialEvidence from './CredentialEvidence';
-import { getMyProfile } from './operatorService';
+import { getMyProfile, listMyCapabilities } from './operatorService';
 import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn, getMyIdentity } from './accountService';
 import { formatDMY, dmyToISO, isoToDMY } from './dateFormat';
 import { C, MONO, S, R, T, shadowSm } from './theme';
@@ -46,6 +46,7 @@ export default function CredentialsScreen({ onClose }) {
   const [verifying, setVerifying] = useState(null);   // id being verified
   const [evidenceFor, setEvidenceFor] = useState(null);   // credential_type id whose photo panel is open
   const [openCat, setOpenCat] = useState({});             // which "add more" folder is expanded (collapsed by default)
+  const [reqIds, setReqIds] = useState(() => new Set());  // credential_ids the worker's trades require
   const [abnSaved, setAbnSaved] = useState(null);     // stored ABN (digits) or null
   const [abnStatus, setAbnStatus] = useState(null);   // 'valid' | 'verified' | null
   const [abnInput, setAbnInput] = useState('');
@@ -100,15 +101,20 @@ export default function CredentialsScreen({ onClose }) {
     try {
       // capabilities from the profile; the sensitive identity/ABN PII comes from the definer function
       // (those columns are column-REVOKEd on profiles — 0067 — so a direct select can't read them).
-      const [t, m, p, id] = await Promise.all([
+      const [t, m, p, id, myCaps] = await Promise.all([
         listCredentialTypes(), listMyCredentials(),
         getMyProfile().catch(() => null), getMyIdentity().catch(() => ({})),
+        listMyCapabilities().catch(() => []),
       ]);
       setTypes(t); setMine(m);
       if (p) setCaps({ can_work: p.can_work, can_task: p.can_task });
       setAbnSaved(id.abn || null);
       setAbnStatus(id.abn_status || (p && p.abn_status) || null);
       setIdSaved(id.legal_name ? { legal_name: id.legal_name, date_of_birth: id.date_of_birth } : null);
+      // Tickets the worker's chosen trades require → the tailored "Required" section.
+      const tradeIds = (myCaps || []).map((c) => c.trade_id).filter(Boolean);
+      const req = tradeIds.length ? await requiredTicketsForTrades(tradeIds).catch(() => []) : [];
+      setReqIds(new Set(req.map((r) => r.credential_id)));
     } catch (e) { setMsg(e.message || String(e)); setTypes([]); }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
@@ -167,12 +173,13 @@ export default function CredentialsScreen({ onClose }) {
     );
   }
 
-  // Partition: what you hold (shown up top) vs what you could add (grouped into collapsible folders).
-  // `types` is null until loaded — guard so we never .filter(null) before the loading return below.
+  // Partition into three: REQUIRED for the trades you picked (tailored), ALSO ON FILE (other held
+  // tickets), and ADD MORE (everything else, in collapsed folders). `types` is null until loaded.
   const typeList = types || [];
-  const heldList = typeList.filter((t) => heldById[t.id]);
+  const requiredList = typeList.filter((t) => reqIds.has(t.id));
+  const heldList = typeList.filter((t) => heldById[t.id] && !reqIds.has(t.id));
   const notHeldByCat = {};
-  typeList.filter((t) => !heldById[t.id]).forEach((t) => { const k = catOf(t); (notHeldByCat[k] = notHeldByCat[k] || []).push(t); });
+  typeList.filter((t) => !heldById[t.id] && !reqIds.has(t.id)).forEach((t) => { const k = catOf(t); (notHeldByCat[k] = notHeldByCat[k] || []).push(t); });
   const addCats = CATS.map((cat) => ({ cat, items: notHeldByCat[cat.key] || [] })).filter((g) => g.items.length > 0);
 
   function resetAddForm() { setAdding(null); setNumber(''); setExpiry(''); setProvider(''); setCardNumber(''); setCredState('NSW'); setMsg(''); }
@@ -363,10 +370,19 @@ export default function CredentialsScreen({ onClose }) {
         </View>
         {!!msg && <Text style={styles.err}>{msg}</Text>}
 
-        {/* What you already hold — always visible, up top */}
+        {/* Tailored to the trades they picked — exactly the tickets those jobs need, nothing else */}
+        {requiredList.length > 0 && (
+          <>
+            <Text style={styles.sectionH}>FOR YOUR TRADES</Text>
+            <Text style={styles.sectionSub}>The tickets the work you picked needs. Add these to start accepting those jobs.</Text>
+            {requiredList.map(renderRow)}
+          </>
+        )}
+
+        {/* Other tickets you already hold */}
         {heldList.length > 0 && (
           <>
-            <Text style={styles.sectionH}>ON FILE</Text>
+            <Text style={styles.sectionH}>{requiredList.length > 0 ? 'ALSO ON FILE' : 'ON FILE'}</Text>
             {heldList.map(renderRow)}
           </>
         )}
@@ -446,6 +462,7 @@ const styles = StyleSheet.create({
   primary: { backgroundColor: C.indigo, borderRadius: R.lg, padding: 16, alignItems: 'center', marginTop: 20 },
   primaryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   sectionH: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.8, marginTop: 8, marginBottom: 10 },
+  sectionSub: { fontSize: 12.5, color: C.mute, lineHeight: 17, marginTop: -4, marginBottom: 12 },
   folder: { backgroundColor: C.panel, borderRadius: R.lg, marginBottom: 10, ...shadowSm, overflow: 'hidden' },
   folderHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 16 },
   folderTitle: { fontSize: 15.5, fontWeight: '800', color: C.ink, letterSpacing: -0.2 },
