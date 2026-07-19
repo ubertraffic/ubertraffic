@@ -762,18 +762,22 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
   });
   if (!isHire) steps.push({
     key: 'payout',
+    optional: true,   // you can finish setup and reach the app without a bank — prompted later at go-online
     title: 'Set up payouts',
-    sub: 'Link your bank so your pay lands fast',
+    sub: paidReady ? 'Linked — your pay lands fast' : 'Optional now — add your bank when you’re ready to get paid',
     state: paidReady ? 'done' : payout == null ? 'loading' : 'todo',
   });
 
   // A step counts as "handled" once it's done OR submitted for review — the user has done their part,
-  // so onboarding can finish while a background check clears (verify-now, validate-later).
+  // so onboarding can finish while a background check clears (verify-now, validate-later). Optional
+  // steps (payouts) never block completion — the worker can proceed to the app and set it up later.
   const handled = (s) => s.state === 'done' || s.state === 'review';
-  const total = steps.length;
-  const doneCount = steps.filter(handled).length;
-  const allDone = steps.every(handled);
+  const requiredSteps = steps.filter((s) => !s.optional);
+  const total = requiredSteps.length;
+  const doneCount = requiredSteps.filter(handled).length;
+  const allDone = requiredSteps.every(handled);
   const stillReviewing = steps.some((s) => s.state === 'review');
+  const payoutTodo = !isHire && !paidReady;   // for the celebration's "set up payouts later" note
   const pct = total ? doneCount / total : 0;
 
   function handleStep(step) {
@@ -866,10 +870,11 @@ function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefr
             </View>
             <Text style={S_.setHero}>You're all set</Text>
             <Text style={S_.setSub}>
-              {stillReviewing
-                ? (isHire ? "You can start posting jobs now — we're finishing your verification in the background."
-                          : "You can look around now — we're finishing your verification in the background, then you can accept jobs.")
-                : (isHire ? "You're ready to post jobs and hire." : "You're ready to find work and get paid.")}
+              {isHire
+                ? (stillReviewing ? "You can start posting jobs now — we're finishing your verification in the background." : "You're ready to post jobs and hire.")
+                : payoutTodo
+                  ? "You're in! Have a look around — link your bank from Earnings whenever you're ready to get paid."
+                  : (stillReviewing ? "You can look around now — we're finishing your verification in the background, then you can accept jobs." : "You're ready to find work and get paid.")}
             </Text>
           </View>
         ) : (
