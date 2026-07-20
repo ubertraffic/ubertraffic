@@ -510,6 +510,8 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
             style={[StyleSheet.absoluteFill, { backgroundColor: C.canvas, opacity: overlayAnim, transform: [{ translateY: overlayAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }]}
             pointerEvents={tab === 'home' ? 'none' : 'auto'}
           >
+            {/* overlay↔overlay swaps (e.g. Jobs→Earnings) cross-fade instead of hard-cutting */}
+            <CrossFade keyId={`${role}:${activeOverlay}`} style={{ flex: 1 }}>
             {role === 'client' ? (
               activeOverlay === 'requests' ? <ClientRequests session={session} openNew={wantNew} onOpenedNew={() => setWantNew(false)} focusReq={focusReq} onFocused={() => setFocusReq(null)} />
               : activeOverlay === 'activity' ? <ClientActivity session={session} />
@@ -519,6 +521,7 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
               : activeOverlay === 'earnings' ? <OperatorEarnings session={session} />
               : <Account session={session} role="operator" onNameSaved={loadName} onOpenProfile={setProfileId} />
             )}
+            </CrossFade>
           </Animated.View>
         )}
       </View>

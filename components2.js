@@ -217,7 +217,7 @@ function agoLabel(iso) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onToggleBio, onAccept, onPass }) {
+function AvailableJobCardBase({ d, index = 0, busyId, myLoc, expanded, onToggleBio, onAccept, onPass }) {
   const it = d.request_item; const r = it?.request;
   const qty = it?.qty || 1;
   const taken = d.taken || 0;
@@ -371,6 +371,27 @@ export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onTogg
     </Animated.View>
   );
 }
+
+// A signature of everything the card actually DISPLAYS. React.memo skips the re-render when it's
+// unchanged, so a background feed refresh that returns equivalent data (new object refs, same values)
+// no longer re-renders every card — and GPS ticks are bucketed to ~110m so location jitter doesn't
+// churn the feed either. Callbacks (onAccept/onPass/onToggleBio) are behavior-stable (they act on the
+// item id), so their identity is intentionally excluded.
+function cardSignature(p) {
+  const d = p.d || {}, it = d.request_item, r = it?.request, c = d.client_card;
+  const itemId = it?.id;
+  return [
+    d.id, itemId, d.status, d.taken, d.mine_accepted,
+    it?.type, it?.qty, it?.rate, it?.rate_offered, it?.price_mode,
+    r?.when_type, r?.scheduled_at, r?.duration_hours, r?.job_details, r?.travel_cents, r?.materials_cap, r?.created_at, r?.lat, r?.lng,
+    c?.display_name, c?.verified, c?.rating, c?.rating_count,
+    p.expanded, p.index,
+    p.busyId === itemId,                                    // only THIS card's busy state matters
+    p.myLoc ? Math.round(p.myLoc.lat * 1000) : null,        // ~110m buckets — ignore GPS jitter
+    p.myLoc ? Math.round(p.myLoc.lng * 1000) : null,
+  ].join('|');
+}
+export const AvailableJobCard = React.memo(AvailableJobCardBase, (a, b) => cardSignature(a) === cardSignature(b));
 
 const jc = StyleSheet.create({
   card: {
