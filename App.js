@@ -399,7 +399,7 @@ function Shell({ session, pushDeepLink, firstRunSide }) {
   const barTY = useRef(new Animated.Value(0)).current;
   const onHomeScroll = () => {};   // static tab bar — no hide-on-scroll
   const revealBar = () => {};
-  const changeTab = (k) => { setTab(k); };
+  const changeTab = (k) => { if (k !== tab) tap('light'); setTab(k); };   // tactile feedback on nav
   // TAB TRANSITIONS — the Home map is a PERMANENT base layer (mounted once, never reloads). The
   // other tabs (Requests/Activity/Account/Jobs/Earnings) are opaque overlays that cross-fade + slide
   // in over it. `activeOverlay` holds the visible non-home tab and lingers through the fade-OUT so
