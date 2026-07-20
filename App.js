@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, PanResponder,
-  Animated, Dimensions, Pressable, Keyboard, Modal, Easing, Linking, RefreshControl,
+  Animated, Dimensions, Pressable, Keyboard, Modal, Easing, Linking, RefreshControl, FlatList,
 } from 'react-native';
 import { supabase } from './supabaseClient';
 import PayJobSheet from './PayJobSheet';
@@ -2286,49 +2286,61 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
 
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.indigo} colors={[C.indigo]} />}>
-      <View style={S_.rowBetween}>
-        <Text style={T.eyebrow}>My requests</Text>
-        <LiveTag />
-      </View>
-      <TouchableOpacity style={S_.newBtn} onPress={() => setSheetOpen(true)} activeOpacity={0.9}>
-        <Text style={S_.newBtnText}>＋ New request</Text>
-      </TouchableOpacity>
-
-      {/* filter bar — a plain row, NOT a horizontal ScrollView. A horizontal ScrollView nested in the
-          vertical page ScrollView has no intrinsic height and greedily expands to fill the screen,
-          which stretched these three chips to half the page. Three short chips never need to scroll. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, paddingVertical: 4 }}>
-        {FILTERS.map(([key, label]) => {
-          const n = counts[key] || 0;
-          const on = filter === key;
-          return (
-            <TouchableOpacity key={key} style={[S_.filterChip, on && S_.filterChipOn]} onPress={() => setFilter(key)} activeOpacity={0.8}>
-              <Text style={[S_.filterT, on && S_.filterTOn]}>{label}</Text>
-              <Text style={[S_.filterN, on && S_.filterNOn]}>{n}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {!!msg && (
-        <View style={msg.startsWith('✓') ? S_.successBanner : null}>
-          <Text style={msg.startsWith('✓') ? S_.successText : S_.msg}>{msg}</Text>
-        </View>
+    {/* Virtualized: the Past filter can hold 100+ requests. A FlatList only mounts the rows on screen
+        (+ a small buffer), so scrolling stays smooth no matter how long the history grows. */}
+    <FlatList
+      data={mine === null ? [] : shown}
+      keyExtractor={(r) => r.id}
+      renderItem={({ item: r }) => (
+        <FullReqCard r={r} busy={busyId === r.id} defaultOpen={focusReq === r.id} onApprove={() => openReview(r.id)} onCancel={() => cancel(r.id)} onRepost={() => repost(r.id)} />
       )}
-      {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : shown.length === 0 ? (
-          (mine || []).length === 0
+      contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.indigo} colors={[C.indigo]} />}
+      keyboardShouldPersistTaps="handled"
+      removeClippedSubviews
+      initialNumToRender={8}
+      maxToRenderPerBatch={8}
+      windowSize={7}
+      ListHeaderComponent={(
+        <>
+          <View style={S_.rowBetween}>
+            <Text style={T.eyebrow}>My requests</Text>
+            <LiveTag />
+          </View>
+          <TouchableOpacity style={S_.newBtn} onPress={() => setSheetOpen(true)} activeOpacity={0.9}>
+            <Text style={S_.newBtnText}>＋ New request</Text>
+          </TouchableOpacity>
+          {/* filter bar — a plain row (three short chips never need to scroll) */}
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, paddingVertical: 4 }}>
+            {FILTERS.map(([key, label]) => {
+              const n = counts[key] || 0;
+              const on = filter === key;
+              return (
+                <TouchableOpacity key={key} style={[S_.filterChip, on && S_.filterChipOn]} onPress={() => setFilter(key)} activeOpacity={0.8}>
+                  <Text style={[S_.filterT, on && S_.filterTOn]}>{label}</Text>
+                  <Text style={[S_.filterN, on && S_.filterNOn]}>{n}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {!!msg && (
+            <View style={msg.startsWith('✓') ? S_.successBanner : null}>
+              <Text style={msg.startsWith('✓') ? S_.successText : S_.msg}>{msg}</Text>
+            </View>
+          )}
+        </>
+      )}
+      ListEmptyComponent={(
+        mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
+          : (mine || []).length === 0
             ? <EmptyState icon="requests" title="Post your first job"
                 sub="Tell us what you need on site and skilled crews nearby get notified — often on site within the hour. You only pay once the work's done."
                 cta="＋ New request" onPress={() => setSheetOpen(true)} />
             : <EmptyState icon="requests"
                 title={filter === 'active' ? 'Nothing live right now' : filter === 'ready' ? 'Nothing waiting on you' : 'Nothing here yet'}
                 sub={filter === 'active' ? 'Post a job and it’ll appear here while crews are matched.' : 'Jobs you’ve finished with will show under Past.'} />
-        )
-        : shown.map((r) => <FullReqCard key={r.id} r={r} busy={busyId === r.id} defaultOpen={focusReq === r.id} onApprove={() => openReview(r.id)} onCancel={() => cancel(r.id)} onRepost={() => repost(r.id)} />)}
-    </ScrollView>
+      )}
+    />
     <RequestSheet
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
@@ -2378,34 +2390,48 @@ function ClientActivity({ session }) {
     : 'financial year so far';
   const PERIODS = [['week', 'This week'], ['month', 'This month'], ['year', 'This year']];
   return (
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
-      <Text style={T.eyebrow}>Activity</Text>
-      <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 24 }]}>
-        <Text style={T.label}>Total spent · all time</Text>
-        <Text style={[T.dataBig, { fontSize: 34, color: C.ink, marginTop: 6 }]}>${spent.toLocaleString()}</Text>
-        <Text style={[T.small, { marginTop: 2 }]}>{done.length} job{done.length !== 1 ? 's' : ''} completed</Text>
-      </View>
-      {/* Period selector — pick a window, the figure below reacts. No accounting jargon on the face. */}
-      <View style={[S_.seg, { marginBottom: 12 }]}>
-        {PERIODS.map(([key, label]) => {
-          const on = period === key;
-          return (
-            <TouchableOpacity key={key} style={[S_.segBtn, on && S_.segBtnOn]} onPress={() => setPeriod(key)} activeOpacity={0.85}>
-              <Text style={[S_.segT, on && S_.segTOn]}>{label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-      <View style={[S_.card, { marginTop: 0, alignItems: 'center', paddingVertical: 18 }]}>
-        <Text style={[T.heading, { fontSize: 30, color: C.ink }]}>${periodSpent.toLocaleString()}</Text>
-        <Text style={[T.small, { marginTop: 3 }]}>{inPeriod.length} job{inPeriod.length !== 1 ? 's' : ''} · {periodCaption}</Text>
-        {period === 'year' && <Text style={[T.tiny, { color: C.mute2, marginTop: 4 }]}>Australian financial year · 1 Jul – 30 Jun</Text>}
-      </View>
-      <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
-      {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : done.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No completed jobs yet.</Text>
-        : done.map((r) => <ActivityCard key={r.id} r={r} />)}
-    </ScrollView>
+    // Virtualized: completed-job history can run to dozens/hundreds of receipts.
+    <FlatList
+      contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}
+      data={mine === null ? [] : done}
+      keyExtractor={(r) => r.id}
+      renderItem={({ item: r }) => <ActivityCard r={r} />}
+      initialNumToRender={8}
+      maxToRenderPerBatch={8}
+      windowSize={7}
+      removeClippedSubviews
+      ListHeaderComponent={(
+        <>
+          <Text style={T.eyebrow}>Activity</Text>
+          <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 24 }]}>
+            <Text style={T.label}>Total spent · all time</Text>
+            <Text style={[T.dataBig, { fontSize: 34, color: C.ink, marginTop: 6 }]}>${spent.toLocaleString()}</Text>
+            <Text style={[T.small, { marginTop: 2 }]}>{done.length} job{done.length !== 1 ? 's' : ''} completed</Text>
+          </View>
+          {/* Period selector — pick a window, the figure below reacts. No accounting jargon on the face. */}
+          <View style={[S_.seg, { marginBottom: 12 }]}>
+            {PERIODS.map(([key, label]) => {
+              const on = period === key;
+              return (
+                <TouchableOpacity key={key} style={[S_.segBtn, on && S_.segBtnOn]} onPress={() => setPeriod(key)} activeOpacity={0.85}>
+                  <Text style={[S_.segT, on && S_.segTOn]}>{label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <View style={[S_.card, { marginTop: 0, alignItems: 'center', paddingVertical: 18 }]}>
+            <Text style={[T.heading, { fontSize: 30, color: C.ink }]}>${periodSpent.toLocaleString()}</Text>
+            <Text style={[T.small, { marginTop: 3 }]}>{inPeriod.length} job{inPeriod.length !== 1 ? 's' : ''} · {periodCaption}</Text>
+            {period === 'year' && <Text style={[T.tiny, { color: C.mute2, marginTop: 4 }]}>Australian financial year · 1 Jul – 30 Jun</Text>}
+          </View>
+          <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
+        </>
+      )}
+      ListEmptyComponent={(
+        mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
+          : <Text style={[T.small, { marginTop: 8 }]}>No completed jobs yet.</Text>
+      )}
+    />
   );
 }
 
