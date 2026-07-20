@@ -19,7 +19,7 @@ import {
 import { submitCredential, submitBusinessAbn, setMyIdentity } from './accountService';
 import { formatDMY, dmyToISO } from './dateFormat';
 import { getUnreadCounts } from './messagesService';
-import { cacheGet, cacheSet, cacheBindUser, cacheClearAll } from './screenCache';
+import { cacheGet, cacheSet, cacheBindUser, cacheClearAll, cacheHydrate } from './screenCache';
 import JobChat from './JobChat';
 import { Entrance, PressableScale, AnimatedBar, useCountUp, CrossFade, useAttentionBump } from './Motion';
 import { advanceAssignment, checkIn, checkOut, approveRequest, cancelRequest, cancelAssignment, repostRequest, startJourney, getMapJobs, getOperatorMapJobs, updateMyLocation, listMyRequestsFull, reportMissedCheckout, submitMaterialClaim, listMaterialClaims, resolveMaterialClaim, getTrackerState } from './completionService';
@@ -82,9 +82,16 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    // Warm the static trade taxonomy in parallel with the session check so the post-job picker and
+    // trade lists open instantly the first time (it's memoised in taxonomyService after this).
+    loadTaxonomy().catch(() => {});
     (async () => {
       const { data } = await supabase.auth.getSession();
-      if (!cancelled && data.session) { setSession(data.session); setBooting(false); return; }
+      if (!cancelled && data.session) {
+        // Hydrate last session's screen data BEFORE mounting the shell → cold start paints instantly.
+        await cacheHydrate(data.session.user.id);
+        setSession(data.session); setBooting(false); return;
+      }
       // no session — dev auto-login if enabled and a password is present
       if (DEV_AUTOLOGIN && DEV_PASSWORD) {
         try {
