@@ -1,56 +1,45 @@
-// PrestartCard.js — the arrival safety prestart (reg-291-style hazard triggers +
-// SWMS acknowledgment). Shown right after check-in, before a job is workable, and
-// ONLY when the trade requires it (the caller decides that from compliance_ready).
+// PrestartCard.js — the arrival safety prestart (reg-291-style hazard triggers + SWMS
+// acknowledgment). Shown right after check-in, before a job is workable, and ONLY when the
+// trade requires it (the caller decides that from compliance_ready).
 //
-// Four plain yes/no hazard questions with a "what's this?" example each. The moment
-// any is answered Yes, triggersAreHRCW() flips true and a SWMS acknowledgment step
-// appears — high-risk work needs a site-specific SWMS. Submit records everything via
-// submitPrestart(); the SERVER enforces the SWMS rule and can raise 'swms_required',
-// which we surface as the safety backstop.
+// Four plain yes/no hazard questions, each with a crisp hazard DIAGRAM and a one-line example so a
+// worker never has to guess what a question means — no expand/collapse, so the whole check fits on
+// one screen without scrolling. The moment any is answered Yes, triggersAreHRCW() flips true and a
+// SWMS acknowledgment step appears — high-risk work needs a site-specific SWMS. Submit records
+// everything via submitPrestart(); the SERVER enforces the SWMS rule and can raise 'swms_required'.
 //
-// Follows the CloseOutCard pattern/feel. Does NOT touch checkout/completion logic —
-// it only calls submitPrestart and, on success, hands back to the caller via onDone().
+// Does NOT touch checkout/completion logic — it only calls submitPrestart and hands back via onDone().
 
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { C, S, R, T } from './theme';
 import { submitPrestart, triggersAreHRCW } from './complianceService';
 import { getPosition } from './location';
+import HazardIcon from './HazardIcons';
 
-// The four triggers, in the exact keys the server rule reads. Each carries a
-// plain-language example so a worker never has to guess what a question means.
+// The four triggers, in the exact keys the server rule reads. Each carries a hazard colour + a short
+// plain-language example, so the row reads instantly: diagram + question + example + Yes/No.
 const QUESTIONS = [
-  { key: 'road_traffic',  q: 'Working on or next to a road or live traffic?', icon: '🚧',
-    eg: 'e.g. roadworks, a live lane beside you, or a footpath next to moving cars.',
-    controls: 'Traffic control plan, cones & barriers, hi-vis, and a spotter.' },
-  { key: 'mobile_plant',  q: 'Around moving powered plant? (excavators, cranes, loaders)', icon: '🚜',
-    eg: 'e.g. an excavator, crane, forklift, loader or bobcat operating near you.',
-    controls: 'Exclusion zones, eye contact with the operator, and a spotter.' },
-  { key: 'fall_over_2m',  q: 'Any risk of falling more than 2 metres?', icon: '🪜',
-    eg: 'e.g. roof work, scaffold, a ladder, an unguarded edge, a void or an elevated platform.',
-    controls: 'Edge protection, guardrails, a harness, or a proper platform.' },
-  { key: 'asbestos_demo', q: 'Disturbing asbestos, demolition, or structural work?', icon: '⚠️',
-    eg: 'e.g. cutting or removing old sheeting, knocking out walls, or changing anything structural.',
-    controls: 'A licensed removalist, containment, a SWMS — never dry-cut.' },
+  { key: 'road_traffic',  q: 'On or next to live traffic?',        eg: 'Roadworks, live lanes, moving cars',      color: '#B87514' },
+  { key: 'mobile_plant',  q: 'Around moving powered plant?',       eg: 'Excavator, crane, forklift, loader',      color: '#2C6E8F' },
+  { key: 'fall_over_2m',  q: 'Risk of falling over 2 metres?',     eg: 'Roof, scaffold, ladder, open edge',       color: '#C0492B' },
+  { key: 'asbestos_demo', q: 'Asbestos, demolition or structural?', eg: 'Cutting old sheeting, structural work',  color: '#B00020' },
 ];
 
 // onDone() = proceed (prestart recorded). onCancel() = "Not yet" (gate stays shut).
 export default function PrestartCard({ assignmentId, onDone, onCancel }) {
   const [triggers, setTriggers] = useState({ road_traffic: false, mobile_plant: false, fall_over_2m: false, asbestos_demo: false });
   const [swmsAck, setSwmsAck] = useState(false);
-  const [openInfo, setOpenInfo] = useState(null);   // which "what's this?" is expanded
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [forceSwms, setForceSwms] = useState(false);   // server raised swms_required (backstop)
 
-  // Live HRCW check — reveals the SWMS step the instant a hazard is flagged.
   const showSwms = triggersAreHRCW(triggers) || forceSwms;
   const set = (key, val) => setTriggers((t) => ({ ...t, [key]: val }));
 
   async function submit() {
     if (showSwms && !swmsAck) { setErr('Tick the box to confirm you have a site-specific SWMS and have read it.'); return; }
     setBusy(true); setErr('');
-    // GPS best-effort, exactly like the photo capture — never block on it.
     let lat = null, lng = null;
     try { const p = await getPosition(); lat = p.lat; lng = p.lng; } catch (_) {}
     try {
@@ -59,7 +48,6 @@ export default function PrestartCard({ assignmentId, onDone, onCancel }) {
     } catch (e) {
       const m = (e && e.message) || '';
       if (/swms_required/i.test(m)) {
-        // Safety backstop: server says this is high-risk and needs the SWMS ack.
         setForceSwms(true);
         setErr('This is high-risk work — you must confirm you have a site-specific SWMS before you can start.');
       } else {
@@ -71,55 +59,40 @@ export default function PrestartCard({ assignmentId, onDone, onCancel }) {
 
   return (
     <View style={cardStyle}>
-      <Text style={[T.eyebrow, { marginBottom: 4 }]}>Safety prestart</Text>
-      <Text style={[T.small, { color: C.mute, marginBottom: S.lg }]}>
-        Before you start, a few quick safety checks for this site.
-      </Text>
+      <Text style={[T.eyebrow, { marginBottom: 2 }]}>Safety prestart</Text>
+      <Text style={[T.small, { color: C.mute, marginBottom: 10 }]}>Quick site checks before you start.</Text>
 
       {QUESTIONS.map((item) => {
         const yes = !!triggers[item.key];
-        const info = openInfo === item.key;
         return (
           <View key={item.key} style={qRow}>
-            <Text style={[T.body, { fontWeight: '700', marginBottom: 12 }]}>{item.q}</Text>
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <TouchableOpacity onPress={() => set(item.key, true)} activeOpacity={0.9} style={[segBtn, yes && segYes]}>
-                <Text style={[segT, yes && segTOn]}>Yes</Text>
+            <View style={[iconWrap, { backgroundColor: item.color + '18' }]}>
+              <HazardIcon name={item.key} size={26} color={item.color} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={qText} numberOfLines={2}>{item.q}</Text>
+              <Text style={egText} numberOfLines={1}>{item.eg}</Text>
+            </View>
+            <View style={ynWrap}>
+              <TouchableOpacity onPress={() => set(item.key, false)} activeOpacity={0.85} style={[ynBtn, !yes && ynNo]}>
+                <Text style={[ynT, !yes && ynTOn]}>No</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => set(item.key, false)} activeOpacity={0.9} style={[segBtn, !yes && segNo]}>
-                <Text style={[segT, !yes && segTOn]}>No</Text>
+              <TouchableOpacity onPress={() => set(item.key, true)} activeOpacity={0.85} style={[ynBtn, yes && ynYes]}>
+                <Text style={[ynT, yes && ynTOn]}>Yes</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              onPress={() => setOpenInfo(info ? null : item.key)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={{ marginTop: 12 }}
-            >
-              <Text style={[T.small, { color: C.indigo, fontWeight: '700' }]}>{info ? '× Close' : 'ⓘ What’s this?'}</Text>
-            </TouchableOpacity>
-            {info ? (
-              <View style={infoCard}>
-                <View style={infoIconWrap}><Text style={{ fontSize: 26 }}>{item.icon}</Text></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[T.small, { color: C.ink, fontWeight: '700', marginBottom: 4 }]}>What this means</Text>
-                  <Text style={[T.small, { color: C.mute, lineHeight: 18 }]}>{item.eg}</Text>
-                  <View style={infoControls}>
-                    <Text style={[T.small, { color: C.green, fontWeight: '800', marginBottom: 2 }]}>Typical controls</Text>
-                    <Text style={[T.small, { color: C.mute, lineHeight: 18 }]}>{item.controls}</Text>
-                  </View>
-                </View>
-              </View>
-            ) : null}
           </View>
         );
       })}
 
       {showSwms ? (
         <View style={swmsBox}>
-          <Text style={[T.body, { color: C.red, fontWeight: '800', marginBottom: 6 }]}>{'⚠'} High-risk work</Text>
-          <Text style={[T.small, { color: C.ink, marginBottom: 14 }]}>
-            You{'’'}ve flagged high-risk construction work. You must have a site-specific SWMS (Safe Work Method
-            Statement) for this job and have read it before you start.
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <HazardIcon name="asbestos_demo" size={20} color={C.red} />
+            <Text style={[T.body, { color: C.red, fontWeight: '800' }]}>High-risk work</Text>
+          </View>
+          <Text style={[T.small, { color: C.ink, marginBottom: 12, lineHeight: 18 }]}>
+            You must have a site-specific SWMS (Safe Work Method Statement) for this job and have read it before you start.
           </Text>
           <TouchableOpacity onPress={() => setSwmsAck((v) => !v)} activeOpacity={0.9} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <View style={[checkbox, swmsAck && checkboxOn]}>{swmsAck ? <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{'✓'}</Text> : null}</View>
@@ -128,7 +101,7 @@ export default function PrestartCard({ assignmentId, onDone, onCancel }) {
         </View>
       ) : null}
 
-      {err ? <Text style={[T.small, { color: C.red, marginTop: S.md }]}>{err}</Text> : null}
+      {err ? <Text style={[T.small, { color: C.red, marginTop: 10 }]}>{err}</Text> : null}
 
       <TouchableOpacity
         onPress={submit}
@@ -136,16 +109,16 @@ export default function PrestartCard({ assignmentId, onDone, onCancel }) {
         activeOpacity={0.9}
         style={{
           backgroundColor: (busy || (showSwms && !swmsAck)) ? C.mute : (showSwms ? C.red : C.green),
-          borderRadius: R.md, paddingVertical: 16, alignItems: 'center', marginTop: S.lg,
+          borderRadius: R.md, paddingVertical: 15, alignItems: 'center', marginTop: 14,
         }}
       >
         <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>
-          {busy ? 'Submitting…' : showSwms ? 'Confirm high-risk & start' : 'Confirm — no hazards'}
+          {busy ? 'Submitting…' : showSwms ? 'Confirm high-risk & start' : 'All clear — start'}
         </Text>
       </TouchableOpacity>
 
       {onCancel ? (
-        <TouchableOpacity onPress={onCancel} style={{ paddingVertical: 12, alignItems: 'center' }}>
+        <TouchableOpacity onPress={onCancel} style={{ paddingVertical: 10, alignItems: 'center' }}>
           <Text style={[T.small, { color: C.mute }]}>Not yet</Text>
         </TouchableOpacity>
       ) : null}
@@ -153,54 +126,24 @@ export default function PrestartCard({ assignmentId, onDone, onCancel }) {
   );
 }
 
-const cardStyle = {
-  backgroundColor: '#fff',
-  borderRadius: R.lg,
-  padding: S.lg,
-  margin: S.md,
-};
-// One question per line with room to breathe — a hairline separates each.
+const cardStyle = { backgroundColor: '#fff', borderRadius: R.lg, padding: S.md, margin: S.md };
+// Compact one-line-per-hazard row: [diagram] [question + example] [No/Yes]. A hairline separates each.
 const qRow = {
-  paddingVertical: S.lg,
-  borderTopWidth: 1,
-  borderTopColor: C.line,
+  flexDirection: 'row', alignItems: 'center', gap: 12,
+  paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.line,
 };
-const segBtn = {
-  flex: 1,
-  paddingVertical: 14,
-  borderRadius: R.md,
-  borderWidth: 1.5,
-  borderColor: C.line,
-  alignItems: 'center',
-  justifyContent: 'center',
-};
-const segYes = { backgroundColor: C.amber, borderColor: C.amber };   // Yes = a flagged hazard
-const segNo = { backgroundColor: C.ink, borderColor: C.ink };        // No = default / clear
-const segT = { color: C.ink, fontWeight: '700', fontSize: 15 };
-const segTOn = { color: '#fff' };
-const swmsBox = {
-  borderWidth: 1.5,
-  borderColor: C.red,
-  borderRadius: R.md,
-  padding: S.md,
-  marginTop: S.lg,
-};
-const checkbox = {
-  width: 28, height: 28, borderRadius: 7,
-  borderWidth: 2, borderColor: C.mute,
+const iconWrap = { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' };
+const qText = { fontSize: 14.5, fontWeight: '800', color: C.ink, letterSpacing: -0.2 };
+const egText = { fontSize: 11.5, color: C.mute, marginTop: 2, fontWeight: '600' };
+const ynWrap = { flexDirection: 'row', gap: 6 };
+const ynBtn = {
+  width: 46, paddingVertical: 10, borderRadius: 10, borderWidth: 1.5, borderColor: C.line,
   alignItems: 'center', justifyContent: 'center',
 };
+const ynYes = { backgroundColor: C.amber, borderColor: C.amber };   // Yes = a flagged hazard
+const ynNo = { backgroundColor: C.ink, borderColor: C.ink };        // No = default / clear
+const ynT = { color: C.ink, fontWeight: '800', fontSize: 14 };
+const ynTOn = { color: '#fff' };
+const swmsBox = { borderWidth: 1.5, borderColor: C.red, borderRadius: R.md, padding: S.md, marginTop: 14 };
+const checkbox = { width: 28, height: 28, borderRadius: 7, borderWidth: 2, borderColor: C.mute, alignItems: 'center', justifyContent: 'center' };
 const checkboxOn = { backgroundColor: C.green, borderColor: C.green };
-const infoCard = {
-  flexDirection: 'row', gap: 12, marginTop: 10,
-  backgroundColor: C.canvas, borderRadius: R.md, padding: S.md,
-  borderWidth: 1, borderColor: C.line,
-};
-const infoIconWrap = {
-  width: 48, height: 48, borderRadius: 12, backgroundColor: '#fff',
-  alignItems: 'center', justifyContent: 'center',
-  borderWidth: 1, borderColor: C.line,
-};
-const infoControls = {
-  marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.line,
-};

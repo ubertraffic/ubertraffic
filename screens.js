@@ -172,10 +172,11 @@ function usePrestartStatus(assigns) {
   }, []);
   // Optimistic: once a prestart is submitted we know it's no longer required.
   const markDone = useCallback((id) => setNeeds((p) => ({ ...p, [id]: false })), []);
-  // Keep the map fresh for whatever jobs are currently on-site (covers app restart
-  // mid-shift). Keyed on the on-site id set so it only re-runs when that changes.
-  const onSiteKey = (assigns || []).filter((a) => a.status === 'on_site').map((a) => a.id).join(',');
-  useEffect(() => { (onSiteKey ? onSiteKey.split(',') : []).forEach(check); }, [onSiteKey, check]);
+  // Pre-warm the prestart requirement for jobs that are on-site OR EN ROUTE — so the instant a worker
+  // taps "Arrived on site" we already know whether the SWMS is needed and can show it immediately,
+  // with no extra round-trip. Keyed on that id set so it only re-runs when it changes.
+  const activeKey = (assigns || []).filter((a) => a.status === 'on_site' || a.status === 'en_route').map((a) => a.id).join(',');
+  useEffect(() => { (activeKey ? activeKey.split(',') : []).forEach(check); }, [activeKey, check]);
   return { needs, check, markDone };
 }
 
@@ -784,10 +785,13 @@ export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, se
     try {
       const pos = await getPosition();
       await checkIn(id, pos.lat, pos.lng, override, override ? 'gps_override' : null);
-      await refresh();
-      // Arrival safety gate: if this trade requires a prestart, open it now — before
-      // the job is workable. Errand-tier trades return false and go straight through.
-      if (await checkPrestart(id)) setPrestart(id);
+      // Show the SWMS/prestart FIRST — the instant check-in succeeds, before the on-site UI transition.
+      // The requirement is pre-warmed while en route, so there's normally no extra round-trip; refresh
+      // runs in the background rather than making the safety step wait on it.
+      const known = prestartNeeds[id];
+      const needsPre = known === undefined ? await checkPrestart(id) : known;
+      if (needsPre === true) setPrestart(id);
+      refresh();
     } catch (e) {
       const m = (e && e.message) || '';
       // GPS says you're too far — offer to confirm you're actually on site
@@ -1433,10 +1437,13 @@ export function OperatorJobs({ session, onOpenProfile }) {
       const pos = await getPosition();
       await checkIn(id, pos.lat, pos.lng, override, override ? 'gps_override' : null);
       if (pos.source === 'fallback') setMsg('Checked in (using approximate location — enable GPS for precise proof).');
-      await refresh();
-      // Arrival safety gate: open the prestart now if this trade requires one.
-      // Errand-tier trades return false and go straight through.
-      if (await checkPrestart(id)) setPrestart(id);
+      // Show the SWMS/prestart FIRST — the instant check-in succeeds, before the on-site UI transition.
+      // The requirement is pre-warmed while en route, so there's normally no extra round-trip; refresh
+      // runs in the background rather than making the safety step wait on it.
+      const known = prestartNeeds[id];
+      const needsPre = known === undefined ? await checkPrestart(id) : known;
+      if (needsPre === true) setPrestart(id);
+      refresh();
     } catch (e) {
       const raw = e?.message || '';
       if (raw.startsWith('too_far_from_site')) {
