@@ -7,8 +7,9 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, ActivityIndicator, Image, TextInput } from 'react-native';
 import { C, R, shadowSm } from './theme';
 import Icon from './Icon';
-import { getPublicProfile, updateMyProfileBio, getReputationExtras } from './accountService';
+import { getPublicProfile, updateMyProfileBio, getReputationExtras, getClientReputation } from './accountService';
 import { workersWithSkill } from './communityService';
+import { tap } from './components2';
 
 const TRADE_CAP = 6;   // show a focused set; a legit tradie has a handful, not fifty
 
@@ -37,6 +38,7 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   const [disc, setDisc] = useState(null);          // { skill } while the sheet is open
   const [discList, setDiscList] = useState(null);  // null = loading, [] = none found
   const [rep, setRep] = useState(null);            // { rehire_count, tag_counts } reputation extras
+  const [clientRep, setClientRep] = useState(null); // { client_rating, client_rating_count } — how workers rated this client
 
   const isOwner = !!meId && meId === viewUserId;
 
@@ -69,12 +71,14 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   // profile and merged in. Best-effort: a miss just hides the block, never blocks the profile.
   useEffect(() => {
     if (!visible || !viewUserId) { setRep(null); return; }
-    let alive = true; setRep(null);
+    let alive = true; setRep(null); setClientRep(null);
     getReputationExtras(viewUserId).then((r) => { if (alive) setRep(r); }).catch(() => {});
+    getClientReputation(viewUserId).then((r) => { if (alive) setClientRep(r); }).catch(() => {});
     return () => { alive = false; };
   }, [visible, viewUserId]);
 
   function openSkill(skill) {
+    tap('light');
     setDisc({ skill }); setDiscList(null);
     workersWithSkill(skill, viewUserId).then((rows) => setDiscList(rows)).catch(() => setDiscList([]));
   }
@@ -124,7 +128,12 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
   // which faces to show — driven by REAL data, not a role flag (many users do both)
   const hasWorkerSide = (p?.jobs_done > 0) || (p?.trades?.length > 0) || (p?.verified_credentials?.length > 0) || hasRating;
   const hasClientSide = p?.jobs_posted > 0;
-  const clientHasRating = p?.client_rating != null && p?.client_rating_count > 0;
+  // Client rating: prefer the freshly-computed value (migration 0066) over whatever get_public_profile
+  // returned (null in practice), so a client's "from workers" score actually shows.
+  const clientRating = clientRep?.client_rating != null ? Number(clientRep.client_rating)
+    : (p?.client_rating != null ? Number(p.client_rating) : null);
+  const clientRatingCount = clientRep?.client_rating_count != null ? clientRep.client_rating_count : (p?.client_rating_count || 0);
+  const clientHasRating = clientRating != null && clientRatingCount > 0;
   const hasCompletion = p?.completion_rate != null;
   // jobs_done is a stored counter that isn't reliably maintained (it can read 0 while the worker
   // clearly has ratings + resolved jobs). Trust the real figure: the higher of the counter and the
@@ -154,7 +163,7 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
         ) : !p || !p.exists ? (
           <View style={styles.center}><Text style={styles.muted}>Profile unavailable.</Text></View>
         ) : (
-          <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+          <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
             {/* identity */}
             <View style={styles.top}>
               {p.avatar_url ? (
@@ -293,8 +302,8 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
                 <View style={styles.stat}>
                   {clientHasRating ? (
                     <>
-                      <View style={styles.statRow}><Icon name="star" size={16} color={C.amber} /><Text style={styles.statNum}>{Number(p.client_rating).toFixed(1)}</Text></View>
-                      <Text style={styles.statLabel}>{p.client_rating_count} from workers</Text>
+                      <View style={styles.statRow}><Icon name="star" size={16} color={C.amber} /><Text style={styles.statNum}>{clientRating.toFixed(1)}</Text></View>
+                      <Text style={styles.statLabel}>{clientRatingCount} from workers</Text>
                     </>
                   ) : (
                     <>
@@ -365,6 +374,9 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
                 </TouchableOpacity>
               </View>
               <Text style={styles.discSub}>Verified workers who do this</Text>
+              {/* Stable min-height so the sheet doesn't jump taller when the list loads in after the
+                  slide-up — that resize was the flimsy feel. Loading, empty and short lists open at one size. */}
+              <View style={{ minHeight: 200 }}>
               {discList == null ? (
                 <View style={{ paddingVertical: 30 }}><ActivityIndicator color={C.indigo} /></View>
               ) : discList.length === 0 ? (
@@ -387,6 +399,7 @@ export default function PublicProfile({ visible, userId, onClose, meId }) {
                   ))}
                 </ScrollView>
               )}
+              </View>
             </View>
           </View>
         </Modal>

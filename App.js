@@ -2,23 +2,24 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, PanResponder,
-  Animated, Dimensions, Pressable, Keyboard, Modal, Easing,
+  Animated, Dimensions, Pressable, Keyboard, Modal, Easing, Linking, RefreshControl,
 } from 'react-native';
 import { supabase } from './supabaseClient';
 import PayJobSheet from './PayJobSheet';
 import { createRequest, listMyRequests } from './requestsService';
 import { submitRating, myRatingForAssignment } from './ratingsService';
 import { searchAddress, reverseGeocode } from './geocodeService';
-import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor, clientPickerGroups, featuredTrades, pickerFolders, searchTrades } from './taxonomyService';
+import { loadTaxonomy, tradesInCategory, FRONT_DOORS, tradesForDoor, groupedTradesForDoor, clientPickerGroups, featuredTrades, pickerFolders, searchTrades, tradeTitle } from './taxonomyService';
 import {
   setRole, setOnline, setVehicle, getMyProfile, updateMyName,
   setMyOperatorLocation, getOperatorCoverage, getDemandHeat,
   addCapability, listMyCapabilities, removeCapability,
   listMyDispatches, acceptSpot, listMyAssignments,
 } from './operatorService';
-import { submitCredential, submitBusinessAbn } from './accountService';
+import { submitCredential, submitBusinessAbn, setMyIdentity } from './accountService';
+import { formatDMY, dmyToISO } from './dateFormat';
 import { getUnreadCounts } from './messagesService';
-import { cacheGet, cacheSet, cacheBindUser, cacheClearAll } from './screenCache';
+import { cacheGet, cacheSet, cacheBindUser, cacheClearAll, cacheHydrate } from './screenCache';
 import JobChat from './JobChat';
 import { Entrance, PressableScale, AnimatedBar, useCountUp, CrossFade, useAttentionBump } from './Motion';
 import { advanceAssignment, checkIn, checkOut, approveRequest, cancelRequest, cancelAssignment, repostRequest, startJourney, getMapJobs, getOperatorMapJobs, updateMyLocation, listMyRequestsFull, reportMissedCheckout, submitMaterialClaim, listMaterialClaims, resolveMaterialClaim, getTrackerState } from './completionService';
@@ -33,7 +34,7 @@ import SearchingScreen from './SearchingScreen';
 import ProofPhotoTest from './ProofPhotoTest';
 import TradePicker from './TradePicker';
 import CredentialsScreen from './CredentialsScreen';
-import { readinessForTrades, verifiedCredentialsFor } from './credentialsService';
+import { readinessForTrades, verifiedCredentialsFor, requiredTicketsForTrades } from './credentialsService';
 import Icon, { iconForType } from './Icon';
 import TabBar from './TabBar';
 import RoleToggle from './RoleToggle';
@@ -45,6 +46,8 @@ import { SH, S_ } from './styles';
 import { OperatorHome, OperatorJobs, OperatorEarnings, Account } from './screens';
 import { RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, tap, StepFade, PrimaryBtn, estTotal, jobCrewSize, jobTitle, jobSubtitle, Center } from './components2';
 import { logError } from './errorService';
+import { getPaymentForRequest, payoutStatus, startPayoutOnboarding } from './paymentsService';
+import Invoice, { INVOICE_ENABLED } from './Invoice';
 import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerLine, MatchCard, EmptyState, isStalledAssignment, requestHasStall, repLine, autoReleaseIn, friendly } from './components';
 
 /* ============================================================ ROOT */
@@ -53,7 +56,7 @@ import { ReviewApprove, ReviewRow, MaterialsClaim, RateJob, SlidingText, workerL
 // reload). Flip DEV_AUTOLOGIN to false — and it's a no-op — before any real
 // build. The password is NOT committed: paste your test password locally.
 // This is dev-only convenience; never ship it (CLAUDE.md §1).
-const DEV_AUTOLOGIN = true;
+const DEV_AUTOLOGIN = false;
 const DEV_EMAIL = 'oddsmate.au@gmail.com';
 const DEV_PASSWORD = '';   // ← paste your test password here locally; leave blank in the repo
 
@@ -61,6 +64,10 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [booting, setBooting] = useState(true);
   const [pushDeepLink, setPushDeepLink] = useState(null);   // { request_id } from a tapped push
+  // First-run routing: null → show the Welcome (choose-your-side) screen; once the user picks a
+  // side (or taps "sign in") we set { mode, side } and hand off to the auth form. Never touched
+  // once a session exists — returning users skip straight past it.
+  const [authIntent, setAuthIntent] = useState(null);   // null | { mode: 'signin'|'signup', side: 'hire'|'work'|null }
 
   // Register this device for push whenever we have a signed-in user. Safe no-op in Snack
   // (no native module) — activates automatically in an EAS build. Also wires tap→deep-link.
@@ -75,9 +82,16 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    // Warm the static trade taxonomy in parallel with the session check so the post-job picker and
+    // trade lists open instantly the first time (it's memoised in taxonomyService after this).
+    loadTaxonomy().catch(() => {});
     (async () => {
       const { data } = await supabase.auth.getSession();
-      if (!cancelled && data.session) { setSession(data.session); setBooting(false); return; }
+      if (!cancelled && data.session) {
+        // Hydrate last session's screen data BEFORE mounting the shell → cold start paints instantly.
+        await cacheHydrate(data.session.user.id);
+        setSession(data.session); setBooting(false); return;
+      }
       // no session — dev auto-login if enabled and a password is present
       if (DEV_AUTOLOGIN && DEV_PASSWORD) {
         try {
@@ -91,14 +105,106 @@ export default function App() {
     return () => { cancelled = true; sub.subscription.unsubscribe(); };
   }, []);
 
-  if (booting) return <Center><ActivityIndicator color={C.indigo} size="large" /></Center>;
-  return session ? <Shell session={session} pushDeepLink={pushDeepLink} /> : <Login />;
+  if (booting) return <View style={S_.authCanvas}><ActivityIndicator color={C.indigo} size="large" /></View>;
+  if (session) return <Shell session={session} pushDeepLink={pushDeepLink} firstRunSide={authIntent?.side || null} />;
+  // Signed out. Welcome and the auth form live on ONE shared canvas and CROSS-FADE between each other,
+  // so choosing a side / going back never hard-cuts — it feels like one continuous surface.
+  return (
+    <CrossFade keyId={authIntent ? 'auth' : 'welcome'} style={S_.authCanvas}>
+      {authIntent
+        ? <Login intent={authIntent} onBack={() => setAuthIntent(null)} />
+        : <Welcome onChoose={(side) => setAuthIntent({ mode: 'signup', side })}
+                   onSignIn={() => setAuthIntent({ mode: 'signin', side: null })} />}
+    </CrossFade>
+  );
 
 }
 
+/* ============================================================ WELCOME (choose your side) */
+// The first thing a new person sees. Deliberately ONE decision — which side are you here for —
+// framed by benefit, the way Uber/DoorDash/Airtasker open. No fields, no friction; the two cards
+// ARE the call to action. Whatever they pick seeds the signup so setup is tailored from step one.
+const WELCOME_SIDES = [
+  { side: 'hire', icon: 'users', accent: C.indigo,
+    title: 'I need workers on site',
+    blurb: 'Post a job and get skilled trades and labourers on site — often within the hour.' },
+  { side: 'work', icon: 'labourer', accent: C.green,
+    title: 'I want paid work',
+    blurb: 'Find nearby jobs, get paid fast, and work when it suits you.' },
+];
+function Welcome({ onChoose, onSignIn }) {
+  // Live proof — a real, quiet signal that this place is busy. Hidden entirely when there's nothing
+  // to show yet (e.g. a fresh install with the bots cleared), so it never reads as fake.
+  const [pulse, setPulse] = useState(null);
+  useEffect(() => { getPulseStats().then(setPulse).catch(() => {}); }, []);
+  const jobsToday = pulse?.jobs_completed_today || 0;
+  const activeNow = pulse?.active_now || 0;
+  const proof = jobsToday > 0
+    ? { n: jobsToday, tail: jobsToday === 1 ? 'job done today around Sydney' : 'jobs done today around Sydney' }
+    : activeNow > 0
+      ? { n: activeNow, tail: activeNow === 1 ? 'person active right now' : 'people active right now' }
+      : null;
+
+  return (
+    <View style={S_.wStage}>
+      <StatusBar barStyle="dark-content" />
+      <View style={S_.wTop}>
+        <Entrance delay={0}>
+          <View style={S_.wBrandRow}>
+            <View style={S_.wMark}><Icon name="pin" size={20} color="#fff" strokeWidth={2.4} /></View>
+            <Text style={S_.wBrandWord}>SiteCall</Text>
+          </View>
+        </Entrance>
+        <Entrance delay={70}><Text style={S_.wHero}>Work starts here.</Text></Entrance>
+        <Entrance delay={130}><Text style={S_.wSub}>Skilled trades and labour, on site fast — or paid work near you. Tell us what brings you in.</Text></Entrance>
+        {proof && (
+          <Entrance delay={190}>
+            <View style={S_.wProof}>
+              <View style={S_.wProofDot} />
+              <Text style={S_.wProofT}><Text style={S_.wProofNum}>{proof.n}</Text> {proof.tail}</Text>
+            </View>
+          </Entrance>
+        )}
+      </View>
+
+      <View style={S_.wCards}>
+        {WELCOME_SIDES.map((s, i) => (
+          <Entrance key={s.side} delay={250 + i * 90}>
+            <PressableScale onPress={() => { tap(); onChoose(s.side); }} style={S_.wCard}>
+              <View style={[S_.wIconChip, { backgroundColor: s.accent }]}>
+                <Icon name={s.icon} size={22} color="#fff" strokeWidth={2.2} />
+              </View>
+              <View style={S_.wCardBody}>
+                <Text style={S_.wCardTitle}>{s.title}</Text>
+                <Text style={S_.wCardBlurb}>{s.blurb}</Text>
+              </View>
+              <View style={[S_.wCardGo, { backgroundColor: s.accent }]}>
+                <Icon name="chevronRight" size={18} color="#fff" strokeWidth={2.6} />
+              </View>
+            </PressableScale>
+          </Entrance>
+        ))}
+      </View>
+
+      <Entrance delay={440}>
+        <View style={S_.wBottom}>
+          <TouchableOpacity onPress={onSignIn} style={S_.wSignIn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+            <Text style={S_.wSignInT}>Already have an account? <Text style={S_.wSignInLink}>Sign in</Text></Text>
+          </TouchableOpacity>
+          <Text style={S_.wTrust}>Free to join · Sydney &amp; NSW · Switch sides any time</Text>
+        </View>
+      </Entrance>
+    </View>
+  );
+}
+
 /* ============================================================ LOGIN */
-function Login() {
-  const [mode, setMode] = useState('signin');   // 'signin' | 'signup' — explicit, never guessed
+function Login({ intent, onBack }) {
+  // `intent` arrives from the Welcome screen: which mode to open in, and (for signup) the side the
+  // person chose. We stash that side so the first-run setup checklist can tailor itself immediately.
+  const [mode, setMode] = useState(intent?.mode || 'signin');   // 'signin' | 'signup' — explicit, never guessed
+  const chosenSide = intent?.side || null;
   const [step, setStep] = useState(1);           // signup PACING only (presentation): 1 = email, 2 = password
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -130,7 +236,7 @@ function Login() {
         const { error } = await supabase.auth.signInWithPassword({ email: e, password });
         if (error) {
           if (/invalid login credentials/i.test(error.message)) {
-            setMsg('Wrong email or password. New here? Tap "Create account".');
+            setMsg('Wrong email or password. Forgot it? Tap “Forgot password?” below.');
           } else if (/email not confirmed/i.test(error.message)) {
             setMsg('Check your email to confirm your account, then sign in.'); setMsgTone('info');
           } else {
@@ -151,6 +257,9 @@ function Login() {
           }
           setBusy(false); return;
         }
+        // Remember the side they chose on Welcome so the first-run checklist opens on the right foot
+        // (Shell reads this once on load). Survives the email-confirm round-trip via the local cache.
+        if (chosenSide) cacheSet('onboard-side', chosenSide);
         if (!data.session) {
           // Email confirmation is on — no session yet. Tell them honestly.
           setMsg('Account created. Check your email to confirm, then sign in.'); setMsgTone('info');
@@ -161,8 +270,23 @@ function Login() {
     } catch (err) { setMsg(friendly(err)); } finally { setBusy(false); }
   }
 
+  // Password recovery — sends a reset link to the entered email. Deliberately vague on whether the
+  // email exists (never reveals account existence), and needs a valid email in the field first.
+  async function resetPassword() {
+    const e = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(e)) { setMsg('Enter your email above first, then tap “Forgot password?”.'); setMsgTone('error'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(e);
+      if (error) { setMsg(friendly(error)); setMsgTone('error'); }
+      else { setMsg('If that email has an account, we’ve sent a link to reset your password. Check your inbox.'); setMsgTone('info'); }
+    } catch (err) { setMsg(friendly(err)); setMsgTone('error'); }
+    finally { setBusy(false); }
+  }
+
   const isSignup = mode === 'signup';
-  const heroTitle = !isSignup ? 'Welcome back' : step === 1 ? "Let's get you set up" : 'Create a password';
+  const sideVerb = chosenSide === 'hire' ? "Let's get you hiring" : chosenSide === 'work' ? "Let's get you earning" : "Let's get you set up";
+  const heroTitle = !isSignup ? 'Welcome back' : step === 1 ? sideVerb : 'Create a password';
   const heroHelp  = !isSignup ? 'Sign in to your account' : step === 1 ? 'Start with your email' : 'At least 6 characters';
   const showEmail = !isSignup || step === 1;
   const showPass  = !isSignup || step === 2;
@@ -178,12 +302,12 @@ function Login() {
         </View>
 
         <StepFade phase={`${mode}-${step}`}>
-          {isSignup && step === 2 && (
-            <TouchableOpacity onPress={() => { setStep(1); setMsg(''); }} style={S_.loginBack}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
-              <Text style={S_.loginBackT}>‹ Back</Text>
-            </TouchableOpacity>
-          )}
+          {/* Back always returns one step: signup step 2 → email; otherwise → the Welcome screen. */}
+          <TouchableOpacity
+            onPress={() => { if (isSignup && step === 2) { setStep(1); setMsg(''); } else { onBack && onBack(); } }}
+            style={S_.loginBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+            <Text style={S_.loginBackT}>‹ Back</Text>
+          </TouchableOpacity>
 
           {/* HERO — one dominant element per step */}
           <Text style={S_.loginHero}>{heroTitle}</Text>
@@ -223,6 +347,14 @@ function Login() {
               : <PrimaryBtn label={isSignup ? 'Create account' : 'Sign in'} onPress={submit} busy={busy} />}
           </View>
 
+          {/* Forgot password — sign-in only, so the person can recover instead of making a duplicate account */}
+          {!isSignup && (
+            <TouchableOpacity onPress={resetPassword} disabled={busy} style={S_.loginForgot}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+              <Text style={S_.loginForgotT}>Forgot password?</Text>
+            </TouchableOpacity>
+          )}
+
           {!!msg && <Text style={msgTone === 'error' ? S_.loginMsgErr : S_.loginMsgInfo}>{msg}</Text>}
         </StepFade>
 
@@ -253,11 +385,13 @@ const OP_TABS = [
   { key: 'account', icon: 'account', label: 'Account' },
 ];
 
-function Shell({ session, pushDeepLink }) {
+function Shell({ session, pushDeepLink, firstRunSide }) {
   // bind the screen cache to this user — if the account changes, the cache wipes itself so no
   // stale data from a previous session/account can ever paint. Safe by construction.
   cacheBindUser(session?.user?.id);
-  const [role, setRoleSide] = useState('client');  // client | operator — VIEW side only
+  // Default the VIEW to the side they signed up for (a fresh account has no capabilities yet, so
+  // loadName's capability check won't override this). Returning users get re-pointed by loadName.
+  const [role, setRoleSide] = useState(firstRunSide === 'work' ? 'operator' : 'client');  // client | operator — VIEW side only
   const [tab, setTab] = useState('home');
   // Floating island tab bar. Now that the home is a PINNED anchor (post bar + chips) with only a
   // short body to reveal, the hide-on-scroll behaviour felt twitchy and pointless — so the bar is
@@ -288,6 +422,26 @@ function Shell({ session, pushDeepLink }) {
   const [acct, setAcct] = useState(null);          // identity + capabilities (drives the gate)
   const [gate, setGate] = useState(null);          // { side } when user taps a locked side
   const [profileId, setProfileId] = useState(null);  // public profile being viewed
+  // First-run setup checklist. Only ever shown right after signup (firstRunSide is set by App from
+  // the side chosen on Welcome). `setupDone` = they tapped through the celebration; `exploring` =
+  // "I'll finish later". Either one retires the checklist for this session.
+  const [setupDone, setSetupDone] = useState(false);
+  const [exploring, setExploring] = useState(false);
+  const [setupManual, setSetupManual] = useState(null);   // a side to (re)open setup for, from a home prompt
+  const [setupVersion, setSetupVersion] = useState(0);    // bumped when setup finishes → homes refetch
+  // Steps the user has ACTED on this session, so the checklist reflects the action immediately even
+  // before the (admin-approved) profile fields catch up. e.g. { verify: true, name: true }.
+  const [setupSubmitted, setSetupSubmitted] = useState({});
+  const markSubmitted = (key) => setSetupSubmitted((s) => ({ ...s, [key]: true }));
+  // The ONE onboarding surface. Auto-opens right after signup (firstRunSide); can also be re-opened
+  // from a home's "finish setup" prompt (setupManual). This is what replaced the old, separate
+  // "Start working" form — there is now a single setup flow for each side.
+  const setupSide = firstRunSide || setupManual;
+  // Show the setup surface the instant we know we'll need it — even before the profile finishes
+  // loading — so entering the app after signup lands on a calm branded cover, never a flash of the map.
+  const showSetup = !!setupSide && !setupDone && !exploring;
+  const openSetup = (side) => { setSetupSubmitted({}); setSetupDone(false); setExploring(false); setSetupManual(side); };
+  const finishSetup = () => { setSetupDone(true); setSetupVersion((v) => v + 1); loadName(); };
 
   const loadName = useCallback(async () => {
     try {
@@ -346,7 +500,8 @@ function Shell({ session, pushDeepLink }) {
             <ClientHome session={session} onPost={goPost} onOpenReq={goOpen} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
           </View>
           <View style={[S_.homeLayer, role !== 'operator' && S_.homeHidden]} pointerEvents={role === 'operator' ? 'auto' : 'none'}>
-            <OperatorHome session={session} onOpenProfile={setProfileId} onScroll={onHomeScroll} />
+            <OperatorHome session={session} onOpenProfile={setProfileId} onScroll={onHomeScroll}
+              onOpenSetup={() => openSetup('work')} setupVersion={setupVersion} />
           </View>
         </View>
         {/* OVERLAY TABS — cross-fade + subtle slide over the map. Kept mounted through the fade-out. */}
@@ -373,10 +528,24 @@ function Shell({ session, pushDeepLink }) {
           persistently, so the popping toasts were redundant (competing peers). Kept the import
           so it's a one-line re-enable if we ever want it for events the tracker doesn't cover. */}
       {/* <MomentToasts /> */}
+      {showSetup && (
+        <View style={StyleSheet.absoluteFill}>
+          <SetupChecklist
+            side={setupSide}
+            acct={acct}
+            submitted={setupSubmitted}
+            onSubmitted={markSubmitted}
+            onOpenGate={(g) => setGate(typeof g === 'string' ? { side: g } : g)}
+            onRefresh={loadName}
+            onExplore={() => { setExploring(true); setSetupManual(null); }}
+            onComplete={() => { finishSetup(); setSetupManual(null); }}
+          />
+        </View>
+      )}
       <CapabilityGate
         gate={gate}
         onClose={() => setGate(null)}
-        onUnlocked={() => { setGate(null); loadName(); }}
+        onUnlocked={() => { markSubmitted('verify'); setGate(null); loadName(); }}
       />
       <PublicProfile visible={!!profileId} userId={profileId} meId={session.user.id} onClose={() => setProfileId(null)} />
     </View>
@@ -395,13 +564,18 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
   React.useEffect(() => { if (gate) { setDone(false); setErr(''); setNum(''); setBusy(false); } }, [gate]);
   if (!gate) return null;
   const isHire = gate.side === 'hire';
-  const title = isHire ? 'Get verified to hire' : 'Get verified to work';
+  const isTask = gate.side === 'task';
+  // Which credential this gate is for. The checklist can pass a specific one (credId/credName) so we
+  // ask for exactly the ticket the worker's trades need; otherwise fall back to the side's default.
+  const credId = gate.credId || (isTask ? 'drivers_licence' : 'white_card');
+  const credName = gate.credName || (isTask ? 'driver licence' : 'White Card');
+  const title = isHire ? 'Add your ABN' : `Add your ${credName}`;
   const need = isHire
-    ? 'To post paid jobs we verify your business against the Australian Business Register. Enter your ABN to submit for verification.'
-    : gate.side === 'task'
-      ? 'Driving tasks (Bunnings/parts runs) need a verified driver\'s licence. Enter your licence number to submit for verification.'
-      : 'Site work needs a verified White Card. Enter your White Card number to submit for verification.';
-  const inputLabel = isHire ? 'ABN (11 digits)' : gate.side === 'task' ? 'Driver licence number' : 'White Card number';
+    ? "Pop in your ABN and we'll confirm your business in the background. You can carry on while we check."
+    : `Pop in your ${credName} number and we'll check it in the background. You can carry on while we do.`;
+  const inputLabel = isHire ? 'ABN' : `${credName} number`;
+  const inputHint = isHire ? '11 digits' : 'the number on your card';
+  const submitLabel = isHire ? 'Add ABN' : 'Add ticket';
 
   async function submit() {
     setBusy(true); setErr('');
@@ -409,7 +583,6 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
       if (isHire) {
         await submitBusinessAbn(num);
       } else {
-        const credId = gate.side === 'task' ? 'drivers_licence' : 'white_card';
         await submitCredential(credId, num || null, null);
       }
       setDone(true);
@@ -420,19 +593,20 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={S_.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={S_.gateScrim}>
         <View style={S_.gateCard}>
           {done ? (
             <>
-              <View style={S_.gatePendingBadge}><Text style={S_.gatePendingBadgeT}>Under review</Text></View>
-              <Text style={S_.gateTitle}>Submitted for verification</Text>
+              <View style={S_.gatePendingBadge}><Text style={S_.gatePendingBadgeT}>Checking</Text></View>
+              <Text style={S_.gateTitle}>Nice — that’s in</Text>
               <Text style={S_.gateSub}>
                 {isHire
-                  ? 'We\'re checking your ABN against the business register. You\'ll be able to hire once it\'s approved.'
-                  : 'We\'re verifying your credential. You\'ll be able to accept jobs once it\'s approved — usually quickly.'}
+                  ? "We’re confirming your business now. You can start straight away — we’ll let you know the moment it’s done."
+                  : "We’re checking your ticket now. Have a look around in the meantime — we’ll let you know the moment it’s done."}
               </Text>
               <TouchableOpacity style={S_.gateBtn} onPress={() => { onUnlocked && onUnlocked(); }}>
-                <Text style={S_.gateBtnT}>Done</Text>
+                <Text style={S_.gateBtnT}>Great</Text>
               </TouchableOpacity>
             </>
           ) : (
@@ -442,22 +616,446 @@ function CapabilityGate({ gate, onClose, onUnlocked }) {
               <Text style={S_.gateInputLabel}>{inputLabel}</Text>
               <TextInput
                 style={S_.gateInput} value={num} onChangeText={setNum}
-                placeholder={inputLabel} placeholderTextColor={C.mute2}
+                placeholder={inputHint} placeholderTextColor={C.mute2}
                 keyboardType={isHire ? 'number-pad' : 'default'}
                 autoCapitalize="characters"
               />
               {!!err && <Text style={S_.gateErr}>{err}</Text>}
               <TouchableOpacity style={[S_.gateBtn, (busy || !num.trim()) && { opacity: 0.5 }]} onPress={submit} disabled={busy || !num.trim()}>
-                <Text style={S_.gateBtnT}>{busy ? 'Submitting…' : 'Submit for verification'}</Text>
+                <Text style={S_.gateBtnT}>{busy ? 'Saving…' : submitLabel}</Text>
               </TouchableOpacity>
+              {/* Resource: many workers don't have their White Card yet — turn a dead-end into a path. */}
+              {!isHire && credId === 'white_card' && (
+                <TouchableOpacity style={{ paddingVertical: 10 }} activeOpacity={0.8}
+                  onPress={() => Linking.openURL('https://www.safework.nsw.gov.au/licences-and-registrations/general-construction-induction-training-white-cards').catch(() => {})}>
+                  <Text style={S_.gateResource}>Don’t have one yet? How to get a White Card →</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10 }}>
-                <Text style={S_.gateCancel}>Not now</Text>
+                <Text style={S_.gateCancel}>Maybe later</Text>
               </TouchableOpacity>
             </>
           )}
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+/* ============================================================ SETUP CHECKLIST (first-run) */
+// The payoff after signup. Instead of dropping a new person into an empty app, we land them on a
+// short "get ready" checklist tailored to the side they chose on Welcome. Each step is either done
+// (green tick), actionable now (tap → real flow), or under review (background verification, e.g.
+// ABN/White Card). A live activity strip keeps it feeling alive. When every required step is done,
+// it turns into a celebration and hands them into the app. Verification reuses the CapabilityGate.
+function SetupChecklist({ side, acct, submitted, onSubmitted, onOpenGate, onRefresh, onExplore, onComplete }) {
+  const isHire = side === 'hire';
+  const sub = submitted || {};
+  const [payout, setPayout] = useState(null);       // work side only: connect-status result
+  const [payoutBusy, setPayoutBusy] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState(acct?.full_name || '');
+  const [dobVal, setDobVal] = useState('');       // work side only: DD/MM/YYYY (identity for register checks)
+  const [nameErr, setNameErr] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [pulse, setPulse] = useState(null);
+  // Trades (work side): the "what can you do" multi-select. Picking trades creates capabilities, which
+  // is what makes jobs show up in the feed — value-first, before any credential is asked for.
+  const [tradesOpen, setTradesOpen] = useState(false);
+  const [tax, setTax] = useState(null);
+  const [selTrades, setSelTrades] = useState({});   // trade_id -> trade object
+  const [tradeQ, setTradeQ] = useState('');
+  const [tradesBusy, setTradesBusy] = useState(false);
+  const [capsCount, setCapsCount] = useState(null); // how many capabilities are on file (drives 'done')
+  const [reqTix, setReqTix] = useState(null);       // tickets the chosen trades require (tailored verify)
+  const [payoutErr, setPayoutErr] = useState('');   // surfaced when opening Stripe fails (money — never silent)
+
+  useEffect(() => {
+    if (isHire) return;
+    loadTaxonomy().then(setTax).catch(() => setTax({ categories: [], trades: [] }));
+    listMyCapabilities().then((caps) => {
+      setCapsCount(caps.length);
+      const seed = {};
+      caps.forEach((c) => { if (c.trade_id) seed[c.trade_id] = { id: c.trade_id, name: c.type, kind: c.kind }; });
+      setSelTrades(seed);
+    }).catch(() => setCapsCount(0));
+  }, [isHire]);
+
+  // Whenever the picked trades change, recompute exactly which tickets those trades require. This is
+  // what makes the "verify" step feel custom-built — it names the worker's actual tickets.
+  const tradeKey = Object.keys(selTrades).sort().join(',');
+  useEffect(() => {
+    if (isHire) return;
+    const ids = Object.keys(selTrades);
+    if (!ids.length) { setReqTix([]); return; }
+    requiredTicketsForTrades(ids).then(setReqTix).catch(() => setReqTix([]));
+  }, [isHire, tradeKey, acct?.can_work]);
+
+  // Work "details" = name + DOB + becoming an operator (role flips to 'operator', which persists), so
+  // the app never asks for the name/DOB a second time. Hire "details" = just a display name.
+  const hasName = isHire
+    ? (!!(acct?.full_name && acct.full_name.trim()) || !!sub.name)
+    : (acct?.role === 'operator' || !!sub.name);
+  const verified = isHire ? !!acct?.can_hire : !!(acct?.can_work || acct?.can_task);
+  // "Under review" = the profile says pending OR they just submitted it this session (the profile
+  // field only flips once an admin/register approves, so we can't wait for it to show progress).
+  const verifyPending = !!sub.verify
+    || (isHire
+      ? (acct?.company_verify_status === 'pending' || acct?.abn_status === 'pending')
+      : (acct?.worker_verify_status === 'pending'));
+
+  // Work side needs a payout account before it's "ready". Re-check whenever verification changes
+  // (and after they return from Stripe and tap refresh).
+  const loadPayout = useCallback(() => {
+    if (isHire) return;
+    payoutStatus().then(setPayout).catch(() => setPayout({ payouts_enabled: false }));
+  }, [isHire]);
+  useEffect(() => { loadPayout(); }, [loadPayout, acct?.can_work, acct?.can_task]);
+  useEffect(() => { getPulseStats().then(setPulse).catch(() => {}); }, []);
+
+  const paidReady = isHire ? true : !!payout?.payouts_enabled;
+
+  async function saveName() {
+    const n = nameVal.trim();
+    setNameErr('');
+    if (n.length < 2) { setNameErr('Enter your full name.'); return; }
+    setSavingName(true);
+    try {
+      if (isHire) {
+        await updateMyName(n);
+      } else {
+        // Work side: this is the ONE identity step. Capture legal name + DOB (for register checks) and
+        // become an operator in a single save — replaces the old separate "Start working" form.
+        const iso = dmyToISO(dobVal);
+        if (!iso) { setNameErr('Enter your date of birth as DD/MM/YYYY.'); setSavingName(false); return; }
+        await setMyIdentity(n, iso);   // sets legal_name + DOB, seeds full_name if empty
+        await updateMyName(n);         // ensure the display name is set too
+        await setRole('operator');     // they are now a worker — this persists, so no re-ask later
+      }
+      onSubmitted && onSubmitted('name'); setEditingName(false); onRefresh && (await onRefresh());
+    } catch (e) { setNameErr(friendly ? friendly(e) : (e.message || 'Could not save.')); }
+    finally { setSavingName(false); }
+  }
+  async function startPayout() {
+    setPayoutBusy(true); setPayoutErr('');
+    try { await startPayoutOnboarding(); }
+    catch (e) { setPayoutErr(friendly ? friendly(e) : (e?.message || 'Couldn’t open payout setup — please try again.')); }
+    finally { setPayoutBusy(false); }
+  }
+  const toggleTrade = (t) => setSelTrades((prev) => {
+    const n = { ...prev }; if (n[t.id]) delete n[t.id]; else n[t.id] = { id: t.id, name: t.name, kind: t.kind }; return n;
+  });
+  async function saveTrades() {
+    setTradesBusy(true);
+    try {
+      const existing = await listMyCapabilities();
+      const existingByTrade = {}; existing.forEach((c) => { if (c.trade_id) existingByTrade[c.trade_id] = c; });
+      const selIds = Object.keys(selTrades);
+      for (const id of selIds) {
+        if (!existingByTrade[id]) {
+          const t = selTrades[id];
+          const legacyKind = t.kind === 'plant' ? 'gear' : t.kind;
+          await addCapability(legacyKind, t.name, t.id);
+        }
+      }
+      for (const c of existing) if (c.trade_id && !selTrades[c.trade_id]) await removeCapability(c.id);
+      const fresh = await listMyCapabilities();
+      setCapsCount(fresh.length);
+      onSubmitted && onSubmitted('trades');
+      setTradesOpen(false);
+      onRefresh && (await onRefresh());
+    } catch (_) {} finally { setTradesBusy(false); }
+  }
+
+  // Build the step list for this side. state ∈ 'done' | 'todo' | 'review' | 'loading'
+  const steps = [];
+  steps.push({
+    key: 'name',
+    title: isHire ? 'Your name or business' : 'Your details',
+    sub: isHire ? 'Shown to the workers you hire' : 'Name + date of birth — so we can check your tickets',
+    state: hasName ? 'done' : 'todo',
+  });
+  const tradeCount = Object.keys(selTrades).length;
+  if (!isHire) steps.push({
+    key: 'trades',
+    title: 'What work can you do?',
+    sub: tradeCount > 0 ? `${tradeCount} selected — tap to change` : 'Pick your trades so we can match you to jobs',
+    state: (capsCount == null) ? 'loading' : ((capsCount > 0 || !!sub.trades) ? 'done' : 'todo'),
+  });
+  // Tailored verify — name the exact tickets the worker's chosen trades need, not a generic "White Card".
+  const reqNames = (reqTix || []).map((t) => t.name);
+  const nextTicket = (reqTix || []).find((t) => !t.held) || (reqTix || []).find((t) => !t.verified) || null;
+  const verifyTitle = isHire ? 'Add your ABN'
+    : reqNames.length === 1 ? `Add your ${reqNames[0]}`
+    : reqNames.length > 1 ? 'Add your tickets'
+    : 'Add your White Card';
+  const verifySub = isHire ? 'Pop in your ABN — we confirm your business for you'
+    : reqNames.length ? `For your trades: ${reqNames.join(', ')}`
+    : 'Pop in your card number — we check it for you';
+  steps.push({
+    key: 'verify',
+    title: verifyTitle,
+    sub: verifySub,
+    state: verified ? 'done' : verifyPending ? 'review' : 'todo',
+  });
+  if (!isHire) steps.push({
+    key: 'payout',
+    optional: true,   // you can finish setup and reach the app without a bank — prompted later at go-online
+    title: 'Set up payouts',
+    sub: paidReady ? 'Linked — your pay lands fast' : 'Optional now — add your bank when you’re ready to get paid',
+    state: paidReady ? 'done' : payout == null ? 'loading' : 'todo',
+  });
+
+  // A step counts as "handled" once it's done OR submitted for review — the user has done their part,
+  // so onboarding can finish while a background check clears (verify-now, validate-later). Optional
+  // steps (payouts) never block completion — the worker can proceed to the app and set it up later.
+  const handled = (s) => s.state === 'done' || s.state === 'review';
+  const requiredSteps = steps.filter((s) => !s.optional);
+  const total = requiredSteps.length;
+  const doneCount = requiredSteps.filter(handled).length;
+  const allDone = requiredSteps.every(handled);
+  const stillReviewing = steps.some((s) => s.state === 'review');
+  const payoutTodo = !isHire && !paidReady;   // for the celebration's "set up payouts later" note
+  const pct = total ? doneCount / total : 0;
+
+  function handleStep(step) {
+    if (step.state === 'done' || step.state === 'review' || step.state === 'loading') return;
+    tap();
+    if (step.key === 'name') { setNameVal(acct?.full_name || ''); setEditingName(true); }
+    else if (step.key === 'trades') setTradesOpen(true);
+    else if (step.key === 'verify') {
+      // Open the gate for the exact ticket their trades need next; fall back to the side default.
+      if (!isHire && nextTicket) onOpenGate({ side: 'work', credId: nextTicket.credential_id, credName: nextTicket.name });
+      else onOpenGate({ side });
+    }
+    else if (step.key === 'payout') startPayout();
+  }
+
+  const activeNow = pulse?.active_now || 0;
+
+  // Branded cover while the profile loads — this is what masks the app-entry moment right after
+  // signup, so the transition into the checklist is flush instead of flashing the map behind it.
+  if (!acct) {
+    return (
+      <View style={[S_.setStage, { alignItems: 'center', justifyContent: 'center' }]}>
+        <StatusBar barStyle="dark-content" />
+        <View style={S_.setBrandMark}><Icon name="pin" size={24} color="#fff" strokeWidth={2.4} /></View>
+        <Text style={S_.setLoadingT}>Setting things up…</Text>
+      </View>
+    );
+  }
+
+  // Trades multi-select — pick the work you do. Selecting creates capabilities, which is what makes
+  // jobs appear in the feed. No credentials here; that's the separate (later) "verify to accept" gate.
+  if (tradesOpen) {
+    const featured = tax ? featuredTrades(tax, 14) : [];
+    const results = (tax && tradeQ.trim()) ? searchTrades(tax, tradeQ) : [];
+    const list = tradeQ.trim() ? results : featured;
+    return (
+      <View style={S_.setStage}>
+        <StatusBar barStyle="dark-content" />
+        <View style={S_.tradesTop}>
+          <TouchableOpacity onPress={() => setTradesOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }} activeOpacity={0.7}>
+            <Icon name="chevronLeft" size={22} color={C.ink} strokeWidth={2.4} />
+            <Text style={{ fontSize: 16, fontWeight: '700', color: C.ink }}>Back</Text>
+          </TouchableOpacity>
+          <Text style={S_.setHero}>What work can you do?</Text>
+          <Text style={S_.setSub}>Pick everything you can take on — it's how we match you to nearby jobs. You can always change this later.</Text>
+          <View style={S_.tradesSearch}>
+            <Icon name="search" size={16} color={C.mute} strokeWidth={2.2} />
+            <TextInput style={S_.tradesSearchInput} value={tradeQ} onChangeText={setTradeQ}
+              placeholder="Search — traffic, cleaner, excavator…" placeholderTextColor={C.mute2} autoCorrect={false} />
+            {!!tradeQ && <TouchableOpacity onPress={() => setTradeQ('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={{ color: C.mute2, fontWeight: '700', fontSize: 15 }}>✕</Text></TouchableOpacity>}
+          </View>
+        </View>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 20 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {!tax ? <ActivityIndicator color={C.green} style={{ marginTop: 20 }} />
+            : list.length === 0 ? <Text style={[S_.setSub, { marginTop: 16 }]}>No match — try another word.</Text>
+            : (
+              <View style={S_.tradesWrap}>
+                {list.map((t) => {
+                  const on = !!selTrades[t.id];
+                  return (
+                    <TouchableOpacity key={t.id} onPress={() => { tap(); toggleTrade(t); }} activeOpacity={0.85}
+                      style={[S_.tradeChip, on && S_.tradeChipOn]}>
+                      {on && <Icon name="check" size={15} color="#fff" strokeWidth={3} />}
+                      <Text style={[S_.tradeChipT, on && S_.tradeChipTOn]}>{tradeTitle(t.name)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+        </ScrollView>
+        <View style={S_.setFooter}>
+          {/* Live earnings preview — honest, award-guided rates for the trades they've picked. This is
+              the money moment that gets a worker to finish setup. */}
+          {(() => {
+            const picks = Object.values(selTrades);
+            if (!picks.length) return null;
+            const rateOf = (name) => RATES[name] || [30, 42, 58];
+            const mids = picks.map((p) => rateOf(p.name)[1]);
+            const typical = Math.round(mids.reduce((a, b) => a + b, 0) / mids.length);
+            const top = Math.max(...picks.map((p) => rateOf(p.name)[2]));
+            return (
+              <View style={S_.earnPrev}>
+                <View style={{ flex: 1 }}>
+                  <Text style={S_.earnLabel}>You could earn</Text>
+                  <Text style={S_.earnBig}>~${typical}<Text style={S_.earnUnit}>/hr</Text></Text>
+                </View>
+                <Text style={S_.earnTop}>up to ${top}/hr{'\n'}on the best jobs</Text>
+              </View>
+            );
+          })()}
+          <PrimaryBtn label={tradeCount > 0 ? `Save ${tradeCount} trade${tradeCount === 1 ? '' : 's'}` : 'Pick at least one'}
+            onPress={saveTrades} busy={tradesBusy} disabled={tradeCount === 0} />
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={S_.setStage}>
+      <StatusBar barStyle="dark-content" />
+      <Entrance from={12} style={S_.fill}>
+      <ScrollView contentContainerStyle={S_.setScroll} showsVerticalScrollIndicator={false}>
+        {/* header — celebration when finished, otherwise the progress hero */}
+        {allDone ? (
+          <View style={S_.setHeader}>
+            <View style={[S_.setBadge, { backgroundColor: isHire ? C.indigo : C.green }]}>
+              <Icon name="check" size={26} color="#fff" strokeWidth={3} />
+            </View>
+            <Text style={S_.setHero}>You're all set</Text>
+            <Text style={S_.setSub}>
+              {isHire
+                ? (stillReviewing ? "You can start posting jobs now — we're finishing your verification in the background." : "You're ready to post jobs and hire.")
+                : payoutTodo
+                  ? "You're in! Have a look around — link your bank from Earnings whenever you're ready to get paid."
+                  : (stillReviewing ? "You can look around now — we're finishing your verification in the background, then you can accept jobs." : "You're ready to find work and get paid.")}
+            </Text>
+          </View>
+        ) : (
+          <View style={S_.setHeader}>
+            <Text style={S_.setKicker}>{isHire ? 'GET READY TO HIRE' : 'GET READY TO WORK'}</Text>
+            <Text style={S_.setHero}>A couple of quick steps</Text>
+            <Text style={S_.setSub}>Finish these and you're ready to go. We'll verify the slow bits in the background.</Text>
+            <View style={S_.setProgWrap}>
+              <View style={S_.setProgTrack}>
+                <View style={[S_.setProgFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: isHire ? C.indigo : C.green }]} />
+              </View>
+              <Text style={S_.setProgT}>{doneCount} of {total} done</Text>
+            </View>
+          </View>
+        )}
+
+        {/* live strip — "this place is alive" */}
+        {activeNow > 0 && (
+          <View style={S_.setLive}>
+            <View style={S_.setLiveDot} />
+            <Text style={S_.setLiveT}><Text style={S_.setLiveNum}>{activeNow}</Text> {activeNow === 1 ? 'person' : 'people'} active on SiteCall right now</Text>
+          </View>
+        )}
+
+        {/* How it works — a calm 3-beat explainer so expectations are set before they even finish */}
+        {!allDone && (
+          <View style={S_.hiwRow}>
+            {(isHire
+              ? [{ icon: 'requests', t: 'Post a job' }, { icon: 'users', t: 'Get matched' }, { icon: 'check', t: 'Work gets done' }]
+              : [{ icon: 'search', t: 'Get matched' }, { icon: 'labourer', t: 'Do the job' }, { icon: 'payment', t: 'Paid fast' }]
+            ).map((h, idx) => (
+              <React.Fragment key={h.t}>
+                {idx > 0 && <Icon name="chevronRight" size={15} color={C.mute2} strokeWidth={2.4} />}
+                <View style={S_.hiwStep}>
+                  <View style={[S_.hiwIcon, { backgroundColor: (isHire ? C.indigo : C.green) + '14' }]}>
+                    <Icon name={h.icon} size={17} color={isHire ? C.indigo : C.green} strokeWidth={2.2} />
+                  </View>
+                  <Text style={S_.hiwT}>{h.t}</Text>
+                </View>
+              </React.Fragment>
+            ))}
+          </View>
+        )}
+
+        {/* steps */}
+        <View style={S_.setSteps}>
+          {steps.map((s, i) => {
+            const accent = isHire ? C.indigo : C.green;
+            const isName = s.key === 'name';
+            return (
+              <View key={s.key}>
+                <PressableScale onPress={() => handleStep(s)} disabled={s.state !== 'todo'} style={S_.setStep}>
+                  <View style={[
+                    S_.setStepIcon,
+                    s.state === 'done' && { backgroundColor: accent, borderColor: accent },
+                    s.state === 'review' && { backgroundColor: C.panel2, borderColor: C.amber },
+                    s.state === 'todo' && { borderColor: accent },
+                  ]}>
+                    {s.state === 'done' ? <Icon name="check" size={16} color="#fff" strokeWidth={3} />
+                      : s.state === 'loading' ? <ActivityIndicator size="small" color={C.mute2} />
+                      : <Text style={[S_.setStepNum, s.state === 'review' && { color: C.amber }, s.state === 'todo' && { color: accent }]}>{i + 1}</Text>}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[S_.setStepTitle, s.state === 'done' && { color: C.mute }]}>{s.title}</Text>
+                    <Text style={S_.setStepSub}>
+                      {s.state === 'review' ? 'We’re checking this for you — you can keep going' : s.sub}
+                    </Text>
+                  </View>
+                  {s.state === 'todo' && <Icon name="chevronRight" size={18} color={C.mute2} strokeWidth={2.4} />}
+                  {s.state === 'review' && <View style={S_.setPill}><Text style={S_.setPillT}>Checking</Text></View>}
+                </PressableScale>
+
+                {/* inline details editor — name (both sides) + DOB (work side, for register checks) */}
+                {isName && editingName && (
+                  <View style={S_.setInline}>
+                    <TextInput style={S_.setInput} value={nameVal} onChangeText={setNameVal}
+                      placeholder={isHire ? 'Your name or business' : 'Full name, as on your licence'} placeholderTextColor={C.mute2}
+                      autoFocus autoCapitalize="words" editable={!savingName} />
+                    {!isHire && (
+                      <TextInput style={[S_.setInput, { marginTop: 10 }]} value={dobVal}
+                        onChangeText={(t) => setDobVal(formatDMY(t))}
+                        placeholder="Date of birth — DD/MM/YYYY" placeholderTextColor={C.mute2}
+                        keyboardType="number-pad" editable={!savingName} />
+                    )}
+                    {!isHire && <Text style={S_.setInlineHint}>Used only to check your tickets against the registers — never shown publicly.</Text>}
+                    {!!nameErr && <Text style={S_.setInlineErr}>{nameErr}</Text>}
+                    <View style={S_.setInlineBtns}>
+                      <TouchableOpacity onPress={() => { setEditingName(false); setNameErr(''); }} style={S_.setInlineCancel}>
+                        <Text style={S_.setInlineCancelT}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={saveName} disabled={savingName}
+                        style={[S_.setInlineSave, savingName && { opacity: 0.5 }]}>
+                        <Text style={S_.setInlineSaveT}>{savingName ? 'Saving…' : 'Save'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                {/* payout: after launching Stripe, a gentle re-check + any error (money is never silent) */}
+                {s.key === 'payout' && s.state === 'todo' && payout != null && (
+                  <TouchableOpacity onPress={loadPayout} style={S_.setRecheck} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                    <Text style={S_.setRecheckT}>Finished in the browser? Tap to refresh</Text>
+                  </TouchableOpacity>
+                )}
+                {s.key === 'payout' && !!payoutErr && <Text style={S_.setInlineErr}>{payoutErr}</Text>}
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+
+      {/* footer action */}
+      <View style={S_.setFooter}>
+        {allDone
+          ? <PrimaryBtn label={isHire ? 'Start hiring' : 'Start working'} onPress={() => { tap(); onComplete && onComplete(); }} />
+          : (
+            <TouchableOpacity onPress={onExplore} style={S_.setExplore} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={S_.setExploreT}>I'll finish later — <Text style={S_.setExploreLink}>explore first</Text></Text>
+            </TouchableOpacity>
+          )}
+      </View>
+      </Entrance>
+    </View>
   );
 }
 
@@ -506,9 +1104,12 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
   const [items, setItems] = useState([]);
   const [loc, setLoc] = useState('');
   const [coords, setCoords] = useState(null);
+  const [resolving, setResolving] = useState(false);   // geocoding the typed address on "Next"
   const [when, setWhen] = useState('now');
   const [schedDay, setSchedDay] = useState(0);    // 0=today, 1=tomorrow, ... offset in days
   const [schedHour, setSchedHour] = useState(9);  // 24h local hour chosen for a booked job
+  const [duration, setDuration] = useState(4);    // expected job length (hrs) — drives every pay estimate
+  const [openAddons, setOpenAddons] = useState({});   // which optional extras are revealed (progressive, not a wall of boxes)
   const [contactName, setContactName] = useState('');   // optional site contact (who to ask for)
   const [contactPhone, setContactPhone] = useState(''); // optional site contact phone
   const [materialsCap, setMaterialsCap] = useState(''); // optional materials budget
@@ -541,7 +1142,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
       Animated.parallel([
         Animated.timing(y, { toValue: SHEET_SCREEN_H, duration: 240, useNativeDriver: true }),
         Animated.timing(dim, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]).start(() => { setShown(false); setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setPickQ(''); setOpenCats({}); });
+      ]).start(() => { setShown(false); setPhase('door'); setDoor(null); setCat(null); setItems([]); setLoc(''); setCoords(null); setWhen('now'); setErr(''); setContactName(''); setContactPhone(''); setMaterialsCap(''); setTravel(''); setJobDetails(''); setPickupText(''); setSchedDay(0); setSchedHour(9); setDuration(4); setOpenAddons({}); setPickQ(''); setOpenCats({}); });
     }
   }, [visible]);
 
@@ -563,6 +1164,26 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
     else setItems([...items, { trade_id: t.id, kind, type: t.name, qty: 1, rate: sheetRateFor(t.name, kind), priceMode: kind === 'task' ? 'job' : 'hour', tickets: kind === 'crew' ? ['White Card'] : [], run: t.run_style === 'open' }]);
     setPhase('rate');
   }
+  // Leaving the WHERE step. If they already picked a suggestion we have coords — go. Otherwise resolve
+  // the typed address ourselves so a working address is never a dead end:
+  //   • resolves          → pin it, continue
+  //   • no match          → keep them here with a fix-it hint (don't ship a bad/unlocatable address)
+  //   • geocoder is down  → continue anyway with the typed address (never trap the user behind our
+  //                         own infrastructure; the crew still gets the written address)
+  async function proceedWhere() {
+    setErr('');
+    if (coords) { setPhase('when'); return; }
+    const q = loc.trim();
+    if (q.length < 3) { setErr('Type the site address, or use your current location.'); return; }
+    setResolving(true);
+    try {
+      const rs = await searchAddress(q, 1);
+      if (rs && rs.length) { setLoc(rs[0].label); setCoords({ lat: rs[0].lat, lng: rs[0].lng }); setPhase('when'); }
+      else { setErr("We couldn't find that address. Check the spelling, or tap “Use my current location” if you're on site."); }
+    } catch (_) {
+      setPhase('when');   // geocoder unavailable — proceed with the typed address rather than blocking
+    } finally { setResolving(false); }
+  }
   const setRateS = (tid, v) => setItems(items.map((i) => i.trade_id === tid ? { ...i, rate: Math.max(5, v) } : i));
   const bumpS = (tid, d) => setItems(items.map((i) => i.trade_id === tid ? { ...i, qty: Math.max(1, i.qty + d) } : i));
   const removeItemS = (tid) => setItems(items.filter((i) => i.trade_id !== tid));
@@ -582,11 +1203,11 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
       const isBooked = when === 'scheduled';
       const sched = isBooked ? scheduledISO() : null;
       if (isBooked && new Date(sched) <= new Date()) { setErr('Pick a time in the future.'); setBusy(false); return; }
-      const newId = await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
+      const newId = await createRequest({ when_type: isBooked ? 'scheduled' : 'now', address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: duration, items, scheduled_for: sched, siteContact: { name: contactName, phone: contactPhone }, materialsCap: parseFloat(materialsCap) || 0, jobDetails, pickupText, travelCents: Math.round((parseFloat(travel) || 0) * 100) });
       // estimate for the pay sheet (server still computes the authoritative charge) — mirrors the
-      // fee math: hourly items × 4h, job-priced as-is, + travel. Passed through so the sheet never flashes $0.
-      const estCents = items.reduce((s, it) => s + Math.round((Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : 4) * 100), 0) + Math.round((parseFloat(travel) || 0) * 100);
-      const estLabel = items[0]?.type || 'Job';
+      // fee math: hourly items × the chosen hours, job-priced as-is, + travel. Passed through so the sheet never flashes $0.
+      const estCents = items.reduce((s, it) => s + Math.round((Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : duration) * 100), 0) + Math.round((parseFloat(travel) || 0) * 100);
+      const estLabel = tradeTitle(items[0]?.type) || 'Job';
       setPhase('sent');
       setTimeout(() => { onPosted && onPosted(newId, estCents, estLabel); }, 1100);   // let the "sent" beat land, then drop home
     } catch (e) { setErr(friendly ? friendly(e) : (e.message || 'Send failed')); setBusy(false); }
@@ -641,7 +1262,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
               <View style={{ marginBottom: 8 }}>
                 {items.map((it) => (
                   <View key={it.trade_id} style={SH.itemChip}>
-                    <Text style={SH.itemChipT}>{it.type}{it.qty > 1 ? ` ×${it.qty}` : ''} · ${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text>
+                    <Text style={SH.itemChipT}>{tradeTitle(it.type)}{it.qty > 1 ? ` ×${it.qty}` : ''} · ${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text>
                     <TouchableOpacity onPress={() => removeItemS(it.trade_id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Text style={SH.itemChipX}>✕</Text></TouchableOpacity>
                   </View>
                 ))}
@@ -689,7 +1310,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                   <>
                     {/* Search — the escape hatch: type and every matching job surfaces, no folder-hunting */}
                     <View style={pk.searchWrap}>
-                      <Text style={pk.searchIcon}>🔍</Text>
+                      <Icon name="search" size={16} color={C.mute} strokeWidth={2.2} />
                       <TextInput
                         style={pk.searchInput}
                         value={pickQ}
@@ -709,7 +1330,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                         : <View style={[SH.wrapChips, { marginTop: 14 }]}>
                             {pickHits.map((t) => (
                               <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: C.indigo }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
-                                <Text style={SH.pickT}>{t.name}</Text>
+                                <Text style={SH.pickT}>{tradeTitle(t.name)}</Text>
                               </TouchableOpacity>
                             ))}
                           </View>
@@ -722,7 +1343,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                             <View style={pk.featWrap}>
                               {featured.map((t) => (
                                 <TouchableOpacity key={t.id} style={pk.featChip} onPress={() => pickTrade(t)} activeOpacity={0.85}>
-                                  <Text style={pk.featChipT}>{t.name}</Text>
+                                  <Text style={pk.featChipT}>{tradeTitle(t.name)}</Text>
                                 </TouchableOpacity>
                               ))}
                             </View>
@@ -747,7 +1368,7 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                                 <View style={[SH.wrapChips, { marginTop: 4, marginBottom: 12 }]}>
                                   {f.trades.map((t) => (
                                     <TouchableOpacity key={t.id} style={[SH.pick, { borderColor: f.color }]} onPress={() => pickTrade(t)} activeOpacity={0.75}>
-                                      <Text style={SH.pickT}>{t.name}</Text>
+                                      <Text style={SH.pickT}>{tradeTitle(t.name)}</Text>
                                     </TouchableOpacity>
                                   ))}
                                 </View>
@@ -811,8 +1432,18 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                   </TouchableOpacity>
                 )}
                 {myLoc && <Text style={SH.orType}>or type an address</Text>}
-                <AddressField value={loc} onChangeText={(t) => { setLoc(t); setCoords(null); }} onPick={(r) => { setLoc(r.label); setCoords({ lat: r.lat, lng: r.lng }); }} picked={!!coords} disabled={busy} />
-                <TouchableOpacity style={[SH.next, { marginTop: 16, opacity: loc.trim() ? 1 : 0.4 }]} disabled={!loc.trim()} onPress={() => setPhase('when')}><Text style={SH.nextT}>Next ›</Text></TouchableOpacity>
+                <AddressField value={loc} onChangeText={(t) => { setLoc(t); setCoords(null); setErr(''); }} onPick={(r) => { setLoc(r.label); setCoords({ lat: r.lat, lng: r.lng }); setErr(''); }} picked={!!coords} disabled={busy} />
+                {!!err && phase === 'where' && (
+                  <Text style={{ fontSize: 12.5, color: C.amber, fontWeight: '700', marginTop: 8 }}>{err}</Text>
+                )}
+                {loc.trim().length > 0 && !coords && !err && (
+                  <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 8 }}>Pick a suggestion, or just tap Next — we'll locate it for you.</Text>
+                )}
+                {/* Enabled as soon as an address is typed. proceedWhere() resolves coordinates itself
+                    (picked → typed lookup → graceful continue) so a real address is never a dead end. */}
+                <TouchableOpacity style={[SH.next, { marginTop: 16, opacity: (coords || loc.trim().length >= 3) ? 1 : 0.4 }]} disabled={(!coords && loc.trim().length < 3) || resolving} onPress={proceedWhere}>
+                  {resolving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={SH.nextT}>Next ›</Text>}
+                </TouchableOpacity>
               </>
             )}
 
@@ -847,6 +1478,23 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
                     </ScrollView>
                   </View>
                 )}
+
+                {/* Expected hours — drives every pay estimate the worker sees. Only for hourly work
+                    (job-priced runs are per-job, so duration doesn't apply). */}
+                {items.some((it) => it.priceMode !== 'job') && (
+                  <View style={{ marginTop: 18 }}>
+                    <Text style={SH.optionalLabel}>How long, roughly?</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+                      {[2, 4, 6, 8, 10].map((h) => (
+                        <TouchableOpacity key={h} style={[SH.dayChip, duration === h && SH.dayChipOn]} onPress={() => { tap('light'); setDuration(h); }}>
+                          <Text style={[SH.dayChipT, duration === h && SH.dayChipTOn]}>{h === 10 ? 'Full day' : `${h} hrs`}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <Text style={[SH.optionalLabel, { marginTop: 8, fontWeight: '600', textTransform: 'none', letterSpacing: 0 }]}>Roughly — workers are paid for the hours actually worked.</Text>
+                  </View>
+                )}
+
                 <TouchableOpacity style={[SH.next, { marginTop: 16 }]} onPress={() => setPhase('review')}><Text style={SH.nextT}>Review ›</Text></TouchableOpacity>
               </>
             )}
@@ -855,40 +1503,96 @@ function RequestSheet({ visible, onClose, myLoc, onPosted, prefill }) {
               <>
                 <View style={SH.reviewCard}>
                   {items.map((it) => (
-                    <View key={it.trade_id} style={SH.reviewRow}><Text style={SH.reviewName}>{it.type}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text><Text style={SH.reviewRate}>${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text></View>
+                    <View key={it.trade_id} style={SH.reviewRow}><Text style={SH.reviewName}>{tradeTitle(it.type)}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text><Text style={SH.reviewRate}>${it.rate}{it.priceMode === 'job' ? '/job' : '/hr'}</Text></View>
                   ))}
                   <View style={SH.reviewDiv} />
                   <View style={SH.reviewRow}><Text style={SH.reviewMeta}>{loc || 'No location'}</Text></View>
                   <View style={SH.reviewRow}><Text style={SH.reviewMeta}>{when === 'now' ? 'Now — urgent' : (() => { const d = new Date(); d.setDate(d.getDate() + schedDay); d.setHours(schedHour, 0, 0, 0); return 'Booked · ' + d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }) + ' at ' + d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }); })()}</Text></View>
+                  {/* Estimated total for the chosen hours — the real number, not a fixed 4h */}
+                  {(() => {
+                    const hourly = items.some((i) => i.priceMode !== 'job');
+                    const est = items.reduce((s, it) => s + (Number(it.rate) || 0) * (Number(it.qty) || 1) * (it.priceMode === 'job' ? 1 : duration), 0) + (parseFloat(travel) || 0);
+                    return (
+                      <>
+                        <View style={SH.reviewDiv} />
+                        <View style={SH.reviewRow}>
+                          <Text style={SH.reviewName}>Estimated total{hourly ? ` · ${duration === 10 ? 'full day' : duration + 'h'}` : ''}</Text>
+                          <Text style={SH.reviewRate}>~${Math.round(est).toLocaleString()}</Text>
+                        </View>
+                      </>
+                    );
+                  })()}
                 </View>
                 {!!err && <Text style={SH.err}>{err}</Text>}
-                {/* Job details / duties — the "bio" workers read before accepting. Prominent (first,
-                    above the other optionals) and taught by the placeholder so clients write something useful. */}
-                <Text style={SH.optionalLabel}>What's the job? <Text style={SH.optionalHint}>(what they'll be doing — workers see this before accepting)</Text></Text>
+
+                {/* The ONE field that matters — what the worker will actually do (they read it before
+                    accepting). Everything else is opt-in below, so this isn't a wall of empty boxes. */}
+                <Text style={SH.optionalLabel}>What's the job? <Text style={SH.optionalHint}>(workers read this before accepting)</Text></Text>
                 <TextInput
                   style={[SH.optionalInput, { minHeight: 76, textAlignVertical: 'top', paddingTop: 10 }]}
                   value={jobDetails}
                   onChangeText={(t) => setJobDetails(t.slice(0, 300))}
-                  placeholder="e.g. Directing traffic at the north entrance from 6am. Hi-vis and own boots. About 6 hours."
+                  placeholder="e.g. Directing traffic at the north entrance from 6am. Hi-vis and own boots."
                   placeholderTextColor={C.mute2}
                   multiline
                   maxLength={300}
                 />
-                <Text style={SH.optionalLabel}>Site contact <Text style={SH.optionalHint}>(optional — who to ask for)</Text></Text>
-                <TextInput style={SH.optionalInput} value={contactName} onChangeText={setContactName} placeholder="Name on site" placeholderTextColor={C.mute2} />
-                <TextInput style={SH.optionalInput} value={contactPhone} onChangeText={setContactPhone} placeholder="Their phone" placeholderTextColor={C.mute2} keyboardType="phone-pad" />
-                {items.some((i) => i.run) && (
-                  <>
-                    <Text style={SH.optionalLabel}>Where to buy? <Text style={SH.optionalHint}>(which shop — so they know where to go)</Text></Text>
-                    <TextInput style={SH.optionalInput} value={pickupText} onChangeText={(t) => setPickupText(t.slice(0, 120))} placeholder="e.g. Bunnings Alexandria" placeholderTextColor={C.mute2} />
-                  </>
-                )}
-                <Text style={SH.optionalLabel}>Materials budget <Text style={SH.optionalHint}>(optional — if they'll buy parts)</Text></Text>
-                <TextInput style={SH.optionalInput} value={materialsCap} onChangeText={setMaterialsCap} placeholder="$0 cap you'll cover" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
-                <Text style={SH.optionalLabel}>Travel allowance <Text style={SH.optionalHint}>(optional — paid 100% to the worker)</Text></Text>
-                <TextInput style={SH.optionalInput} value={travel} onChangeText={setTravel} placeholder="$ toward their travel" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
-                <Text style={[SH.optionalHint, { marginTop: -4, marginBottom: 4 }]}>Guide: the ATO rate is 88c/km — e.g. a 20km round trip ≈ $18.</Text>
-                <TouchableOpacity style={[SH.send, !canSend && { opacity: 0.4 }]} disabled={!canSend || busy} onPress={send}><Text style={SH.sendT}>{busy ? 'Sending…' : 'Send request →'}</Text></TouchableOpacity>
+
+                {/* Optional extras — tap only what's relevant. Materials/pickup appear only for runs. */}
+                {(() => {
+                  const runJob = items.some((i) => i.run);
+                  const chips = [
+                    { key: 'contact', label: 'Site contact', has: !!(contactName || contactPhone) },
+                    { key: 'travel', label: 'Travel allowance', has: !!travel },
+                    runJob && { key: 'pickup', label: 'Where to buy', has: !!pickupText },
+                    runJob && { key: 'materials', label: 'Materials budget', has: !!materialsCap },
+                  ].filter(Boolean);
+                  const open = (k) => !!openAddons[k];
+                  return (
+                    <>
+                      <Text style={[SH.optionalLabel, { marginTop: 18 }]}>Add more <Text style={SH.optionalHint}>(optional)</Text></Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+                        {chips.map((c) => {
+                          const on = open(c.key) || c.has;
+                          return (
+                            <TouchableOpacity key={c.key} onPress={() => { tap('light'); setOpenAddons((p) => ({ ...p, [c.key]: !on })); }}
+                              style={[SH.addChip, on && SH.addChipOn]} activeOpacity={0.85}>
+                              <Text style={[SH.addChipT, on && SH.addChipTOn]}>{on ? '✓ ' : '＋ '}{c.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      {(open('contact') || !!(contactName || contactPhone)) && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={SH.optionalHint}>Who to ask for on site</Text>
+                          <TextInput style={SH.optionalInput} value={contactName} onChangeText={setContactName} placeholder="Name on site" placeholderTextColor={C.mute2} />
+                          <TextInput style={SH.optionalInput} value={contactPhone} onChangeText={setContactPhone} placeholder="Their phone" placeholderTextColor={C.mute2} keyboardType="phone-pad" />
+                        </View>
+                      )}
+                      {(open('travel') || !!travel) && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={SH.optionalHint}>Paid 100% to the worker · ATO guide 88c/km (a 20km round trip ≈ $18)</Text>
+                          <TextInput style={SH.optionalInput} value={travel} onChangeText={setTravel} placeholder="$ toward their travel" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
+                        </View>
+                      )}
+                      {runJob && (open('pickup') || !!pickupText) && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={SH.optionalHint}>Which shop — so they know where to go</Text>
+                          <TextInput style={SH.optionalInput} value={pickupText} onChangeText={(t) => setPickupText(t.slice(0, 120))} placeholder="e.g. Bunnings Alexandria" placeholderTextColor={C.mute2} />
+                        </View>
+                      )}
+                      {runJob && (open('materials') || !!materialsCap) && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={SH.optionalHint}>A cap you'll cover for parts they buy</Text>
+                          <TextInput style={SH.optionalInput} value={materialsCap} onChangeText={setMaterialsCap} placeholder="$0 cap" placeholderTextColor={C.mute2} keyboardType="decimal-pad" />
+                        </View>
+                      )}
+                    </>
+                  );
+                })()}
+
+                <TouchableOpacity style={[SH.send, !canSend && { opacity: 0.4 }]} disabled={!canSend || busy} onPress={send}><Text style={SH.sendT}>{busy ? 'Sending…' : 'Post job →'}</Text></TouchableOpacity>
                 <TouchableOpacity onPress={() => setPhase('when')} style={{ marginTop: 12, alignItems: 'center' }}><Text style={SH.back}>‹ back</Text></TouchableOpacity>
               </>
             )}
@@ -985,10 +1689,11 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
     if (!reqHasWorker(req, DONE_STATES)) { onError && onError(new Error('You can approve & pay once a worker has completed the job.'), reqId); return; }
     setPayReq({ id: reqId, label: req?.request_items?.[0]?.type || 'Job', estimateCents: estimateCentsFor(req), adj, approve: true });
   }
-  // Runs after the Stripe capture succeeds — mark the job approved + queue the rating.
+  // Runs AFTER the Stripe capture succeeds. Settlement already ran BEFORE capture (see beforeCapture
+  // on the PaySheet) so the worker is paid EXACTLY the DB-settled net_amount — here we only refresh
+  // and queue the rating.
   async function finalizePaidApproval(reqId, adj) {
     try {
-      await approveRequest(reqId, adj);
       const req = getReq(reqId);
       let assignmentId = null, rateeName = null;
       for (const it of (req?.request_items || [])) {
@@ -1009,6 +1714,7 @@ function useClientPayFlow({ getReq, reload, onRateReady, onError }) {
       label={payReq?.label}
       estimateCents={payReq?.estimateCents}
       autoCapture={!!payReq?.approve}
+      beforeCapture={payReq?.approve ? (() => approveRequest(payReq.id, payReq.adj)) : undefined}
       onPaid={() => { if (payReq?.approve) finalizePaidApproval(payReq.id, payReq.adj); else reload(); }}
       onClose={() => { setPayReq(null); if (pendingRate) { onRateReady && onRateReady(pendingRate); setPendingRate(null); } }}
     />
@@ -1114,7 +1820,6 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
         actions: [
           isReady ? { label: 'Review & pay', tone: 'green', fn: () => openReview(j.requestId) } : null,
           j.assignedName ? { label: j.crewSize > 1 ? 'Message crew' : `Message ${j.assignedName.split(' ')[0]}`, tone: 'ready', closesMap: true, fn: () => messageForRaw(j) } : null,
-          { label: 'Pay securely', tone: 'ready', fn: () => payJob(j.requestId) },
           j.status !== 'done' ? { label: 'Re-post to pool', tone: 'ghost', fn: () => repost(j.requestId) } : null,
           j.status !== 'done' ? { label: 'Cancel job', tone: 'danger', fn: () => cancel(j.requestId) } : null,
         ].filter(Boolean),
@@ -1148,7 +1853,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
   // Approval → Stripe capture runs through useClientPayFlow (beginApproval), same as the Requests tab.
   async function cancel(reqId) {
     setBusy(true); setMsg('');
-    try { await cancelRequest(reqId); await load(); } catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); }
+    try { await cancelRequest(reqId); await load(); setMsg('Job cancelled — you haven’t been charged, and any card hold has been released.'); } catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); }
   }
   async function repost(reqId) {
     setBusy(true); setMsg('');
@@ -1331,7 +2036,7 @@ function ClientHome({ session, onPost, onOpenReq, onOpenProfile, onScroll }) {
 function NeedsYouCard({ r, onOpen }) {
   const items = r.request_items || [];
   const suburb = (r.address_text || 'No location').split(',')[0];
-  const summary = items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ');
+  const summary = items.map((it) => it.qty > 1 ? `${tradeTitle(it.type)} ×${it.qty}` : tradeTitle(it.type)).join(' · ');
   return (
     <TouchableOpacity style={S_.needsCard} onPress={onOpen} activeOpacity={0.85}>
       <View style={{ flex: 1 }}>
@@ -1385,6 +2090,8 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
   }, []);
   useEffect(() => { load(); }, [load]);
   useRealtime(['assignments', 'requests'], load);
+  const [refreshing, setRefreshing] = useState(false);
+  const onPull = useCallback(async () => { setRefreshing(true); try { await load(); } finally { setRefreshing(false); } }, [load]);
 
   // Same Stripe flow as Home — posting authorises a hold, approving captures + pays the worker.
   const { payJob, beginApproval, PaySheet } = useClientPayFlow({
@@ -1442,7 +2149,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
     setBusy(true); setMsg('');
     try {
       const id = await createRequest({ when_type: when, address_text: loc, lat: coords?.lat, lng: coords?.lng, duration_hours: 4, items });
-      const summary = items.map((i) => i.qty > 1 ? `${i.type} ×${i.qty}` : i.type).join(' · ') + (loc ? `  ·  ${loc}` : '');
+      const summary = items.map((i) => i.qty > 1 ? `${tradeTitle(i.type)} ×${i.qty}` : tradeTitle(i.type)).join(' · ') + (loc ? `  ·  ${loc}` : '');
       setSearchReq({ id, summary });
       setItems([]); setLoc(''); setCoords(null); setStep(1);
       setMode('searching');
@@ -1456,7 +2163,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
   // Approval → Stripe capture now runs through useClientPayFlow (beginApproval), same as Home.
   async function cancel(reqId) {
     setBusy(true); setBusyId(reqId); setMsg('');
-    try { await cancelRequest(reqId); await load(); setMsg('Job cancelled.'); }
+    try { await cancelRequest(reqId); await load(); setMsg('Job cancelled — you haven’t been charged, and any card hold has been released.'); }
     catch (e) { setMsg('Cancel failed: ' + friendly(e)); logError('cancel', e, { correlationId: reqId, appContext: 'client' }); } finally { setBusy(false); setBusyId(null); }
   }
   async function repost(reqId) {
@@ -1504,7 +2211,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
                 <View style={S_.composeIcon}><Icon name={iconForType(it.type, it.kind)} size={20} color={C.indigo} /></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={T.bodyStrong}>{it.type}{it.qty > 1 ? `  ×${it.qty}` : ''}</Text>
+                  <Text style={T.bodyStrong}>{tradeTitle(it.type)}{it.qty > 1 ? `  ×${it.qty}` : ''}</Text>
                   <Text style={[T.label, { fontSize: 10, marginTop: 1, color: C.mute }]}>{it.kind === 'task' ? 'Community runner' : it.kind === 'crew' ? it.tickets.join(' · ') : 'Wet · with driver'}</Text>
                 </View>
                 {it.kind !== 'gear' && (
@@ -1576,7 +2283,8 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
 
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.indigo} colors={[C.indigo]} />}>
       <View style={S_.rowBetween}>
         <Text style={T.eyebrow}>My requests</Text>
         <LiveTag />
@@ -1585,8 +2293,10 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
         <Text style={S_.newBtnText}>＋ New request</Text>
       </TouchableOpacity>
 
-      {/* filter bar */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+      {/* filter bar — a plain row, NOT a horizontal ScrollView. A horizontal ScrollView nested in the
+          vertical page ScrollView has no intrinsic height and greedily expands to fill the screen,
+          which stretched these three chips to half the page. Three short chips never need to scroll. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, paddingVertical: 4 }}>
         {FILTERS.map(([key, label]) => {
           const n = counts[key] || 0;
           const on = filter === key;
@@ -1597,7 +2307,7 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+      </View>
 
       {!!msg && (
         <View style={msg.startsWith('✓') ? S_.successBanner : null}>
@@ -1605,7 +2315,15 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
         </View>
       )}
       {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : shown.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>{(mine || []).length === 0 ? 'No requests yet.' : filter === 'active' ? 'Nothing live right now.' : filter === 'ready' ? 'Nothing waiting on you.' : 'Nothing here yet.'}</Text>
+        : shown.length === 0 ? (
+          (mine || []).length === 0
+            ? <EmptyState icon="requests" title="Post your first job"
+                sub="Tell us what you need on site and skilled crews nearby get notified — often on site within the hour. You only pay once the work's done."
+                cta="＋ New request" onPress={() => setSheetOpen(true)} />
+            : <EmptyState icon="requests"
+                title={filter === 'active' ? 'Nothing live right now' : filter === 'ready' ? 'Nothing waiting on you' : 'Nothing here yet'}
+                sub={filter === 'active' ? 'Post a job and it’ll appear here while crews are matched.' : 'Jobs you’ve finished with will show under Past.'} />
+        )
         : shown.map((r) => <FullReqCard key={r.id} r={r} busy={busyId === r.id} defaultOpen={focusReq === r.id} onApprove={() => openReview(r.id)} onCancel={() => cancel(r.id)} onRepost={() => repost(r.id)} />)}
     </ScrollView>
     <RequestSheet
@@ -1632,21 +2350,53 @@ function ClientRequests({ session, openNew, onOpenedNew, focusReq, onFocused }) 
 }
 
 /* ============================================================ CLIENT · ACTIVITY */
+// Australian financial year (1 Jul – 30 Jun) for the spend summaries.
+function auFyStartC(d = new Date()) { const july1 = new Date(d.getFullYear(), 6, 1); return d >= july1 ? july1 : new Date(d.getFullYear() - 1, 6, 1); }
+function auFyLabelC(d = new Date()) { const s = auFyStartC(d); return `FY${String(s.getFullYear()).slice(2)}–${String(s.getFullYear() + 1).slice(2)}`; }
+// Monday-anchored start of the current week (local midnight), for the "This week" spend window.
+function weekStartC(d = new Date()) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); const dow = (x.getDay() + 6) % 7; x.setDate(x.getDate() - dow); return x; }
+
 function ClientActivity({ session }) {
   const [mine, setMine] = useState(() => cacheGet('client-requests'));   // shares Requests' cache → instant
   useEffect(() => { (async () => {
     try { const d = await listMyRequestsFull(); setMine(d); cacheSet('client-requests', d); }
     catch { setMine((p) => (p == null ? [] : p)); }
   })(); }, []);
+  const [period, setPeriod] = useState('month');   // week · month · year (plain English, no "FY" jargon)
   const done = (mine || []).filter((r) => r.status === 'complete');
   const spent = done.reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
+  const now = new Date();
+  const starts = { week: weekStartC(now).getTime(), month: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), year: auFyStartC(now).getTime() };
+  const spentWhen = (r) => new Date(r.approved_at || r.created_at || 0).getTime();
+  const inPeriod = done.filter((r) => spentWhen(r) >= starts[period]);
+  const periodSpent = inPeriod.reduce((n, r) => n + (Number(r.settle_total) || 0), 0);
+  const periodCaption = period === 'week' ? 'this week'
+    : period === 'month' ? now.toLocaleDateString('en-AU', { month: 'long' })
+    : 'financial year so far';
+  const PERIODS = [['week', 'This week'], ['month', 'This month'], ['year', 'This year']];
   return (
     <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
       <Text style={T.eyebrow}>Activity</Text>
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 24 }]}>
-        <Text style={T.label}>Total spent · completed jobs</Text>
+        <Text style={T.label}>Total spent · all time</Text>
         <Text style={[T.dataBig, { fontSize: 34, color: C.ink, marginTop: 6 }]}>${spent.toLocaleString()}</Text>
         <Text style={[T.small, { marginTop: 2 }]}>{done.length} job{done.length !== 1 ? 's' : ''} completed</Text>
+      </View>
+      {/* Period selector — pick a window, the figure below reacts. No accounting jargon on the face. */}
+      <View style={[S_.seg, { marginBottom: 12 }]}>
+        {PERIODS.map(([key, label]) => {
+          const on = period === key;
+          return (
+            <TouchableOpacity key={key} style={[S_.segBtn, on && S_.segBtnOn]} onPress={() => setPeriod(key)} activeOpacity={0.85}>
+              <Text style={[S_.segT, on && S_.segTOn]}>{label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View style={[S_.card, { marginTop: 0, alignItems: 'center', paddingVertical: 18 }]}>
+        <Text style={[T.heading, { fontSize: 30, color: C.ink }]}>${periodSpent.toLocaleString()}</Text>
+        <Text style={[T.small, { marginTop: 3 }]}>{inPeriod.length} job{inPeriod.length !== 1 ? 's' : ''} · {periodCaption}</Text>
+        {period === 'year' && <Text style={[T.tiny, { color: C.mute2, marginTop: 4 }]}>Australian financial year · 1 Jul – 30 Jun</Text>}
       </View>
       <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
       {mine === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
@@ -1656,25 +2406,45 @@ function ClientActivity({ session }) {
   );
 }
 
+// Tidy a raw geocoded address for a receipt line: abbreviate the state, drop the country and any
+// duplicate/empty segments. "Windsor, New South Wales, 2756, Australia" → "Windsor NSW 2756".
+const AU_STATES = { 'new south wales': 'NSW', 'victoria': 'VIC', 'queensland': 'QLD', 'south australia': 'SA', 'western australia': 'WA', 'tasmania': 'TAS', 'northern territory': 'NT', 'australian capital territory': 'ACT' };
+function tidyAddress(addr) {
+  if (!addr) return '';
+  const parts = String(addr).split(',').map((s) => s.trim()).filter(Boolean)
+    .filter((s) => s.toLowerCase() !== 'australia')
+    .map((s) => AU_STATES[s.toLowerCase()] || s);
+  return parts.join(', ').replace(/,\s*(\d{4})/, ' $1');   // "…, NSW, 2756" → "…, NSW 2756"
+}
+
 function ActivityCard({ r }) {
   const [open, setOpen] = useState(false);
+  const [showInvoice, setShowInvoice] = useState(false);
+  const [pay, setPay] = useState(null);   // the Stripe payment behind this job (fetched lazily on expand)
   const items = r.request_items || [];
   const total = Number(r.settle_total || 0);
   const fee = Number(r.settle_fee || 0);
   const net = Number(r.settle_net || 0);
   const d = new Date(r.created_at);
-  const summary = items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ');
+  const summary = items.map((it) => it.qty > 1 ? `${tradeTitle(it.type)} ×${it.qty}` : tradeTitle(it.type)).join(' · ');
+  // Pull the real payment record the first time the receipt is opened — the reference + paid date
+  // turn "Settled" into a receipt the client can trust and keep.
+  useEffect(() => { if (open && pay === null) getPaymentForRequest(r.id).then((p) => setPay(p || false)); }, [open]);
+  const paidWhen = pay && (pay.updated_at || pay.created_at) ? new Date(pay.updated_at || pay.created_at) : null;
+  const ref = pay?.stripe_payment_intent ? String(pay.stripe_payment_intent).slice(-8).toUpperCase() : null;
   return (
-    <TouchableOpacity style={S_.card} activeOpacity={0.75} onPress={() => setOpen((o) => !o)}>
-      <View style={S_.rowBetween}>
-        <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{suburbOf(r.address_text)}</Text>
-        <View style={[S_.pill, { backgroundColor: C.greenSoft }]}><Text style={[S_.pillT, { color: C.green }]}>Settled</Text></View>
-      </View>
-      <Text style={[T.small, { marginTop: 4, color: C.mute }]} numberOfLines={1}>{summary}</Text>
-      <View style={[S_.rowBetween, { marginTop: 10, alignItems: 'flex-end' }]}>
-        <Text style={T.money}>${net.toLocaleString()}</Text>
-        <Text style={[T.tiny, { color: C.mute2 }]}>{open ? 'Hide detail ▲' : 'View detail ▾'}</Text>
-      </View>
+    <View style={S_.card}>
+      <TouchableOpacity activeOpacity={0.75} onPress={() => setOpen((o) => !o)}>
+        <View style={S_.rowBetween}>
+          <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{suburbOf(r.address_text)}</Text>
+          <View style={[S_.pill, { backgroundColor: C.greenSoft }]}><Text style={[S_.pillT, { color: C.green }]}>Settled</Text></View>
+        </View>
+        <Text style={[T.small, { marginTop: 4, color: C.mute }]} numberOfLines={1}>{summary}</Text>
+        <View style={[S_.rowBetween, { marginTop: 10, alignItems: 'flex-end' }]}>
+          <Text style={T.money}>${net.toLocaleString()}</Text>
+          <Text style={[T.tiny, { color: C.mute2 }]}>{open ? 'Hide detail ▲' : 'View detail ▾'}</Text>
+        </View>
+      </TouchableOpacity>
 
       {open && (
         <View style={S_.actDetail}>
@@ -1682,10 +2452,19 @@ function ActivityCard({ r }) {
           <View style={S_.actRow}><Text style={S_.actLabel}>Platform fee</Text><Text style={[S_.actVal, { color: C.mute }]}>−${fee.toLocaleString()}</Text></View>
           <View style={[S_.actRow, S_.actTotal]}><Text style={[S_.actLabel, { color: C.ink, fontWeight: '700' }]}>Paid to worker</Text><Text style={[S_.actVal, { color: C.green, fontWeight: '800' }]}>${net.toLocaleString()}</Text></View>
           <View style={[S_.actRow, { marginTop: 8 }]}><Text style={S_.actLabel}>Completed</Text><Text style={S_.actVal}>{d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} · {d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}</Text></View>
-          {r.address_text ? <View style={S_.actRow}><Text style={S_.actLabel}>Site</Text><Text style={[S_.actVal, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>{r.address_text}</Text></View> : null}
+          {r.address_text ? <View style={S_.actRow}><Text style={S_.actLabel}>Site</Text><Text style={[S_.actVal, { flex: 1, textAlign: 'right' }]} numberOfLines={2}>{tidyAddress(r.address_text)}</Text></View> : null}
+          {paidWhen ? <View style={S_.actRow}><Text style={S_.actLabel}>Paid</Text><Text style={S_.actVal}>{paidWhen.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></View> : null}
+          {ref ? <View style={S_.actRow}><Text style={S_.actLabel}>Receipt no.</Text><Text style={[S_.actVal, { fontVariant: ['tabular-nums'] }]}>SC-{ref}</Text></View> : null}
+          {INVOICE_ENABLED && (
+            <TouchableOpacity onPress={() => setShowInvoice(true)} activeOpacity={0.85} style={{ marginTop: 14, backgroundColor: C.indigoSoft, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}>
+              <Text style={{ color: C.indigo, fontWeight: '800', fontSize: 14 }}>View / share invoice</Text>
+            </TouchableOpacity>
+          )}
+          <Text style={[T.tiny, { color: C.mute2, marginTop: 10 }]}>🔒 Paid securely via Stripe. SiteCall never stores your card.</Text>
         </View>
       )}
-    </TouchableOpacity>
+      {INVOICE_ENABLED && <Invoice visible={showInvoice} request={r} payment={pay || null} onClose={() => setShowInvoice(false)} />}
+    </View>
   );
 }
 
@@ -1699,7 +2478,7 @@ function buildJobInfo({ a, it, r, workerName }) {
   const rows = [];
   const who = workerName || a?.operator?.full_name;
   if (who) rows.push({ label: 'Worker', value: who.split(' ')[0] });
-  if (it?.type) rows.push({ label: 'Job', value: it.type });
+  if (it?.type) rows.push({ label: 'Job', value: tradeTitle(it.type) });
   if (r?.address_text) rows.push({ label: 'Site', value: r.address_text });
   // who to ask for on arrival (falls back to nothing if the client is the unnamed contact)
   if (r?.site_contact_name) {

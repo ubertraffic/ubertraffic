@@ -1,7 +1,7 @@
 // components.js — leaf components + helpers extracted from App.js so App.js fits under the
 // mobile paste limit. These are called from App.js, which imports them back.
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, StyleSheet, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
 import { C, R, S, E, T } from './theme';
 import { S_ } from './styles';
 import Icon from './Icon';
@@ -101,6 +101,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={S_.revScrim}>
         <TouchableOpacity style={S_.revBackdrop} activeOpacity={1} onPress={onClose} />
         <View style={S_.revSheet}>
@@ -196,6 +197,7 @@ export function ReviewApprove({ visible, request, onClose, onConfirm }) {
           </TouchableOpacity>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -231,6 +233,7 @@ export function MaterialsClaim({ visible, assignment, onClose, onDone }) {
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={S_.revScrim}>
         <TouchableOpacity style={S_.revBackdrop} activeOpacity={1} onPress={onClose} />
         <View style={S_.revSheet}>
@@ -254,6 +257,7 @@ export function MaterialsClaim({ visible, assignment, onClose, onDone }) {
           </TouchableOpacity>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -282,9 +286,12 @@ export function RateJob({ visible, assignmentId, rateeName, onClose, rateeIsWork
     }
     catch (e) { setErr(friendly(e)); } finally { setBusy(false); }
   }
-  const who = (rateeName || 'them').split(' ')[0];
+  // A real name → first name ("John Smith" → "John"). A generic phrase ("the client", "the operator")
+  // must stay whole — splitting on the space rendered "How was working with the?" (the phantom-name bug).
+  const who = !rateeName ? 'them' : /^the\b/i.test(rateeName.trim()) ? rateeName.trim() : rateeName.split(' ')[0];
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={() => onClose && onClose(false)}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={S_.rateScrim}>
         <View style={S_.rateCard}>
           {done ? (
@@ -342,6 +349,7 @@ export function RateJob({ visible, assignmentId, rateeName, onClose, rateeIsWork
           )}
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -357,6 +365,7 @@ export function VouchCrewCard({ requestId }) {
   const [tags, setTags] = useState([]);
   const [busy, setBusy] = useState(false);
   const [vouched, setVouched] = useState({});  // user_id -> true once sent
+  const [verr, setVerr] = useState('');        // surfaced if a vouch fails to send
   useEffect(() => {
     let alive = true;
     coworkersOnJob(requestId).then((r) => { if (alive) setMates(r); }).catch(() => { if (alive) setMates([]); });
@@ -367,9 +376,9 @@ export function VouchCrewCard({ requestId }) {
   function toggleTag(t) { setTags((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]); }
   async function send() {
     if (!sel) return;
-    setBusy(true);
+    setBusy(true); setVerr('');
     try { await vouchForPeer(requestId, sel.user_id, tags); setVouched((v) => ({ ...v, [sel.user_id]: true })); setSel(null); setTags([]); }
-    catch (_) {} finally { setBusy(false); }
+    catch (e) { setVerr('Couldn’t send that vouch — please try again.'); } finally { setBusy(false); }
   }
   return (
     <>
@@ -401,6 +410,7 @@ export function VouchCrewCard({ requestId }) {
                 <TouchableOpacity style={[S_.rateSubmit, busy && { opacity: 0.6 }]} onPress={send} disabled={busy} activeOpacity={0.9}>
                   <Text style={S_.rateSubmitT}>{busy ? 'Sending…' : 'Send vouch'}</Text>
                 </TouchableOpacity>
+                {!!verr && <Text style={{ color: C.red, fontSize: 13, fontWeight: '600', textAlign: 'center', marginTop: 8 }}>{verr}</Text>}
                 <TouchableOpacity onPress={() => setSel(null)} style={{ paddingVertical: 10 }} activeOpacity={0.7}>
                   <Text style={S_.rateSkip}>Back</Text>
                 </TouchableOpacity>
@@ -434,11 +444,12 @@ export function VouchCrewCard({ requestId }) {
 
 // SlidingText — a restrained marquee. If the text overflows its container, it
 // gently slides to reveal the rest, pauses, and eases back. Static if it fits.
-export function SlidingText({ text, style }) {
+export function SlidingText({ text, children, style }) {
   const [boxW, setBoxW] = useState(0);
   const [textW, setTextW] = useState(0);
   const x = useRef(new Animated.Value(0)).current;
   const overflow = textW > boxW && boxW > 0;
+  const content = children != null ? children : text;   // supports plain text OR rich nested <Text> spans
 
   useEffect(() => {
     x.stopAnimation();
@@ -457,14 +468,22 @@ export function SlidingText({ text, style }) {
 
   return (
     <View style={{ overflow: 'hidden', alignSelf: 'stretch' }} onLayout={(e) => setBoxW(e.nativeEvent.layout.width)}>
-      {/* hidden measurer: renders at natural width so we learn the true text width */}
-      <Text
-        style={[style, { position: 'absolute', opacity: 0 }]}
-        onLayout={(e) => setTextW(e.nativeEvent.layout.width)}
-      >{text}</Text>
+      {/* hidden measurer — MUST live in its own unconstrained wrapper. If the measurer <Text> is a
+          direct child of the stretched box, it inherits the box's width and gets truncated to it, so
+          its measured width == boxW and overflow is NEVER detected (the marquee never runs). An
+          absolutely-positioned View with no width shrinks to its content, letting the text lay out at
+          its true single-line width. */}
+      <View style={{ position: 'absolute', opacity: 0 }} pointerEvents="none">
+        <Text
+          style={style}
+          onLayout={(e) => setTextW(e.nativeEvent.layout.width)}
+          numberOfLines={1}
+        >{content}</Text>
+      </View>
       <Animated.Text
         style={[style, { transform: [{ translateX: x }] }]}
-      >{text}</Animated.Text>
+        numberOfLines={1}
+      >{content}</Animated.Text>
     </View>
   );
 }

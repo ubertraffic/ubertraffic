@@ -1,6 +1,13 @@
-// connect-onboard — sets a worker up to receive payouts. Creates (or reuses) their Stripe Express
+// connect-onboard — sets a worker up to receive payouts. Finds-or-creates their ONE Stripe Express
 // connected account, stores its id on their profile (profiles.stripe_account_id), and returns a
 // Stripe-hosted onboarding link. Card/bank details are entered on Stripe, never in the app.
+//
+// DEDUP (important): a previous version created a NEW account on every call whenever the stored id was
+// missing, which spawned many duplicate accounts. Now, before creating, we (1) reuse the stored id,
+// (2) failing that, search Stripe for an account already tagged with this user_id (preferring an
+// enabled one), and (3) only create as a last resort — with an Idempotency-Key so rapid double-taps
+// can't create two. The profile store is also error-checked so a silent write failure is visible.
+//
 // Deploy as 'connect-onboard'. Secret: STRIPE_SECRET_KEY. Optional: CONNECT_RETURN_URL, CONNECT_REFRESH_URL.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -12,13 +19,21 @@ const CORS = {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...CORS } });
 }
-async function stripe(path: string, secret: string, params?: Record<string, string>) {
-  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/x-www-form-urlencoded" },
-    body: params ? new URLSearchParams(params).toString() : "",
-  });
+async function stripe(path: string, secret: string, params?: Record<string, string>, idempotencyKey?: string) {
+  const headers: Record<string, string> = { Authorization: `Bearer ${secret}`, "Content-Type": "application/x-www-form-urlencoded" };
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, { method: "POST", headers, body: params ? new URLSearchParams(params).toString() : "" });
   return { ok: res.ok, body: await res.json() };
+}
+
+// Find THIS user's existing connected account (tagged metadata.user_id), preferring an enabled one.
+async function findUserAccount(secret: string, userId: string): Promise<string | null> {
+  const res = await fetch("https://api.stripe.com/v1/accounts?limit=100", { headers: { Authorization: `Bearer ${secret}` } });
+  if (!res.ok) return null;
+  const body = await res.json();
+  const mine = ((body.data as any[]) || []).filter((a) => a?.metadata?.user_id === userId);
+  if (!mine.length) return null;
+  return (mine.find((a) => a.payouts_enabled) || mine[0]).id;
 }
 
 Deno.serve(async (req) => {
@@ -39,7 +54,10 @@ Deno.serve(async (req) => {
     const { data: prof } = await admin.from("profiles").select("stripe_account_id").eq("id", user.id).maybeSingle();
     let acct = (prof as any)?.stripe_account_id as string | null;
 
-    // Create the Express account once, then reuse it.
+    // 1) reuse the remembered account; 2) else adopt an existing Stripe account for this user (dedup).
+    if (!acct) acct = await findUserAccount(secret, user.id);
+
+    // 3) last resort: create ONE (idempotency-keyed on the user so a double-tap can't make two).
     if (!acct) {
       const created = await stripe("accounts", secret, {
         type: "express",
@@ -48,11 +66,15 @@ Deno.serve(async (req) => {
         "capabilities[transfers][requested]": "true",
         "business_type": "individual",
         "metadata[user_id]": user.id,
-      });
+      }, `connect:${user.id}`);
       if (!created.ok) return json({ error: "account_create_failed", detail: created.body?.error?.message }, 502);
       acct = created.body.id;
-      await admin.from("profiles").update({ stripe_account_id: acct }).eq("id", user.id);
     }
+
+    // Remember it — and surface a write failure instead of silently swallowing it (a swallowed failure
+    // here is exactly what let duplicates accumulate).
+    const { error: upErr } = await admin.from("profiles").update({ stripe_account_id: acct }).eq("id", user.id);
+    if (upErr) return json({ error: "store_failed", detail: upErr.message, account_id: acct }, 500);
 
     const returnUrl = Deno.env.get("CONNECT_RETURN_URL") || "https://example.com/payouts-ready";
     const refreshUrl = Deno.env.get("CONNECT_REFRESH_URL") || "https://example.com/payouts-refresh";

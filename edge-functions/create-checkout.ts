@@ -55,6 +55,13 @@ Deno.serve(async (req) => {
     if (!request) return json({ error: "request_not_found", detail: `No job row matches id ${requestId}. If this job clearly exists, the function is likely reading a different project or its SUPABASE_SERVICE_ROLE_KEY isn't a true service-role key (so RLS hides the row).`, request_id: requestId }, 404);
     if ((request as any).client_id !== user.id) return json({ error: "not_your_request", detail: "This job belongs to a different account." }, 403);
 
+    // DEDUP — never create a second live hold/charge for a job that already has one. A double-tap or
+    // a re-open of the pay sheet must not put two authorizations on the client's card.
+    const { data: existing } = await admin
+      .from("payments").select("id, status").eq("request_id", requestId).in("status", ["authorized", "captured"])
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (existing) return json({ error: "already_paid", detail: (existing as any).status === "captured" ? "This job is already paid." : "This job already has a payment hold — no new charge was created.", status: (existing as any).status }, 409);
+
     const { data: items, error: itemsErr } = await admin
       .from("request_items").select("type, rate, qty, price_mode").eq("request_id", requestId);
     if (itemsErr) return json({ error: "items_lookup_failed", detail: itemsErr.message, request_id: requestId }, 500);

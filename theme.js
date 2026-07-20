@@ -31,8 +31,10 @@ export const C = {
   scrim:    'rgba(10,10,14,0.45)',
 };
 
-// mono ONLY for data. Everything else uses the system UI font (SF on iOS = premium).
-export const MONO = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
+// Monospace retired app-wide — it read as dated on buttons/titles. MONO now resolves to the system
+// UI font (SF on iOS = premium), so every `fontFamily: MONO` cleanly falls back to it. Kept as an
+// export (not deleted) so the many references don't break; flip back to a mono value to restore.
+export const MONO = undefined;
 
 // spacing scale — consistent rhythm
 export const S = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 28, xxxl: 40 };

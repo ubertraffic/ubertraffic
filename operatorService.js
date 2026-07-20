@@ -1,24 +1,24 @@
 // operatorService.js
 // Data layer for the operator side. Screens call these; no direct supabase in UI.
 
-import { supabase } from './supabaseClient';
+import { supabase, currentUserId } from './supabaseClient';
 
 /** Flip the current user's role and online state, optionally set a vehicle. */
 export async function setRole(role) {
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
   const { error } = await supabase
     .from('profiles')
     .update({ role })
-    .eq('id', u.user.id);
+    .eq('id', uid);
   if (error) throw error;
 }
 
 export async function setOnline(isOnline) {
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
   const { error } = await supabase
     .from('profiles')
     .update({ is_online: isOnline })
-    .eq('id', u.user.id);
+    .eq('id', uid);
   if (error) throw error;
 }
 
@@ -47,21 +47,21 @@ export async function getOperatorCoverage(lat, lng, radiusKm = 25) {
 }
 
 export async function setVehicle(vehicleType) {
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
   const { error } = await supabase
     .from('profiles')
     .update({ vehicle_type: vehicleType })
-    .eq('id', u.user.id);
+    .eq('id', uid);
   if (error) throw error;
 }
 
 /** Read my own profile (role, online, vehicle, name) so the UI reflects real state. */
 export async function getMyProfile() {
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, role, is_online, vehicle_type, rating, rating_count, full_name, account_type, can_work, can_task, can_hire, worker_verify_status, company_verify_status, abn, abn_status, legal_name, date_of_birth')
-    .eq('id', u.user.id)
+    .select('id, role, is_online, vehicle_type, rating, rating_count, full_name, account_type, can_work, can_task, can_hire, worker_verify_status, company_verify_status, abn_status')
+    .eq('id', uid)
     .single();
   if (error) throw error;
   return data;
@@ -69,20 +69,20 @@ export async function getMyProfile() {
 
 /** Set my display name — used across the app for personalisation + the job room. */
 export async function updateMyName(fullName) {
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
   const name = (fullName || '').trim().slice(0, 80);
   if (!name) throw new Error('Name cannot be empty');
   const { error } = await supabase
     .from('profiles')
     .update({ full_name: name })
-    .eq('id', u.user.id);
+    .eq('id', uid);
   if (error) throw error;
   return name;
 }
 
 /** Declare a capability (what this operator can supply), e.g. crew/Traffic controller. */
 export async function addCapability(kind, type, trade_id = null) {
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
   // Never store a capability without a trade_id — orphaned rows silently stop matching under
   // group-aware dispatch. If the caller didn't supply one, resolve it from the trade name.
   let resolvedTradeId = trade_id;
@@ -93,32 +93,32 @@ export async function addCapability(kind, type, trade_id = null) {
   const { error } = await supabase
     .from('operator_capabilities')
     .upsert(
-      { operator_id: u.user.id, kind, type, trade_id: resolvedTradeId, wet: true, dry: false, crew_size: 1 },
+      { operator_id: uid, kind, type, trade_id: resolvedTradeId, wet: true, dry: false, crew_size: 1 },
       { onConflict: 'operator_id,kind,type' }
     );
   if (error) throw error;
 }
 
 export async function listMyCapabilities() {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in — please log in again.');
   const { data, error } = await supabase
     .from('operator_capabilities')
     .select('id, kind, type, trade_id')
-    .eq('operator_id', u.user.id);
+    .eq('operator_id', uid);
   if (error) throw error;
   return data || [];
 }
 
 /** Remove one of my capabilities. */
 export async function removeCapability(id) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u || !u.user) throw new Error('Not signed in — please log in again.');
+  const uid = await currentUserId();
+  if (!uid) throw new Error('Not signed in — please log in again.');
   const { error } = await supabase
     .from('operator_capabilities')
     .delete()
     .eq('id', id)
-    .eq('operator_id', u.user.id); // belt and braces: only ever my own
+    .eq('operator_id', uid); // belt and braces: only ever my own
   if (error) throw error;
 }
 
@@ -128,7 +128,16 @@ export async function removeCapability(id) {
  * plus how many spots are left on each item.
  */
 export async function listMyDispatches() {
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
+  if (!uid) return [];   // signed out / auth blip — empty feed, never a crash
+
+  // Self-heal FIRST: jobs are dispatched once, at post time, only to whoever was online then. A worker
+  // who came online later was never handed a dispatch row, so the job is invisible to them and stays
+  // that way through every pull-to-refresh. refresh_my_dispatches() re-runs the exact server-side
+  // eligibility for THIS operator against every open job and creates any missing dispatch — so opening
+  // or refreshing the feed guarantees every eligible job shows up (and is acceptable). Best-effort:
+  // never let a hiccup here blank the feed.
+  try { await supabase.rpc('refresh_my_dispatches'); } catch (_) { /* feed still renders below */ }
 
   const { data, error } = await supabase
     .from('dispatches')
@@ -136,10 +145,10 @@ export async function listMyDispatches() {
       id, status,
       request_item:request_items (
         id, kind, type, qty, hire, rate, rate_offered, price_mode,
-        request:requests ( id, address_text, when_type, duration_hours, scheduled_at, job_details )
+        request:requests ( id, address_text, when_type, duration_hours, scheduled_at, job_details, client_id, travel_cents, materials_cap, created_at, lat, lng )
       )
     `)
-    .eq('operator_id', u.user.id)
+    .eq('operator_id', uid)
     .in('status', ['sent', 'seen'])
     .order('sent_at', { ascending: false });
   if (error) throw error;
@@ -161,13 +170,26 @@ export async function listMyDispatches() {
         .from('assignments')
         .select('id', { count: 'exact', head: true })
         .eq('request_item_id', itemId)
-        .eq('operator_id', u.user.id)
+        .eq('operator_id', uid)
         .neq('status', 'cancelled');
       mine_accepted = mineCount || 0;
     }
     return { ...d, taken, mine_accepted };
   }));
-  return withCounts;
+
+  // Attach the client "card" (deduped, one RPC per unique client): who they are, whether they're a
+  // verified business, and their rating from workers — so the worker sees who they'd work for BEFORE
+  // accepting. Trust matters most in an accept-first model.
+  const clientIds = [...new Set(withCounts.map((d) => d.request_item?.request?.client_id).filter(Boolean))];
+  const cardByClient = {};
+  await Promise.all(clientIds.map(async (cid) => {
+    try {
+      const { data: card } = await supabase.rpc('get_client_card', { p_user_id: cid });
+      const row = Array.isArray(card) ? card[0] : card;
+      if (row) cardByClient[cid] = row;
+    } catch (_) { /* best-effort — never block the feed */ }
+  }));
+  return withCounts.map((d) => ({ ...d, client_card: cardByClient[d.request_item?.request?.client_id] || null }));
 }
 
 /** Accept a spot — fires the atomic accept-lock RPC. Returns the assignment. */
@@ -179,11 +201,12 @@ export async function acceptSpot(itemId) {
 
 /** Jobs I've accepted (my assignments). */
 export async function listMyAssignments() {
-  const { data: u } = await supabase.auth.getUser();
+  const uid = await currentUserId();
+  if (!uid) return [];   // signed out / auth blip — no assignments, never a crash
   const { data, error } = await supabase
     .from('assignments')
     .select(`
-      id, status, accepted_at, paid_at, net_amount, gross_amount, fee_amount,
+      id, status, accepted_at, paid_at, completed_at, net_amount, gross_amount, fee_amount,
       reconcile_state, reconcile_deadline, claimed_end_at,
       request_item:request_items (
         type, kind, rate, rate_offered, price_mode, trade_id,
@@ -191,7 +214,7 @@ export async function listMyAssignments() {
         request:requests ( id, client_id, address_text, when_type, duration_hours, scheduled_at, job_details, completion_state, review_deadline, settle_net, site_contact_name, site_contact_phone, materials_cap, pickup_text )
       )
     `)
-    .eq('operator_id', u.user.id)
+    .eq('operator_id', uid)
     .order('accepted_at', { ascending: false });
   if (error) throw error;
   return data || [];

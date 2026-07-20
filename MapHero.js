@@ -291,7 +291,7 @@ function viewFor(markers, me) {
   return { center: { lat: (Math.min.apply(null, lats) + Math.max.apply(null, lats)) / 2, lng: (Math.min.apply(null, lngs) + Math.max.apply(null, lngs)) / 2 }, zoom: 12 };
 }
 
-export default function MapHero({ height = 300, markers = [], me = null, framed = true, onWorkerTap = null, dockedBottom = false, activeNow = null, coverage = null, demand = null, mode = 'hire', offline = false, hubJobs = null, onHubAction = null, onPostFromMap = null, commandSummary = null, primaryAction = null, chatBubble = null, maskOpacity = null }) {
+export default function MapHero({ height = 300, markers = [], me = null, framed = true, onWorkerTap = null, dockedBottom = false, activeNow = null, coverage = null, demand = null, mode = 'hire', offline = false, hubJobs = null, onHubAction = null, onPostFromMap = null, commandSummary = null, primaryAction = null, chatBubble = null, maskOpacity = null, hideExpand = false }) {
   const hasJobs = markers && markers.length > 0;
   const missingKey = MAPTILER_KEY === 'YOUR_MAPTILER_KEY';
   const [full, setFull] = React.useState(false);
@@ -411,9 +411,11 @@ export default function MapHero({ height = 300, markers = [], me = null, framed 
           ) : null}
         </View>
       )}
-      <TouchableOpacity style={[styles.expandBtn, expanded && styles.expandBtnFull]} onPress={() => setFull(!expanded ? true : false)} activeOpacity={0.85}>
-        <Text style={styles.expandBtnT}>{expanded ? '✕' : '⛶'}</Text>
-      </TouchableOpacity>
+      {!hideExpand && (
+        <TouchableOpacity style={[styles.expandBtn, expanded && styles.expandBtnFull]} onPress={() => setFull(!expanded ? true : false)} activeOpacity={0.85}>
+          <Text style={styles.expandBtnT}>{expanded ? '✕' : '⛶'}</Text>
+        </TouchableOpacity>
+      )}
     </>
   );
 

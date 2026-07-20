@@ -104,7 +104,7 @@ export default function VehiclesScreen({ onClose }) {
           <TouchableOpacity onPress={() => setEditing(null)}><Text style={s.back}>‹ Back</Text></TouchableOpacity>
           <Text style={s.h1}>{editing === 'new' ? 'Add a vehicle' : 'Edit vehicle'}</Text>
         </View>
-        <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
           <Text style={s.label}>Type</Text>
           <View style={s.chipRow}>
             {VEHICLE_TYPES.map((t) => (
@@ -146,7 +146,7 @@ export default function VehiclesScreen({ onClose }) {
         <Text style={s.h1}>Vehicles</Text>
         <Text style={s.tier}>Your rig — each vehicle carries its own rego and insurance.</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
         {!!msg && <Text style={s.err}>{msg}</Text>}
         {list.length === 0 ? (
           <Text style={[T.small, { color: C.mute, marginBottom: 16, lineHeight: 19 }]}>
@@ -196,9 +196,9 @@ export default function VehiclesScreen({ onClose }) {
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.canvas },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  head: { paddingHorizontal: S.xl, paddingTop: 48, paddingBottom: 12 },
-  back: { color: C.indigo, fontWeight: '600', fontSize: 15, marginBottom: 10 },
-  h1: { fontSize: 24, fontWeight: '800', letterSpacing: -0.5, color: C.ink },
+  head: { paddingHorizontal: S.xl, paddingTop: 22, paddingBottom: 16 },
+  back: { color: C.mute, fontWeight: '700', fontSize: 14, marginBottom: 12 },
+  h1: { fontSize: 27, fontWeight: '900', letterSpacing: -0.7, color: C.ink },
   tier: { fontSize: 13, color: C.mute, marginTop: 4, lineHeight: 18 },
   card: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 12, ...shadowSm },
   vType: { fontSize: 16, fontWeight: '800', color: C.ink },
@@ -219,7 +219,7 @@ const s = StyleSheet.create({
   footNote: { fontSize: 12, color: C.mute2, marginTop: 20, lineHeight: 18 },
   label: { fontSize: 12, fontWeight: '700', color: C.mute, marginBottom: 6, marginTop: 16 },
   opt: { fontWeight: '600', color: C.mute2 },
-  input: { backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, borderRadius: R.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: C.ink },
+  input: { backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, borderRadius: R.lg, paddingHorizontal: 16, paddingVertical: 15, fontSize: 16, color: C.ink, ...shadowSm },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   typeChip: { borderWidth: 1.5, borderColor: C.line, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
   typeChipOn: { borderColor: C.indigo, backgroundColor: C.indigo + '12' },

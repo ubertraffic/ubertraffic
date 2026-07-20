@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
 import { loadTaxonomy, searchTrades, featuredTrades, pickerFolders } from './taxonomyService';
 import { C, S, R, T } from './theme';
+import Icon from './Icon';
 
 export default function TradePicker({ onPick, onCancel }) {
   const [tax, setTax] = useState(null);
@@ -28,7 +29,7 @@ export default function TradePicker({ onPick, onCancel }) {
   return (
     <View style={styles.wrap}>
       <View style={styles.searchBar}>
-        <Text style={{ fontSize: 14 }}>🔍</Text>
+        <Icon name="search" size={15} color={C.mute} strokeWidth={2.2} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search — traffic, cleaner, excavator…"

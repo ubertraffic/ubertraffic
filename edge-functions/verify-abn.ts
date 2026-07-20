@@ -14,13 +14,28 @@ const CORS = {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...CORS } });
 }
+// STRONG name match — a single shared word (e.g. "John", or "the") is NOT enough to verify a business
+// identity; that let almost anyone verify against almost any ABN. We drop company-form noise words
+// (pty, ltd, trust, the, and…) and then require that MOST of the operator's real name words are
+// present in the registered name — and at least two of them when the operator gave a multi-word name.
+const STOPWORDS = new Set([
+  "pty", "ltd", "limited", "inc", "incorporated", "co", "company", "corp", "corporation",
+  "trust", "trustee", "the", "and", "for", "of", "group", "holdings", "services", "australia", "au",
+  "trading", "as", "t", "atf", "family", "enterprises", "solutions", "au",
+]);
 function nameLooksLikeMatch(registered: string, opName: string): boolean {
   if (!registered || !opName) return false;
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
-  const a = new Set(norm(registered));
-  const b = norm(opName);
-  if (b.length === 0) return false;
-  return b.filter((w) => a.has(w)).length >= 1;
+  const words = (s: string) =>
+    s.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length > 1 && !STOPWORDS.has(w));
+  const reg = new Set(words(registered));
+  const op = words(opName);
+  if (op.length === 0 || reg.size === 0) return false;             // nothing meaningful to compare → don't verify
+  const overlap = op.filter((w) => reg.has(w)).length;
+  // Require a strong overlap: at least 2 shared significant words, OR (for a single-word operator
+  // name) that one word carrying the full name and it matching. Also require the majority of the
+  // operator's words to land, so "John" doesn't verify "John Smith & Sons Pty Ltd" on its own.
+  if (op.length === 1) return overlap === 1;
+  return overlap >= 2 && overlap >= Math.ceil(op.length * 0.6);
 }
 
 Deno.serve(async (req) => {
@@ -65,14 +80,21 @@ Deno.serve(async (req) => {
 
     const bizNames = Array.isArray(data.BusinessName) ? data.BusinessName.join(" ") : (data.BusinessName || "");
     const registered = `${data.EntityName || ""} ${bizNames}`.trim();
-    if (opName && !nameLooksLikeMatch(registered, opName)) {
-      return json({ status: "review", detail: "ABN is active, but the name needs manual confirmation." });
+    // NEVER auto-verify on 'active' status alone — an active ABN proves the number is real, not that
+    // it belongs to THIS person. Require a name on file AND a strong match to the registered name.
+    if (!opName.trim()) {
+      return json({ status: "review", detail: "Add your legal / business name so we can match it to the ABN, then resubmit." });
+    }
+    if (!nameLooksLikeMatch(registered, opName)) {
+      return json({ status: "review", detail: "ABN is active, but the name doesn't match the register — this needs manual confirmation." });
     }
 
-    const { error: upErr } = await admin.from("profiles").update({ abn_status: "verified" }).eq("id", user.id);
+    // Capture the REGISTERED name from the register (not free-text) — the seller name any invoice uses.
+    const entityName = (data.EntityName || (Array.isArray(data.BusinessName) ? data.BusinessName[0] : data.BusinessName) || "").toString().trim() || null;
+    const { error: upErr } = await admin.from("profiles").update({ abn_status: "verified", abn_entity_name: entityName }).eq("id", user.id);
     if (upErr) return json({ status: "review", detail: "Verified at ABR but DB update failed." });
 
-    return json({ status: "verified", detail: `Matched ${data.EntityName || "the ABR record"}.` });
+    return json({ status: "verified", detail: `Matched ${data.EntityName || "the ABR record"}.`, entity_name: entityName });
   } catch (e) {
     return json({ status: "review", detail: `Unexpected: ${(e as Error).message}` });
   }

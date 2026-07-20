@@ -57,6 +57,52 @@ export async function payoutStatus() {
   return invoke('connect-status', {});
 }
 
+// Worker payout controls (all act on the caller's own Stripe account) — balance + schedule, change
+// the standard schedule, or cash out instantly for a fee.
+export async function payoutBalance() {
+  return invoke('payout-actions', { action: 'balance' });
+}
+export async function setPayoutSchedule(interval) {
+  return invoke('payout-actions', { action: 'schedule', interval });
+}
+export async function instantPayout() {
+  return invoke('payout-actions', { action: 'instant' });
+}
+
+// Worker: my payout ledger — the ACTUAL Stripe transfers (not inferred from settlement columns).
+// Worker-readable via RLS (operator_id = auth.uid()). Surfaces real status: paid / pending / failed,
+// so a payout that didn't land (e.g. account not ready) shows the truth instead of looking "paid".
+export async function listMyPayouts() {
+  const { data, error } = await supabase
+    .from('payouts')
+    .select('id, request_id, assignment_id, amount_cents, currency, status, detail, created_at')
+    .order('created_at', { ascending: false });
+  if (error) return [];
+  return data || [];
+}
+
+// Invoice seller details (worker business name + ABN + NSW licence + GST status) for a job, gated to
+// the job's parties by a definer function (migration 0070). The ABN is otherwise column-locked.
+export async function getInvoiceSellers(requestId) {
+  const { data, error } = await supabase.rpc('get_invoice_sellers', { p_request_id: requestId });
+  if (error) return [];
+  return data || [];
+}
+
+// Client: the payment record (the Stripe charge) behind a job — for a real receipt. Client-readable
+// via RLS (client_id = auth.uid()). Returns the latest row for the request, or null.
+export async function getPaymentForRequest(requestId) {
+  const { data, error } = await supabase
+    .from('payments')
+    .select('id, amount_cents, currency, status, stripe_payment_intent, tip_cents, travel_cents, created_at, updated_at')
+    .eq('request_id', requestId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return data || null;
+}
+
 // The most recent payment on a request (client-readable) — for showing state without a poll.
 export async function latestPaymentFor(requestId) {
   const { data, error } = await supabase

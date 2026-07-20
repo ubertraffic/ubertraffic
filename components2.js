@@ -4,8 +4,10 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator,
 import { C, R, S, E, M, T } from './theme';
 import { S_ } from './styles';
 import Icon, { iconForType } from './Icon';
-import { repLine, requestHasStall, autoReleaseIn, friendly, suburbOf, EmptyState } from './components';
+import { repLine, requestHasStall, autoReleaseIn, friendly, suburbOf, EmptyState, SlidingText } from './components';
 import { searchAddress } from './geocodeService';
+import { useCountUp } from './Motion';
+import { tradeTitle } from './taxonomyService';
 
 export function RateCard({ it, onChange }) {
   const [floor, lo, hi] = RATES[it.type] || [45, 55, 85];
@@ -27,7 +29,7 @@ export function RateCard({ it, onChange }) {
   return (
     <View style={[S_.card, { marginBottom: 12 }]}>
       <View style={S_.rowBetween}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icon name={iconForType(it.type, it.kind)} size={16} color={C.ink} /><Text style={T.bodyStrong}>{it.type}</Text></View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icon name={iconForType(it.type, it.kind)} size={16} color={C.ink} /><Text style={T.bodyStrong}>{tradeTitle(it.type)}</Text></View>
         <Text style={T.money}>${it.rate}<Text style={{ fontSize: 12, color: C.mute }}>/hr</Text></Text>
       </View>
 
@@ -65,7 +67,35 @@ export function RateCard({ it, onChange }) {
 //   'active'  — on a job → the feed RECEDES to one quiet line; the job's tracker dominates (Law 1).
 //   'find'    — online + free → the feed LEADS with a bold header + live count (Laws 1,2,13).
 //   'offline' — not online → jobs hidden; the online toggle is the mission.
-export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpandedBios, onAccept, onPass, onDismissDone }) {
+// FindingPulse — a live "we're searching for work near you" radar. Concentric rings ripple outward
+// from a green node — the calm, honest signal that the app is actively looking (not a fake counter).
+function FindingPulse() {
+  const r1 = useRef(new Animated.Value(0)).current;
+  const r2 = useRef(new Animated.Value(0)).current;
+  const r3 = useRef(new Animated.Value(0)).current;
+  const rings = [r1, r2, r3];
+  useEffect(() => {
+    const anims = rings.map((v, i) => Animated.loop(Animated.sequence([
+      Animated.delay(i * 700),
+      Animated.timing(v, { toValue: 1, duration: 2100, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ])));
+    anims.forEach((a) => a.start());
+    return () => anims.forEach((a) => a.stop());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <View style={{ width: 132, height: 132, alignItems: 'center', justifyContent: 'center' }}>
+      {rings.map((v, i) => (
+        <Animated.View key={i} pointerEvents="none" style={{ position: 'absolute', width: 132, height: 132, borderRadius: 66, borderWidth: 2, borderColor: C.green, opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }), transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.28, 1] }) }] }} />
+      ))}
+      <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center', shadowColor: C.green, shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 }}>
+        <Icon name="signal" size={22} color="#fff" strokeWidth={2.3} />
+      </View>
+    </View>
+  );
+}
+
+export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpandedBios, onAccept, onPass, onDismissDone, myLoc }) {
   const nearCount = (jobs || []).filter((d) => !passed.has(d.request_item?.id)).length;
 
   // WORKING: the worker is physically on site. Strip everything — the feed disappears entirely so
@@ -130,7 +160,13 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
         )}
       </View>
       {jobs === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : jobs.length === 0 ? <EmptyState icon="crew" title="You're first in line" sub="You're visible to sites nearby. New work drops here the moment it's posted — you'll see it before anyone else." />
+        : jobs.length === 0 ? (
+          <View style={{ alignItems: 'center', marginTop: 34, paddingHorizontal: 24 }}>
+            <FindingPulse />
+            <Text style={{ fontSize: 19, fontWeight: '800', color: C.ink, letterSpacing: -0.3, marginTop: 24 }}>Finding work near you</Text>
+            <Text style={{ fontSize: 14, color: C.mute, textAlign: 'center', marginTop: 8, lineHeight: 20 }}>You're first in line. New jobs land here the moment they're posted — you'll see them before anyone else.</Text>
+          </View>
+        )
         : visible.length === 0 ? <EmptyState icon="crew" title="You're all caught up" sub="You've passed on the jobs nearby for now. New ones will appear here as they're posted." />
         : visible.map((d, i) => (
           <AvailableJobCard
@@ -138,6 +174,7 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
             d={d}
             index={i}
             busyId={busyId}
+            myLoc={myLoc}
             expanded={!!expandedBios[d.id]}
             onToggleBio={() => setExpandedBios((p) => ({ ...p, [d.id]: !p[d.id] }))}
             onAccept={onAccept}
@@ -152,7 +189,35 @@ export function WorkFeed({ mission, jobs, passed, busyId, expandedBios, setExpan
 // mission-keyed Work-home render stays readable as the spine grows (CLAUDE.md §2). Pure presentation
 // + callbacks; all decision facts a worker needs in ~2 seconds (Constitution Law 3): urgency, spots,
 // trade, location, the duties brief, pay + estimate.
-export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, onAccept, onPass }) {
+// Straight-line distance (km) between two lat/lng points — haversine. Null if either point is missing.
+function distanceKm(aLat, aLng, bLat, bLng) {
+  if (![aLat, aLng, bLat, bLng].every((n) => Number.isFinite(n))) return null;
+  const R = 6371, toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+function distanceLabel(km) {
+  if (km == null) return null;
+  if (km < 1) return `${Math.round(km * 10) * 100} m away`;   // 0.3 km -> "300 m away"
+  if (km < 10) return `${km.toFixed(1)} km away`;
+  return `${Math.round(km)} km away`;
+}
+
+// "posted 4 min ago" — freshness signal (real, from the request's created_at).
+function agoLabel(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!(ms >= 0)) return null;
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+export function AvailableJobCard({ d, index = 0, busyId, myLoc, expanded, onToggleBio, onAccept, onPass }) {
   const it = d.request_item; const r = it?.request;
   const qty = it?.qty || 1;
   const taken = d.taken || 0;
@@ -186,53 +251,94 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
   const busyHere = busyId === it?.id;
   const accent = urgent ? C.amber : C.green;
   const accentSoft = urgent ? 'rgba(245,158,11,0.12)' : C.greenSoft;
+  // Booked jobs: show WHEN (the client's chosen start), so the badge isn't just a vague "Booked".
+  const startTime = (!urgent && r?.scheduled_at) ? (() => {
+    const dt = new Date(r.scheduled_at);
+    const day = dt.toLocaleDateString('en-AU', { weekday: 'short' });
+    const h = dt.getHours(); const hr = h % 12 || 12; const ap = h < 12 ? 'am' : 'pm';
+    return `${day} ${hr}${ap}`;
+  })() : null;
+
+  // Who they'd work for + the money perks — the trust + dopamine pieces.
+  const card = d.client_card;
+  const cardRated = card && card.rating_count > 0;
+  const travel = r?.travel_cents ? Math.round(r.travel_cents / 100) : 0;
+  const materials = r?.materials_cap ? Math.round(Number(r.materials_cap)) : 0;
+  const posted = agoLabel(r?.created_at);
+  const dist = (myLoc && r?.lat != null && r?.lng != null) ? distanceLabel(distanceKm(myLoc.lat, myLoc.lng, Number(r.lat), Number(r.lng))) : null;
+  // Show the SUBURB, not the exact street — shorter for the compact line, and the precise address is
+  // saved for after they accept (privacy). If the first segment is a street number, use the next one.
+  const addrParts = (r?.address_text || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const area = (/^\d/.test(addrParts[0] || '') && addrParts[1]) ? addrParts[1] : (addrParts[0] || 'Nearby');
+  // Count the estimated total UP from 0 on appear — a small hit of "look how much you'll make".
+  const [countTarget, setCountTarget] = useState(0);
+  useEffect(() => { setCountTarget(estTotal || 0); }, [estTotal]);
+  const shownTotal = useCountUp(countTarget);
+
   return (
     <Animated.View style={[cardStyle, { marginBottom: 14 }]}>
       <View style={jc.card}>
         {/* urgency accent bar — the eye lands here first for a "now" job */}
         <View style={[jc.accentBar, { backgroundColor: urgent ? C.amber : 'transparent' }]} />
 
-        {/* header — trade + where, with a tinted glyph */}
+        {/* header — trade + when/where + PAY, all in one glance so the whole card fits a screen */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={[jc.glyph, { backgroundColor: accentSoft }]}>
             <Icon name={iconForType(it?.type, it?.kind)} size={22} color={accent} strokeWidth={2} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={jc.trade} numberOfLines={1}>{it?.type}{multi ? `  ·  ${qty}` : ''}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-              <Icon name="pin" size={12} color={C.mute} strokeWidth={2.2} />
-              <Text style={jc.where} numberOfLines={1}>{suburbOf(r?.address_text) || 'Nearby'}</Text>
+            <Text style={jc.trade} numberOfLines={1}>{tradeTitle(it?.type)}{multi ? `  ·  ${qty}` : ''}</Text>
+            {/* Two tidy fixed lines instead of one scrolling line — nothing is ever cut off, and the
+                two differentiators that make near/now jobs read apart from far/booked ones lead: */}
+            {/*  LINE 1 — WHEN + how far (the decision drivers), bold and coloured */}
+            <View style={jc.metaRow}>
+              <Text style={[jc.metaLead, { color: urgent ? C.amber : C.ink }]} numberOfLines={1}>{urgent ? '⚡ Now' : (startTime || 'Booked')}</Text>
+              {dist ? (<><Text style={jc.metaDot}>·</Text><Text style={jc.dist} numberOfLines={1}>{dist.replace(' away', '')}</Text></>) : null}
+            </View>
+            {/*  LINE 2 — WHERE + how fresh (context), muted; area ellipsizes so posted always shows */}
+            <View style={jc.metaRow}>
+              <Text style={jc.metaArea} numberOfLines={1}>{area}</Text>
+              {posted ? (<><Text style={jc.metaDot}>·</Text><Text style={jc.posted} numberOfLines={1}>{posted}</Text></>) : null}
             </View>
           </View>
-          <View style={[jc.badge, { backgroundColor: urgent ? 'rgba(245,158,11,0.14)' : C.panel2 }]}>
-            <Text style={[jc.badgeT, { color: urgent ? C.amber : C.mute }]}>{urgent ? '⚡ Now' : 'Booked'}</Text>
-          </View>
+          {rate != null && (
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={jc.payBig}>${rate}<Text style={jc.payUnit}>{isJobPrice ? '/job' : '/hr'}</Text></Text>
+              {estTotal != null
+                ? <Text style={jc.payEst}>≈ ${shownTotal.toLocaleString()} · {hours}h</Text>
+                : isJobPrice ? <Text style={jc.payEst}>fixed price</Text> : null}
+            </View>
+          )}
         </View>
 
-        {/* what they'll be doing — the trust piece */}
+        {/* WHO you'd work for — one compact line, so no one accepts blind */}
+        <View style={jc.client}>
+          <View style={[jc.clientAv, card?.verified && { backgroundColor: C.indigo }]}>
+            {card?.verified
+              ? <Icon name="verified" size={14} color="#fff" strokeWidth={2.2} />
+              : <Text style={jc.clientAvT}>{(card?.display_name || 'C').charAt(0).toUpperCase()}</Text>}
+          </View>
+          <Text style={jc.clientName} numberOfLines={1}>{card?.display_name || 'A local client'}</Text>
+          {card?.verified && <View style={jc.vChip}><Text style={jc.vChipT}>Verified</Text></View>}
+          <View style={{ flex: 1 }} />
+          <Icon name="star" size={11} color={cardRated ? C.amber : C.mute2} strokeWidth={2.2} fill={cardRated ? C.amber : 'none'} />
+          <Text style={jc.clientRep}>{cardRated ? `${Number(card.rating).toFixed(1)} · ${card.rating_count}` : 'New'}</Text>
+        </View>
+
+        {/* PERKS — guaranteed pay + any bonus money on top */}
+        <View style={jc.perks}>
+          <View style={jc.perk}><Text style={jc.perkT}>🔒 Pay secured</Text></View>
+          {travel > 0 && <View style={[jc.perk, jc.perkGreen]}><Text style={[jc.perkT, jc.perkTGreen]}>＋${travel} travel</Text></View>}
+          {materials > 0 && <View style={jc.perk}><Text style={jc.perkT}>Materials to ${materials}</Text></View>}
+        </View>
+
+        {/* what they'll be doing */}
         {r?.job_details ? (
-          <TouchableOpacity activeOpacity={0.7} onPress={onToggleBio} style={{ marginTop: 14 }}>
+          <TouchableOpacity activeOpacity={0.7} onPress={onToggleBio} style={{ marginTop: 12 }}>
             <Text style={jc.bio} numberOfLines={expanded ? undefined : 2}>{r.job_details}</Text>
             {r.job_details.length > 90 && <Text style={[jc.bioMore, { color: accent }]}>{expanded ? 'Show less' : 'Read more'}</Text>}
           </TouchableOpacity>
         ) : null}
-
-        {/* PAY — the number the worker decides on, and the open-spots chip */}
-        {rate != null && (
-          <View style={jc.payRow}>
-            <View>
-              <Text style={jc.payLabel}>You earn</Text>
-              <Text style={jc.payBig}>${rate}<Text style={jc.payUnit}>{isJobPrice ? '/job' : '/hr'}</Text></Text>
-              {estTotal != null && <Text style={jc.payEst}>≈ ${estTotal} · {hours} hrs</Text>}
-            </View>
-            {left > 0 && multi && (
-              <View style={jc.spots}>
-                <Text style={jc.spotsN}>{left}</Text>
-                <Text style={jc.spotsL}>of {qty} open</Text>
-              </View>
-            )}
-          </View>
-        )}
 
         {/* multi-spot pips */}
         {multi && (
@@ -268,34 +374,47 @@ export function AvailableJobCard({ d, index = 0, busyId, expanded, onToggleBio, 
 
 const jc = StyleSheet.create({
   card: {
-    backgroundColor: C.panel, borderRadius: 22, padding: 18, paddingTop: 20, borderWidth: 1, borderColor: C.line, overflow: 'hidden',
+    backgroundColor: C.panel, borderRadius: 20, padding: 16, paddingTop: 18, borderWidth: 1, borderColor: C.line, overflow: 'hidden',
     shadowColor: '#000', shadowOpacity: 0.07, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 4,
   },
   accentBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
-  glyph: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  trade: { fontSize: 17.5, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
-  where: { fontSize: 13, color: C.mute, fontWeight: '600' },
-  badge: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
-  badgeT: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.2 },
-  bio: { fontSize: 13.5, color: C.ink2 || C.ink, lineHeight: 19, fontWeight: '500' },
-  bioMore: { fontSize: 12.5, fontWeight: '800', marginTop: 4 },
-  payRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.line },
-  payLabel: { fontSize: 10.5, fontWeight: '800', color: C.mute, letterSpacing: 0.5, textTransform: 'uppercase' },
-  payBig: { fontSize: 32, fontWeight: '900', color: C.ink, letterSpacing: -1.2, marginTop: 3 },
-  payUnit: { fontSize: 15, fontWeight: '700', color: C.mute, letterSpacing: 0 },
-  payEst: { fontSize: 13, color: C.green, fontWeight: '800', marginTop: 3 },
+  glyph: { width: 44, height: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  trade: { fontSize: 17, fontWeight: '800', color: C.ink, letterSpacing: -0.3 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+  metaLead: { fontSize: 12.5, fontWeight: '800' },
+  metaDot: { fontSize: 12.5, color: C.mute2, fontWeight: '700', marginHorizontal: 5 },
+  metaArea: { fontSize: 12.5, color: C.mute, fontWeight: '700', flexShrink: 1 },
+  posted: { fontSize: 12, color: C.mute2, fontWeight: '700' },
+  dist: { fontSize: 12.5, color: C.green, fontWeight: '800' },
+  payBig: { fontSize: 25, fontWeight: '900', color: C.ink, letterSpacing: -0.8 },
+  payUnit: { fontSize: 13, fontWeight: '700', color: C.mute, letterSpacing: 0 },
+  payEst: { fontSize: 12, color: C.green, fontWeight: '800', marginTop: 2 },
+  client: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, backgroundColor: C.panel2, borderRadius: 13, paddingHorizontal: 11, paddingVertical: 8 },
+  clientAv: { width: 28, height: 28, borderRadius: 14, backgroundColor: C.mute2, alignItems: 'center', justifyContent: 'center' },
+  clientAvT: { color: '#fff', fontWeight: '900', fontSize: 13 },
+  clientName: { fontSize: 13.5, fontWeight: '800', color: C.ink, flexShrink: 1 },
+  clientRep: { fontSize: 11.5, color: C.mute, fontWeight: '700' },
+  vChip: { backgroundColor: C.indigoSoft, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
+  vChipT: { fontSize: 9.5, fontWeight: '900', color: C.indigo, letterSpacing: 0.2 },
+  perks: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  perk: { backgroundColor: C.panel2, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  perkT: { fontSize: 11, fontWeight: '800', color: C.ink2 || C.ink },
+  perkGreen: { backgroundColor: C.greenSoft },
+  perkTGreen: { color: C.green },
+  bio: { fontSize: 13, color: C.ink2 || C.ink, lineHeight: 18, fontWeight: '500' },
+  bioMore: { fontSize: 12.5, fontWeight: '800', marginTop: 3 },
   spots: { backgroundColor: C.greenSoft, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 9, alignItems: 'center' },
   spotsN: { fontSize: 18, fontWeight: '900', color: C.green, letterSpacing: -0.5 },
   spotsL: { fontSize: 9.5, fontWeight: '800', color: C.green, letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 1 },
-  mine: { backgroundColor: C.greenSoft, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, marginTop: 12 },
+  mine: { backgroundColor: C.greenSoft, borderRadius: 12, paddingVertical: 7, paddingHorizontal: 12, marginTop: 10 },
   mineT: { fontSize: 12.5, color: C.green, fontWeight: '800' },
   accept: {
-    marginTop: 16, backgroundColor: C.green, borderRadius: 16, paddingVertical: 16, alignItems: 'center',
+    marginTop: 14, backgroundColor: C.green, borderRadius: 15, paddingVertical: 14, alignItems: 'center',
     shadowColor: C.green, shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6,
   },
   acceptOff: { backgroundColor: '#C9CBD3', shadowOpacity: 0 },
-  acceptT: { color: '#fff', fontSize: 16.5, fontWeight: '800', letterSpacing: 0.2 },
-  pass: { alignItems: 'center', paddingVertical: 13, marginTop: 2 },
+  acceptT: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.2 },
+  pass: { alignItems: 'center', paddingVertical: 10, marginTop: 2 },
   passT: { color: C.mute, fontSize: 13.5, fontWeight: '700' },
 });
 
@@ -304,7 +423,7 @@ export function TaskPriceCard({ it, onChange }) {
   return (
     <View style={[S_.card, { marginBottom: 12 }]}>
       <View style={S_.rowBetween}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icon name="task" size={16} color={C.ink} /><Text style={T.bodyStrong}>{it.type}</Text></View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icon name="task" size={16} color={C.ink} /><Text style={T.bodyStrong}>{tradeTitle(it.type)}</Text></View>
         <Text style={T.money}>${it.rate}<Text style={{ fontSize: 12, color: C.mute }}>/job</Text></Text>
       </View>
       <Text style={[T.small, { color: C.mute, marginTop: 2, marginBottom: 12 }]}>Community runner — a flat price for the whole job.</Text>
@@ -365,7 +484,7 @@ export function MiniReqCard({ r, onOpen }) {
         <Text style={{ color: C.mute2, fontSize: 16, marginLeft: 2 }}>›</Text>
       </View>
       <Text style={[T.small, { color: C.mute, marginTop: 3 }]} numberOfLines={1}>
-        {items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ')}
+        {items.map((it) => it.qty > 1 ? `${tradeTitle(it.type)} ×${it.qty}` : tradeTitle(it.type)).join(' · ')}
       </Text>
       <View style={S_.progThin}><View style={[S_.progThinFill, { width: `${Math.max(pct, 4)}%`, backgroundColor: allDone ? C.green : filled === 0 ? C.line2 : C.indigo }]} /></View>
     </TouchableOpacity>
@@ -568,7 +687,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
               <View style={S_.doneCheck}><Text style={S_.doneCheckT}>✓</Text></View>
               <Text style={S_.doneTitle}>All {needed === 1 ? 'work' : `${needed} spots`} complete</Text>
               <Text style={S_.doneSub}>
-                {items.map((it) => it.qty > 1 ? `${it.type} ×${it.qty}` : it.type).join(' · ')}{r.address_text ? ` · ${r.address_text.split(',')[0]}` : ''}
+                {items.map((it) => it.qty > 1 ? `${tradeTitle(it.type)} ×${it.qty}` : tradeTitle(it.type)).join(' · ')}{r.address_text ? ` · ${r.address_text.split(',')[0]}` : ''}
               </Text>
               <TouchableOpacity onPress={() => setShowSpots((s) => !s)} style={{ marginTop: 10 }}>
                 <Text style={[T.label, { fontSize: 10, color: C.mute }]}>{showSpots ? 'Hide spot detail ▲' : 'See each spot ▾'}</Text>
@@ -585,7 +704,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
             return (
               <View key={it.id} style={S_.detailItem}>
                 <View style={S_.rowBetween}>
-                  <Text style={[T.bodyStrong, { fontSize: 14 }]}>{it.type}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text>
+                  <Text style={[T.bodyStrong, { fontSize: 14 }]}>{tradeTitle(it.type)}{it.qty > 1 ? ` ×${it.qty}` : ''}</Text>
                   {!isCancelled && <Text style={[T.data, { color: c >= it.qty ? C.green : C.mute }]}>{c}/{it.qty}</Text>}
                 </View>
                 {isCancelled
@@ -594,7 +713,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
                   ? <Text style={[T.small, { marginTop: 3 }]}>Waiting for a worker to accept…</Text>
                   : a.map((x, k) => (
                       <View key={x.id || k}>
-                        <OperatorCard a={x} tradeType={it.type} />
+                        <OperatorCard a={x} tradeType={tradeTitle(it.type)} />
                         <StageTracker a={x} spotLabel={it.qty > 1 ? `Spot ${k + 1}` : null} />
                       </View>
                     ))}
@@ -607,7 +726,7 @@ export function FullReqCard({ r, busy, onApprove, onCancel, onRepost, defaultOpe
           {r.status !== 'complete' && r.status !== 'cancelled' && (
             confirmCancel ? (
               <View style={{ marginTop: 12, gap: 8 }}>
-                <Text style={[T.small, { color: C.amber }]}>Cancel this job? Any workers on it will be released.</Text>
+                <Text style={[T.small, { color: C.amber }]}>Cancel this job? Any workers on it will be released. You won’t be charged — any card hold is released back to you.</Text>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <TouchableOpacity style={[S_.dangerBtn, { flex: 1 }]} onPress={onCancel} disabled={busy}>
                     <Text style={S_.dangerBtnT}>Yes, cancel job</Text>
@@ -704,18 +823,25 @@ export function AddressField({ value, onChangeText, onPick, picked, disabled }) 
   const [err, setErr] = useState('');
   const timer = React.useRef(null);
 
+  async function run(t) {
+    setLoading(true); setErr('');
+    try { setResults(await searchAddress(t)); }
+    catch (_) { setResults([]); setErr('Address lookup hiccup — tap Next and we’ll still locate it.'); }
+    finally { setLoading(false); }
+  }
+
   function change(t) {
     onChangeText(t);
     setErr('');
     if (timer.current) clearTimeout(timer.current);
     if (!t || t.trim().length < 3) { setResults([]); return; }
-    // debounce ~600ms (Nominatim politeness: <=1 req/sec)
-    timer.current = setTimeout(async () => {
-      setLoading(true);
-      try { setResults(await searchAddress(t)); }
-      catch (_) { setErr('Address lookup unavailable — you can still type it.'); }
-      finally { setLoading(false); }
-    }, 600);
+    timer.current = setTimeout(() => run(t), 400);   // debounce keystrokes
+  }
+
+  // Pressing return searches immediately (no wait for the debounce) — a common reflex.
+  function submit() {
+    if (timer.current) clearTimeout(timer.current);
+    if (value && value.trim().length >= 3) run(value.trim());
   }
 
   return (
@@ -729,6 +855,8 @@ export function AddressField({ value, onChangeText, onPick, picked, disabled }) 
           onChangeText={change}
           editable={!disabled}
           autoCorrect={false}
+          returnKeyType="search"
+          onSubmitEditing={submit}
         />
         {picked && <Text style={{ position: 'absolute', right: 12, top: 14, color: C.green, fontSize: 14 }}>✓</Text>}
         {loading && <ActivityIndicator size="small" color={C.indigo} style={{ position: 'absolute', right: 12, top: 12 }} />}
@@ -825,7 +953,7 @@ export function jobTitle(items) {
   if (list.length === 0) return 'Job';
   if (list.length === 1) {
     const it = list[0];
-    return it.qty > 1 ? `${it.type} · ${it.qty} needed` : it.type;
+    return it.qty > 1 ? `${tradeTitle(it.type)} · ${it.qty} needed` : tradeTitle(it.type);
   }
   // multiple trades: lead with the trade needing the most people (the "main" work),
   // then note how many other roles round out the job — "Excavator + 3 more".

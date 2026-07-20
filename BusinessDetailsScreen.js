@@ -79,7 +79,7 @@ export default function BusinessDetailsScreen({ onClose }) {
         <Text style={styles.h1}>Business details</Text>
         <Text style={styles.tier}>Your company name and ABN — how you’re billed and paid on SiteCall.</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
 
         {/* Company / trading name */}
         <View style={styles.card}>
@@ -143,8 +143,8 @@ export default function BusinessDetailsScreen({ onClose }) {
               ) : null}
               {!!abnMsg && <Text style={styles.err}>{abnMsg}</Text>}
               <TouchableOpacity
-                style={[styles.save, (!abnValid(abnInput) || abnBusy) && { opacity: 0.5 }]}
-                disabled={!abnValid(abnInput) || abnBusy}
+                style={[styles.save, (abnBusy || !abnInput.trim()) && { opacity: 0.5 }]}
+                disabled={abnBusy || !abnInput.trim()}
                 onPress={saveAbn}
               >
                 <Text style={styles.saveT}>{abnBusy ? 'Saving…' : 'Save ABN'}</Text>
@@ -161,20 +161,20 @@ export default function BusinessDetailsScreen({ onClose }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.canvas },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  head: { paddingHorizontal: S.xl, paddingTop: 48, paddingBottom: 12 },
-  back: { color: C.indigo, fontWeight: '600', fontSize: 15, marginBottom: 10 },
-  h1: { fontSize: 24, fontWeight: '800', letterSpacing: -0.5, color: C.ink },
+  head: { paddingHorizontal: S.xl, paddingTop: 22, paddingBottom: 16 },
+  back: { color: C.mute, fontWeight: '700', fontSize: 14, marginBottom: 12 },
+  h1: { fontSize: 27, fontWeight: '900', letterSpacing: -0.7, color: C.ink },
   tier: { fontSize: 13, color: C.mute, marginTop: 4, lineHeight: 18 },
   card: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, ...shadowSm },
   cardLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   value: { fontSize: 16, fontWeight: '800', color: C.ink },
-  abnValue: { fontSize: 17, fontWeight: '800', color: C.ink, fontFamily: MONO, letterSpacing: 0.5 },
+  abnValue: { fontSize: 17, fontWeight: '800', color: C.ink, letterSpacing: 0.5 },
   ok: { fontSize: 12, color: C.green, fontWeight: '700', marginTop: 3 },
   edit: { fontSize: 13, fontWeight: '700', color: C.indigo },
   hint: { fontSize: 13, color: C.mute, lineHeight: 18, marginBottom: 10 },
   link: { color: C.indigo, fontWeight: '700' },
-  input: { backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, borderRadius: R.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: C.ink },
+  input: { backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, borderRadius: R.lg, paddingHorizontal: 16, paddingVertical: 15, fontSize: 16, color: C.ink, ...shadowSm },
   save: { backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   saveT: { color: '#fff', fontWeight: '800', fontSize: 14 },
   err: { color: C.red, fontSize: 13, marginTop: 8, marginBottom: 2 },

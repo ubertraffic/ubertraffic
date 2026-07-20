@@ -1,6 +1,6 @@
 // screens.js — Operator screens extracted from App.js (paste-size fix).
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Modal, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, Keyboard, Dimensions, StyleSheet, Pressable, AppState, Linking, RefreshControl, Share } from 'react-native';
 import { C, R, S, E, M, T, Z } from './theme';
 import { SH, S_ } from './styles';
 import Icon, { iconForType } from './Icon';
@@ -12,7 +12,7 @@ import LiveTrackerCard from './LiveTrackerCard';
 import Pulse from './Pulse';
 import JobChat from './JobChat';
 import { jobTitle, jobSubtitle, estTotal, RateCard, WorkFeed, AvailableJobCard, TaskPriceCard, MiniReqCard, statusMeta, OperatorCard, StageTracker, FullReqCard, AccountSection, RoleChip, QuickTile, AddBtn, AddressField, MiniBtn, SegBtn, LiveTag, PrimaryBtn, tap, Center } from './components2';
-import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard } from './components';
+import { friendly, suburbOf, MatchCard, EmptyState, workerLine, repLine, requestHasStall, isStalledAssignment, autoReleaseIn, MaterialsClaim, VouchCrewCard, RateJob } from './components';
 import CredentialsScreen from './CredentialsScreen';
 import BusinessDetailsScreen from './BusinessDetailsScreen';
 import AdminScreen from './AdminScreen';
@@ -21,6 +21,7 @@ import PayoutsScreen from './PayoutsScreen';
 import { amIAdmin } from './adminService';
 import TradePicker from './TradePicker';
 import { getTrackerState, advanceAssignment, cancelAssignment, checkIn, checkOut, getOperatorMapJobs, reportMissedCheckout, startJourney, updateMyLocation } from './completionService';
+import { payoutStatus, startPayoutOnboarding, listMyPayouts } from './paymentsService';
 import CloseOutCard from './CloseOutCard';
 import PrestartCard from './PrestartCard';
 import RunCloseOutCard from './RunCloseOutCard';
@@ -43,7 +44,7 @@ function buildJobInfo({ a, it, r, workerName }) {
   const rows = [];
   const who = workerName || a?.operator?.full_name;
   if (who) rows.push({ label: 'Worker', value: who.split(' ')[0] });
-  if (it?.type) rows.push({ label: 'Job', value: it.type });
+  if (it?.type) rows.push({ label: 'Job', value: tradeTitle(it.type) });
   if (r?.address_text) rows.push({ label: 'Site', value: r.address_text });
   if (r?.site_contact_name) {
     const c = r.site_contact_phone ? `${r.site_contact_name} · ${r.site_contact_phone}` : r.site_contact_name;
@@ -61,11 +62,12 @@ function statusWords(s) {
 import { useRealtime } from './useRealtime';
 import { cacheGet, cacheSet, cacheClearAll } from './screenCache';
 import { setRole, setOnline, setVehicle, getMyProfile, updateMyName, setMyOperatorLocation, addCapability, listMyCapabilities, removeCapability, listMyDispatches, acceptSpot, listMyAssignments, getDemandHeat } from './operatorService';
-import { setMyIdentity } from './accountService';
+import { setMyIdentity, setMyAbn, verifyMyAbn, abnValid, normalizeAbn, setGstRegistered } from './accountService';
 import { formatDMY, dmyToISO } from './dateFormat';
 import { getPosition, watchPosition } from './location';
 import { getUnreadCounts } from './messagesService';
 import { readinessForTrades } from './credentialsService';
+import { tradeTitle } from './taxonomyService';
 import { unregisterPush } from './pushService';
 import { logError } from './errorService';
 
@@ -314,7 +316,241 @@ function BottomSheet({ activeKey, onRequestClose, render }) {
   );
 }
 
-export function OperatorHome({ session, onOpenProfile, onScroll }) {
+// PayoutGateSheet — shown when a worker tries to go online / accept without a live payout account.
+// It opens Stripe's hosted onboarding, then re-checks when they return (AppState → active). The
+// moment payouts are enabled it calls onReady() so the worker flows straight back into working.
+function PayoutGateSheet({ visible, onClose, onReady }) {
+  const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [err, setErr] = useState('');
+  // While the sheet is up, re-check each time the app returns to the foreground (i.e. back from Stripe).
+  useEffect(() => {
+    if (!visible) return;
+    const sub = AppState.addEventListener('change', async (s) => {
+      if (s !== 'active') return;
+      setChecking(true);
+      const ok = await payoutStatus().then((r) => !!r?.payouts_enabled).catch(() => false);
+      setChecking(false);
+      if (ok) { tap('success'); onReady && onReady(); }
+    });
+    return () => sub.remove();
+  }, [visible, onReady]);
+
+  async function setup() {
+    setBusy(true); setErr('');
+    try { await startPayoutOnboarding(); }
+    catch (e) { setErr(e?.message || 'Could not open payout setup.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={PG.backdrop}>
+        <View style={PG.sheet}>
+          <View style={PG.grip} />
+          <View style={PG.iconWrap}><Icon name="payment" size={26} color={C.green} strokeWidth={2.2} /></View>
+          <Text style={PG.title}>Connect your bank to get paid</Text>
+          <Text style={PG.body}>
+            Before you take a job, set up payouts so your money lands the moment a client approves your
+            work. It takes about two minutes on Stripe’s secure page — SiteCall never sees your bank details.
+          </Text>
+          {checking
+            ? <View style={PG.checking}><ActivityIndicator color={C.green} /><Text style={PG.checkingT}>Checking your payout status…</Text></View>
+            : (
+              <TouchableOpacity style={[PG.primary, busy && { opacity: 0.6 }]} disabled={busy} onPress={setup} activeOpacity={0.9}>
+                <Text style={PG.primaryT}>{busy ? 'Opening…' : 'Set up payouts'}</Text>
+              </TouchableOpacity>
+            )}
+          {!!err && <Text style={PG.err}>{err}</Text>}
+          <TouchableOpacity onPress={onClose} activeOpacity={0.8} style={PG.later}><Text style={PG.laterT}>Not now</Text></TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+const PG = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(10,10,16,0.55)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: C.canvas, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 34, alignItems: 'center' },
+  grip: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.line, marginBottom: 18 },
+  iconWrap: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(34,197,94,0.12)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  title: { fontSize: 20, fontWeight: '900', letterSpacing: -0.4, color: C.ink, textAlign: 'center' },
+  body: { fontSize: 14, color: C.mute, lineHeight: 20, textAlign: 'center', marginTop: 10, paddingHorizontal: 4 },
+  primary: { backgroundColor: C.green, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', alignSelf: 'stretch', marginTop: 22 },
+  primaryT: { color: '#fff', fontWeight: '800', fontSize: 15.5 },
+  checking: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 24, height: 52 },
+  checkingT: { color: C.mute, fontWeight: '700', fontSize: 14 },
+  err: { color: C.red, fontSize: 13, marginTop: 12, textAlign: 'center' },
+  later: { paddingVertical: 14, marginTop: 6 },
+  laterT: { color: C.mute, fontWeight: '700', fontSize: 14 },
+});
+
+// AbnGateSheet — shown when a worker tries to earn without an ABN on file. To be paid as a contractor
+// in Australia you quote an ABN (it's free and usually instant from the ABR); without one, a payer must
+// withhold tax. This captures/validates the ABN inline (format + ABR checksum via setMyAbn) and links
+// to the free ABR registration. It does NOT decide the worker's legal classification — that (and the
+// final terms wording) is for the operator's lawyer; this just supports the contractor-ABN requirement.
+const ABR_APPLY_URL = 'https://www.abr.gov.au/business-super-funds-charities/applying-abn';
+function AbnGateSheet({ visible, onClose, onSaved }) {
+  const [abn, setAbn] = useState('');
+  const [gst, setGst] = useState(false);   // registered for GST? default off — most workers aren't
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { if (visible) { setAbn(''); setGst(false); setErr(''); } }, [visible]);
+
+  const clean = normalizeAbn(abn);
+  const valid = abnValid(clean);
+
+  async function save() {
+    if (!valid) { setErr('An ABN is 11 digits and must pass the ABR check — double-check the number.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await setMyAbn(clean);
+      try { await setGstRegistered(gst); } catch (_) { /* GST flag is best-effort; ABN is what gates earning */ }
+      try { await verifyMyAbn(); } catch (_) { /* register verify is best-effort; format is saved */ }
+      tap('success'); onSaved && onSaved();
+    } catch (e) { setErr(e?.message || 'Could not save your ABN.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      {/* Scrim lives on the keyboard-avoider so the area the keyboard opens up is dimmed too —
+          otherwise the home (its "GO ONLINE" orb) shows through the gap between sheet and keyboard. */}
+      <KeyboardAvoidingView style={AG.kav} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={AG.backdrop}>
+          <View style={AG.sheet}>
+            <View style={AG.grip} />
+            <View style={AG.iconWrap}><Icon name="verified" size={26} color={C.indigo} strokeWidth={2.2} /></View>
+            <Text style={AG.title}>Add your ABN to get paid</Text>
+            <Text style={AG.body}>
+              You work through SiteCall as your own independent business, so you need an ABN to be paid —
+              it’s free and usually issued instantly. Enter yours, or grab one from the ABR first.
+            </Text>
+
+            <TextInput
+              style={[AG.input, valid && { borderColor: C.green }]}
+              value={abn}
+              onChangeText={setAbn}
+              placeholder="11-digit ABN"
+              placeholderTextColor={C.mute2}
+              keyboardType="number-pad"
+              maxLength={14}
+              returnKeyType="done"
+            />
+            {!!err && <Text style={AG.err}>{err}</Text>}
+
+            {/* GST — friendly + optional. Default off; most workers aren't registered. */}
+            <TouchableOpacity style={AG.gstRow} onPress={() => setGst((v) => !v)} activeOpacity={0.8}>
+              <View style={[AG.check, gst && AG.checkOn]}>{gst && <Text style={AG.checkT}>✓</Text>}</View>
+              <View style={{ flex: 1 }}>
+                <Text style={AG.gstT}>I’m registered for GST</Text>
+                <Text style={AG.gstHint}>Only if you earn over $75k/yr — most aren’t. Not sure? Leave it off.</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[AG.primary, (!valid || busy) && { opacity: 0.5 }]} disabled={!valid || busy} onPress={save} activeOpacity={0.9}>
+              <Text style={AG.primaryT}>{busy ? 'Saving…' : 'Save ABN'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={AG.link} onPress={() => Linking.openURL(ABR_APPLY_URL).catch(() => {})} activeOpacity={0.8}>
+              <Text style={AG.linkT}>Don’t have one? Get a free ABN at the ABR →</Text>
+            </TouchableOpacity>
+
+            <Text style={AG.disclaimer}>
+              As an independent contractor you’re responsible for your own tax and super. GST only applies
+              if you’re registered for it. (SiteCall’s full contractor terms apply.)
+            </Text>
+            <TouchableOpacity onPress={onClose} activeOpacity={0.8} style={AG.later}><Text style={AG.laterT}>Not now</Text></TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+const AG = StyleSheet.create({
+  kav: { flex: 1, backgroundColor: 'rgba(10,10,16,0.6)' },
+  backdrop: { flex: 1, justifyContent: 'flex-end' },
+  sheet: { backgroundColor: C.canvas, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 30, alignItems: 'center' },
+  grip: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.line, marginBottom: 18 },
+  iconWrap: { width: 56, height: 56, borderRadius: 28, backgroundColor: C.indigoSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  title: { fontSize: 20, fontWeight: '900', letterSpacing: -0.4, color: C.ink, textAlign: 'center' },
+  body: { fontSize: 14, color: C.mute, lineHeight: 20, textAlign: 'center', marginTop: 10, paddingHorizontal: 4 },
+  input: { alignSelf: 'stretch', backgroundColor: C.panel, borderWidth: 1.5, borderColor: C.line, borderRadius: R.lg, paddingHorizontal: 16, paddingVertical: 15, fontSize: 18, fontWeight: '800', color: C.ink, letterSpacing: 1, textAlign: 'center', marginTop: 20 },
+  gstRow: { flexDirection: 'row', alignItems: 'center', gap: 12, alignSelf: 'stretch', marginTop: 16, paddingHorizontal: 2 },
+  check: { width: 24, height: 24, borderRadius: 7, borderWidth: 1.5, borderColor: C.line, alignItems: 'center', justifyContent: 'center' },
+  checkOn: { backgroundColor: C.indigo, borderColor: C.indigo },
+  checkT: { color: '#fff', fontWeight: '900', fontSize: 14 },
+  gstT: { fontSize: 14.5, fontWeight: '800', color: C.ink },
+  gstHint: { fontSize: 12, color: C.mute, marginTop: 2, lineHeight: 16 },
+  primary: { backgroundColor: C.indigo, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', alignSelf: 'stretch', marginTop: 14 },
+  primaryT: { color: '#fff', fontWeight: '800', fontSize: 15.5 },
+  link: { paddingVertical: 14, marginTop: 4 },
+  linkT: { color: C.indigo, fontWeight: '700', fontSize: 14, textAlign: 'center' },
+  err: { color: C.red, fontSize: 13, marginTop: 10, textAlign: 'center' },
+  disclaimer: { fontSize: 11.5, color: C.mute2, lineHeight: 16, textAlign: 'center', marginTop: 10, paddingHorizontal: 4 },
+  later: { paddingVertical: 12, marginTop: 4 },
+  laterT: { color: C.mute, fontWeight: '700', fontSize: 14 },
+});
+
+// WorkerMoment — a full-screen celebratory beat for the two key worker moments: "you got paid" (after
+// a job settles) and "you're on shift" (after arriving on site). One clear hero + one action, so the
+// flow always tells the worker what just happened and what to do next.
+function WorkerMoment({ visible, kind, title, big, sub, cta, shareText, onClose }) {
+  const pop = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!visible) return;
+    pop.setValue(0);
+    Animated.spring(pop, { toValue: 1, friction: 6, tension: 90, useNativeDriver: true }).start();
+  }, [visible]);
+  const accent = kind === 'paid' ? C.green : C.green;
+  async function share() {
+    try { await Share.share({ message: shareText }); } catch (_) { /* user cancelled — no-op */ }
+  }
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={WM.scrim}>
+        <Animated.View style={[WM.card, { transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }], opacity: pop }]}>
+          {/* brand marker — makes the "I got paid" card recognisably SiteCall in a screenshot */}
+          <View style={WM.brandRow}>
+            <View style={WM.mark}><Icon name="pin" size={12} color="#fff" strokeWidth={2.6} /></View>
+            <Text style={WM.brandT}>SiteCall</Text>
+          </View>
+          <View style={[WM.badge, { backgroundColor: accent + '1A' }]}>
+            <Icon name={kind === 'paid' ? 'payment' : 'verified'} size={30} color={accent} strokeWidth={2.2} />
+          </View>
+          <Text style={WM.title}>{title}</Text>
+          {!!big && <Text style={[WM.big, kind === 'paid' && { color: accent }]}>{big}</Text>}
+          {!!sub && <Text style={WM.sub}>{sub}</Text>}
+          <TouchableOpacity style={[WM.cta, { backgroundColor: accent }]} onPress={onClose} activeOpacity={0.9}>
+            <Text style={WM.ctaT}>{cta}</Text>
+          </TouchableOpacity>
+          {!!shareText && (
+            <TouchableOpacity style={WM.share} onPress={share} activeOpacity={0.8}>
+              <Icon name="trending" size={16} color={C.ink} strokeWidth={2.2} />
+              <Text style={WM.shareT}>Share your win</Text>
+            </TouchableOpacity>
+          )}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+const WM = StyleSheet.create({
+  scrim: { flex: 1, backgroundColor: 'rgba(10,12,16,0.62)', alignItems: 'center', justifyContent: 'center', padding: 28 },
+  card: { backgroundColor: C.canvas, borderRadius: 26, paddingHorizontal: 26, paddingTop: 22, paddingBottom: 24, alignItems: 'center', alignSelf: 'stretch', maxWidth: 400 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
+  mark: { width: 20, height: 20, borderRadius: 6, backgroundColor: C.indigo, alignItems: 'center', justifyContent: 'center' },
+  brandT: { fontSize: 13, fontWeight: '800', color: C.ink, letterSpacing: -0.2 },
+  share: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 13, marginTop: 4 },
+  shareT: { fontSize: 14.5, fontWeight: '800', color: C.ink },
+  badge: { width: 66, height: 66, borderRadius: 33, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  title: { fontSize: 15, fontWeight: '800', color: C.mute, letterSpacing: 0.3, textTransform: 'uppercase' },
+  big: { fontSize: 40, fontWeight: '900', color: C.ink, letterSpacing: -1, marginTop: 8, textAlign: 'center' },
+  sub: { fontSize: 14, color: C.mute, lineHeight: 20, textAlign: 'center', marginTop: 10, paddingHorizontal: 6 },
+  cta: { borderRadius: 16, paddingVertical: 15, alignItems: 'center', alignSelf: 'stretch', marginTop: 22 },
+  ctaT: { color: '#fff', fontWeight: '800', fontSize: 15.5 },
+});
+
+export function OperatorHome({ session, onOpenProfile, onScroll, onOpenSetup, setupVersion }) {
   const [profile, setProfile] = useState(() => cacheGet('operator-profile'));   // instant paint, skips gate spinner
   const [loadFailed, setLoadFailed] = useState(false);  // profile load errored — show retry, not an endless spinner
   const [caps, setCaps] = useState(() => cacheGet('operator-caps') || []);
@@ -329,8 +565,8 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const [passed, setPassed] = useState(() => new Set());   // job item ids the worker passed on (session-local, soft)
   const [capPicker, setCapPicker] = useState(false);   // TradePicker for capabilities
   const [capsOpen, setCapsOpen] = useState(false);     // "What I supply" expanded to the full editor (collapsed by default — the home stays calm)
-  const [idName, setIdName] = useState('');            // onboarding identity: full legal name
-  const [idDob, setIdDob] = useState('');              // onboarding identity: date of birth (entered DD/MM/YYYY, stored ISO)
+  const [mapOpen, setMapOpen] = useState(false);       // feed-first home: the map is a secondary view, opened on demand
+  const [refreshing, setRefreshing] = useState(false); // pull-to-refresh on the feed
   const [readiness, setReadiness] = useState({});      // trade_id -> { ready, missing[] }
   const [myLoc, setMyLoc] = useState(null);            // operator's own location for the map
   const [opMapJobs, setOpMapJobs] = useState([]);      // operator's assigned job sites
@@ -347,6 +583,16 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   const flood = useRef(new Animated.Value(0)).current;   // green colour-flood when going online
   const [onlineSince, setOnlineSince] = useState(null);  // when this shift started (for the live timer)
   const [endShift, setEndShift] = useState(false);       // "Nice work" end-of-shift sheet visible
+  const [payoutGate, setPayoutGate] = useState(false);   // "set up payouts before you can work" sheet (blocks go-online / accept)
+  const [abnGate, setAbnGate] = useState(false);         // "add your ABN before you earn" sheet (contractor tax requirement)
+  const [ratePrompt, setRatePrompt] = useState(null);    // { assignmentId } — rate the CLIENT after payout
+  const ratePromptedRef = useRef(new Set());             // assignment ids already prompted this session
+  const rateSeededRef = useRef(false);                   // seed existing-approved so we only prompt on NEW payouts
+  const assignsLoadedRef = useRef(false);                // true once listMyAssignments has actually returned — the initial [] is NOT a load
+  const [paidMoment, setPaidMoment] = useState(null);    // { amount, type } — "you got paid" celebration before the rating
+  const [shiftMoment, setShiftMoment] = useState(null);  // { type } — "you're on shift, stay safe" after arrival
+  const shiftShownRef = useRef(new Set());               // assignment ids we've shown the shift-start moment for
+  const shiftSeededRef = useRef(false);
   // Live location — follow the worker as they move (real GPS on Expo Go via
   // watchPositionAsync). Streams myLoc updates every ~4s / ~15m. Falls back once
   // to DEV_LOCATION when real GPS isn't available. stop() cleans up on unmount.
@@ -357,7 +603,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     return () => { alive = false; if (stop) stop(); };
   }, []);
   useEffect(() => { (async () => { try { setOpMapJobs(await getOperatorMapJobs()); } catch (_) {} })(); }, [jobs]);
-  useEffect(() => { (async () => { try { setMyAssigns(await listMyAssignments()); } catch (_) {} })(); }, [jobs]);
+  useEffect(() => { (async () => { try { setMyAssigns(await listMyAssignments()); assignsLoadedRef.current = true; } catch (_) {} })(); }, [jobs]);
 
   // Demand heat ("where the work is") — the worker's money map. Fetched ONLY while finding work
   // (online, no active/on-site job) on a SLOW 90s timer: demand shifts over minutes not seconds, so
@@ -404,43 +650,102 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
   useRealtime(['dispatches', 'assignments'], refresh);
+  // Self-heal: while online, re-pull the feed every 12s so a job can never quietly stay gone if a
+  // realtime event was missed or a dispatch was (re)created server-side. Belt-and-braces on realtime.
+  useEffect(() => {
+    if (!profile?.is_online) return;
+    const t = setInterval(() => { refresh(); }, 12000);
+    return () => clearInterval(t);
+  }, [profile?.is_online, refresh]);
+  const onPull = useCallback(async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }, [refresh]);
+  // When the unified setup flow finishes (Shell bumps setupVersion), re-read the profile so the
+  // home reflects the new operator/verified state immediately instead of the stale "not set up" view.
+  useEffect(() => { if (setupVersion) refresh(); }, [setupVersion, refresh]);
   // shift clock — starts when the worker goes online (kept if already online on load), clears offline.
   useEffect(() => {
     if (profile?.is_online) setOnlineSince((s) => s || Date.now());
     else setOnlineSince(null);
   }, [profile?.is_online]);
+  // Rate the CLIENT after a job is approved+paid. Seed existing-approved on first load so we only
+  // prompt when a job flips to approved DURING this session (not for old history on every open).
+  useEffect(() => {
+    if (!myAssigns) return;
+    // Wait for the FIRST real fetch. The initial [] placeholder must not count as a load, or every
+    // pre-existing approved job would look "fresh" and phantom-prompt a rating with no live context.
+    if (!assignsLoadedRef.current) return;
+    const approved = myAssigns.filter((a) => a.status === 'approved');
+    if (!rateSeededRef.current) { approved.forEach((a) => ratePromptedRef.current.add(a.id)); rateSeededRef.current = true; return; }
+    const fresh = approved.find((a) => !ratePromptedRef.current.has(a.id));
+    // Lead with the PAID moment ("you earned $X — paid to your bank"); the rating follows when they
+    // dismiss it. This is the payoff the worker was missing — completing used to jump straight to a rating.
+    if (fresh && !paidMoment && !ratePrompt) {
+      ratePromptedRef.current.add(fresh.id);
+      setPaidMoment({ assignmentId: fresh.id, amount: Number(fresh.net_amount) || 0, type: fresh.request_item?.type });
+    }
+  }, [myAssigns]);
+  // "You're on shift" — a calm hero the moment a job goes on-site (and no prestart is still pending),
+  // so it's unmistakable the shift is ACTIVE: put the phone down, stay safe. Removes the confusion of
+  // landing straight on a "Complete job" button.
+  useEffect(() => {
+    if (!myAssigns || !assignsLoadedRef.current) return;
+    const onSite = myAssigns.filter((a) => a.status === 'on_site' && prestartNeeds[a.id] !== true);
+    if (!shiftSeededRef.current) { onSite.forEach((a) => shiftShownRef.current.add(a.id)); shiftSeededRef.current = true; return; }
+    const fresh = onSite.find((a) => !shiftShownRef.current.has(a.id));
+    if (fresh && !shiftMoment) { shiftShownRef.current.add(fresh.id); tap('success'); setShiftMoment({ type: fresh.request_item?.type }); }
+  }, [myAssigns, prestartNeeds]);
 
-  async function becomeOperator() {
-    // Capture identity first — the anchor a register check needs (Phase 2). Validated in setMyIdentity.
-    const name = (idName || '').trim();
-    if (name.length < 2) { setMsg('Enter your full legal name.'); return; }
-    const iso = dmyToISO(idDob);
-    if (!iso) { setMsg('Enter your date of birth as DD/MM/YYYY.'); return; }
-    setBusy(true); setMsg('');
-    try { await setMyIdentity(name, iso); await setRole('operator'); await addCapability('crew', 'Traffic control', 'traffic_controller'); await setVehicle('ute'); await refresh(); }
-    catch (e) { setMsg(friendly(e)); } finally { setBusy(false); }
-  }
   async function toggleOnline() {
     setBusy(true); setMsg('');
     try {
       const goingOnline = !profile.is_online;
       await setOnline(goingOnline);
       if (goingOnline) {
-        // capturing location is REQUIRED to receive jobs — dispatch is geographic.
-        // If we can't get it, tell the operator instead of silently going online
-        // with no location (which makes them invisible to the matcher).
+        // capturing location is REQUIRED to receive jobs — dispatch is geographic. getPosition()
+        // never throws; it returns source:'fallback' when GPS is denied/unavailable, so we must
+        // check that explicitly (a real device with location off must NOT be pinned to dev coords).
         try {
           const pos = await getPosition();
+          if (pos.source === 'fallback') {
+            await setOnline(false);   // roll back — don't sit online invisible/mis-located
+            setMsg('Turn on location to go online — SiteCall matches you to jobs near where you are. Enable location access, then try again.');
+            return;
+          }
           await setMyOperatorLocation(pos.lat, pos.lng);
         } catch (locErr) {
-          setMsg('You\'re online, but we couldn\'t get your location — you won\'t receive jobs until location is on. Check location permissions and toggle again.');
+          await setOnline(false);
+          setMsg('Couldn\'t get your location, so you\'re not online yet. Check location permissions and try again.');
+          return;
         }
       }
       await refresh();
     } catch (e) { setMsg(friendly(e)); } finally { setBusy(false); }
   }
+  // PAYOUT GATE — a worker who hasn't connected their bank must NOT be able to take a job: they'd do
+  // the work, the client's card would be charged in full, and the transfer would fail with nowhere to
+  // land. So going online (and accepting) is blocked until Stripe payouts are enabled. Returns true if
+  // ready, false if we opened the gate. Fails CLOSED (an unknown status blocks) — money safety first.
+  async function ensurePayoutReady() {
+    // Contractor-tax gate FIRST: a worker earning on the platform is invoicing as a business, so they
+    // need an ABN on file before any paid work — otherwise (as a contractor with no ABN) tax must be
+    // withheld. Then the payout (bank) gate. Either missing → surface the right sheet and block.
+    if (!profile?.abn_status) { setAbnGate(true); tap('medium'); return false; }
+    const ok = await payoutStatus().then((s) => !!s?.payouts_enabled).catch(() => false);
+    if (!ok) { setPayoutGate(true); tap('medium'); return false; }
+    return true;
+  }
+  // Going offline is BLOCKED while a job is live — a worker who's committed/travelling/on site must
+  // finish (or withdraw) first, so they can't vanish mid-shift and strand a client.
+  function handleGoOffline() {
+    const onJob = (myAssigns || []).some((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status));
+    if (onJob) { tap('medium'); setMsg("You're on a job — finish it (or withdraw) before going offline."); return; }
+    setEndShift(true);
+  }
   // Going online with the payoff — a green colour-flood blooms from the orb as the map ignites.
   async function goLive() {
+    setBusy(true);
+    const ready = await ensurePayoutReady();
+    setBusy(false);
+    if (!ready) return;   // gate is up; don't flood or go online
     flood.setValue(0);
     Animated.timing(flood, { toValue: 1, duration: 640, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(() => flood.setValue(0));
     await toggleOnline();
@@ -451,9 +756,17 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
     const d = (jobs || []).find((x) => x.request_item?.id === itemId);
     const it = d?.request_item; const r = it?.request;
     try {
+      // Safety net: a worker who was already online (from a prior session, before payouts were set up)
+      // still can't take a job until their bank is connected — same gate as going online.
+      if (!(await ensurePayoutReady())) { setBusy(false); setBusyId(null); return; }
       await acceptSpot(itemId); tap('success');
-      // the accept-lock has already succeeded server-side — THIS is just the celebration
-      setCelebrate({ type: it?.type, rate: it?.rate, suburb: suburbOf(r?.address_text), urgent: r?.when_type === 'now' });
+      // the accept-lock has already succeeded server-side — THIS is the "you're on" recap (all the
+      // details the worker needs on site, in one screenshot-worthy card).
+      setCelebrate({
+        type: it?.type, qty: it?.qty || 1, rate: it?.rate, priceMode: it?.price_mode,
+        hours: r?.duration_hours || 4, suburb: suburbOf(r?.address_text), address: r?.address_text,
+        urgent: r?.when_type === 'now', scheduledAt: r?.scheduled_at || null, jobDetails: r?.job_details || null,
+      });
       await refresh();
     }
     catch (e) { setMsg('Accept failed: ' + friendly(e)); logError('accept', e, { correlationId: itemId, appContext: 'operator' }); } finally { setBusy(false); setBusyId(null); }
@@ -542,24 +855,40 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   if (capPicker) {
     return (
       <View style={[S_.fill, { padding: S.xl, paddingTop: 48 }]}>
-        <Text style={[T.eyebrow, { marginBottom: 14 }]}>Add a capability</Text>
+        {/* Clear header + back — this is the WORKER picking what they can do, not the job-post sheet
+            (they share the same picker UI, which is why a distinct header matters here). */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+          <TouchableOpacity onPress={() => setCapPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingRight: 12 }} activeOpacity={0.7}>
+            <Icon name="chevronLeft" size={22} color={C.ink} strokeWidth={2.4} />
+            <Text style={{ fontSize: 16, fontWeight: '700', color: C.ink }}>Back</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={[T.heading, { marginBottom: 4 }]}>What can you do?</Text>
+        <Text style={[T.body, { color: C.mute, marginBottom: 14 }]}>Add a trade or task you can take on — it’s how we match you to nearby work.</Text>
         <TradePicker onPick={addCapFromTrade} onCancel={() => setCapPicker(false)} />
       </View>
     );
   }
 
   if (profile.role !== 'operator') {
+    // Not set up to work yet → hand off to the ONE unified setup flow (the checklist in Shell), the
+    // same one a fresh signup sees. No separate name/DOB form here anymore.
     return (
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
-        <Text style={T.eyebrow}>Start working</Text>
-        <Text style={[T.body, { marginTop: 8, marginBottom: 18 }]}>Set yourself up to receive jobs — verified, online, and matched to work near you.</Text>
-        <Text style={[T.label, { marginBottom: 6 }]}>Full legal name</Text>
-        <TextInput style={S_.input} value={idName} onChangeText={setIdName} placeholder="As it appears on your licence / White Card" placeholderTextColor={C.mute2} />
-        <Text style={[T.label, { marginBottom: 6, marginTop: 12 }]}>Date of birth</Text>
-        <TextInput style={S_.input} value={idDob} onChangeText={(t) => setIdDob(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
-        <Text style={[T.small, { color: C.mute, marginTop: 8, marginBottom: 18 }]}>Used only to check your tickets and licences against the registers — never shown publicly.</Text>
-        <PrimaryBtn label="Set me up to work" onPress={becomeOperator} busy={busy} />
-        {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1, justifyContent: 'center' }}>
+        <View style={{ alignItems: 'center' }}>
+          <View style={{ width: 60, height: 60, borderRadius: 18, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+            <Icon name="labourer" size={28} color="#fff" strokeWidth={2.2} />
+          </View>
+          <Text style={[T.heading, { fontSize: 22, textAlign: 'center' }]}>Get set up to work</Text>
+          <Text style={[T.body, { color: C.mute, textAlign: 'center', marginTop: 10, marginBottom: 24, paddingHorizontal: 8 }]}>
+            A couple of quick steps — your details, your White Card, and your payouts — and you’ll start seeing jobs near you.
+          </Text>
+          <View style={{ alignSelf: 'stretch' }}>
+            <PrimaryBtn label="Finish setup" onPress={() => onOpenSetup && onOpenSetup()} />
+          </View>
+        </View>
+        {!!msg && <Text style={[S_.msg, { textAlign: 'center' }]}>{msg}</Text>}
       </ScrollView>
     );
   }
@@ -617,48 +946,62 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
   return (
     <>
     {immersive ? (
-      <View style={{ flex: 1 }}>
-        {/* full-bleed green work map — ambient decision context */}
-        <View style={StyleSheet.absoluteFill}>
+      <View style={{ flex: 1, backgroundColor: C.canvas }}>
+        {/* MAP — DISPLAY ONLY (like Uber's surge map): it shows WHERE the work + demand is, nothing to
+            tap-to-accept. Accepting/posting happens in the list. No interactive hub cards, no internal
+            fullscreen button. Always mounted so it never reloads; hidden behind the feed until opened. */}
+        <View style={StyleSheet.absoluteFill} pointerEvents={mapOpen ? 'auto' : 'none'}>
           <MapHero
-            height={Dimensions.get('window').height} framed={false} mode="work" me={myLoc}
-            offline={!profile.is_online} demand={demandHeat} markers={profile.is_online ? opMapJobs : []}
-            hubJobs={profile.is_online ? (jobs || []).filter((d) => !passed.has(d.request_item?.id)).map((d) => {
-              const it = d.request_item; const r = it?.request; const qty = it?.qty || 1; const left = qty - (d.taken || 0);
-              return {
-                id: d.id, kind: 'accept', itemId: it?.id,
-                title: it?.type || 'Job', sub: `${suburbOf(r?.address_text)} · ${left > 0 ? `${left} of ${qty} open` : 'Full'}${r?.when_type === 'now' ? ' · Urgent' : ''}`,
-                dotColor: r?.when_type === 'now' ? C.amber : C.green, action: left <= 0 ? 'Full' : 'Accept', _left: left,
-                detail: { rows: [{ k: 'Type', v: it?.type || 'Job' }, { k: 'Site', v: suburbOf(r?.address_text) || '—' }, { k: 'Spots', v: left > 0 ? `${left} of ${qty} open` : 'Full' }, it?.rate ? { k: 'Rate', v: `$${it.rate}/hr` } : null].filter(Boolean),
-                  actions: [left > 0 ? { label: 'Accept this job', tone: 'green', fn: () => it?.id && accept(it.id) } : null, { label: 'Pass', tone: 'ghost', fn: () => it?.id && pass(it.id) }].filter(Boolean) },
-              };
-            }) : []}
-            onHubAction={(j) => { if (j.kind === 'accept' && j._left > 0 && j.itemId) accept(j.itemId); }}
+            height={Dimensions.get('window').height} framed={false} mode="work" me={myLoc} hideExpand
+            offline={!profile.is_online} demand={demandHeat}
+            /* Pins are ambient info (trade + rate), like Uber's surge map — but tapping one is a natural
+               reflex, so a tap drops you back into the list where the job can actually be accepted. */
+            onWorkerTap={() => setMapOpen(false)}
+            markers={profile.is_online ? [
+              ...(opMapJobs || []),
+              // available jobs as plain display pins (coords from the request) — no actions
+              ...(jobs || []).filter((d) => !passed.has(d.request_item?.id) && d.request_item?.request?.lat != null && d.request_item?.request?.lng != null).map((d) => {
+                const it = d.request_item; const r = it?.request;
+                return { lat: Number(r.lat), lng: Number(r.lng), label: tradeTitle(it?.type) || 'Job', status: 'waiting', sub: it?.rate ? `$${it.rate}/hr` : '', requestId: r.id };
+              }),
+            ] : []}
             commandSummary={(() => { const near = (jobs || []).filter((d) => !passed.has(d.request_item?.id)).length; return profile.is_online ? (near > 0 ? `${near} job${near > 1 ? 's' : ''} nearby` : 'Finding work near you') : 'Go online to get work'; })()}
           />
+          {/* Back to the list — same spot + shape as the Map button (bottom-right pill) */}
+          {mapOpen && (
+            <TouchableOpacity onPress={() => setMapOpen(false)} activeOpacity={0.9}
+              style={{ position: 'absolute', right: 16, bottom: 108, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.ink, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 10 }}>
+              <Icon name="requests" size={16} color="#fff" strokeWidth={2.2} />
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>List</Text>
+            </TouchableOpacity>
+          )}
         </View>
-        {/* GREEN COLOUR-FLOOD — blooms up from the orb as you go online */}
-        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '44%', left: '50%', marginLeft: -65, marginTop: -65, width: 130, height: 130, borderRadius: 65, backgroundColor: C.green, opacity: flood.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 0.85, 0] }), transform: [{ scale: flood.interpolate({ inputRange: [0, 1], outputRange: [0.2, 18] }) }] }} />
-        {/* floating green sheet — dashboard-forward for the worker; the orb crowns it */}
-        <View style={{ position: 'absolute', left: 0, right: 0, top: '40%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
-          {/* control PINNED above the scroll — orb centres itself; the online pill stretches wide.
-              Pinning it (not inside the scroll) keeps a press-and-hold from being stolen by scrolling. */}
-          <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
-            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={() => setEndShift(true)} earningsToday={opEarn.today} onlineSince={onlineSince} />
+
+        {/* FEED-FIRST — the hero. An opaque canvas layer over the map; goes transparent when the map
+            is opened. This replaces the floating-sheet metaphor (which read as a draggable bottom sheet
+            it wasn't), so there's no false swipe affordance anymore. */}
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: C.canvas, opacity: mapOpen ? 0 : 1 }]} pointerEvents={mapOpen ? 'none' : 'auto'}>
+          {/* GREEN COLOUR-FLOOD — a calm bloom the moment you go online */}
+          <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 70, left: '50%', marginLeft: -65, width: 130, height: 130, borderRadius: 65, backgroundColor: C.green, opacity: flood.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 0.7, 0] }), transform: [{ scale: flood.interpolate({ inputRange: [0, 1], outputRange: [0.2, 16] }) }] }} />
+          {/* CONTROL — the go-online toggle + today's earnings, pinned above the feed */}
+          <View style={{ paddingTop: 14, paddingBottom: 8, paddingHorizontal: 16 }}>
+            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={handleGoOffline} earningsToday={opEarn.today} onlineSince={onlineSince} />
           </View>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
-            {/* earnings — the worker's emotional anchor (wired to real totals in a later pass) */}
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-              <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>Today</Text>
-                <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.today}</Text>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 150, paddingTop: 2 }} showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.green} colors={[C.green]} />}>
+            {/* Offline: earnings dashboard + demand nudge. Online: hand it all to the feed. */}
+            {!profile.is_online && (
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+                <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>Today</Text>
+                  <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.today}</Text>
+                </View>
+                <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>This week</Text>
+                  <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.week}</Text>
+                </View>
               </View>
-              <View style={{ flex: 1, backgroundColor: C.panel, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.line }}>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase' }}>This week</Text>
-                <Text style={{ fontSize: 22, fontWeight: '900', color: C.ink, letterSpacing: -0.5, marginTop: 4 }}>${opEarn.week}</Text>
-              </View>
-            </View>
-            {/* demand line — where the work is right now (offline only; WorkFeed carries the online header) */}
+            )}
             {!profile.is_online && (
               <>
                 <View style={[S_.rowBetween, { marginBottom: 10 }]}>
@@ -670,28 +1013,49 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
                 </Text>
               </>
             )}
-            <WorkFeed mission={mission} jobs={jobs} passed={passed} busyId={busyId} expandedBios={expandedBios} setExpandedBios={setExpandedBios} onAccept={accept} onPass={pass} onDismissDone={() => {}} />
+            <WorkFeed mission={mission} jobs={jobs} passed={passed} busyId={busyId} myLoc={myLoc} expandedBios={expandedBios} setExpandedBios={setExpandedBios} onAccept={accept} onPass={pass} onDismissDone={() => {}} />
             {!!msg && <Text style={msg[0] === '✓' ? S_.successText : S_.msg}>{msg}</Text>}
-            {/* what I supply — collapsed skill summary */}
-            <TouchableOpacity style={[S_.capSummary, { marginTop: 20 }]} onPress={() => setCapPicker(true)} activeOpacity={0.85}>
-              <View style={{ flex: 1 }}>
-                <Text style={T.bodyStrong}>{caps.length === 0 ? 'Add what you supply' : `${caps.length} skill${caps.length === 1 ? '' : 's'}`}</Text>
-                <Text style={[T.small, { color: C.mute, marginTop: 4 }]}>{caps.length === 0 ? 'Get matched to work nearby.' : 'Tap to add another skill.'}</Text>
-              </View>
-              <Text style={S_.capChevron}>›</Text>
-            </TouchableOpacity>
+            {/* what I supply — with readiness, so a worker who gets no jobs learns WHY (tickets) */}
+            {(() => {
+              const readyCaps = caps.filter((c) => c.trade_id && readiness[c.trade_id]?.ready);
+              const notReady = caps.filter((c) => c.trade_id && readiness[c.trade_id] && !readiness[c.trade_id].ready);
+              const noneReady = caps.length > 0 && readyCaps.length === 0;
+              return (
+                <>
+                  {profile.is_online && noneReady && (
+                    <TouchableOpacity onPress={() => setCapPicker(true)} activeOpacity={0.9}
+                      style={{ backgroundColor: 'rgba(214,158,46,0.12)', borderRadius: 14, padding: 14, marginTop: 16, borderWidth: 1, borderColor: 'rgba(214,158,46,0.30)' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: C.amber }}>No jobs coming through? Add your tickets</Text>
+                      <Text style={{ fontSize: 12.5, color: C.mute, fontWeight: '600', marginTop: 3, lineHeight: 18 }}>Your skills need verified tickets (e.g. White Card) before sites can be matched to you.</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity style={[S_.capSummary, { marginTop: 16 }]} onPress={() => setCapPicker(true)} activeOpacity={0.85}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={T.bodyStrong}>{caps.length === 0 ? 'Add what you supply' : `${caps.length} skill${caps.length === 1 ? '' : 's'}${readyCaps.length > 0 ? ` · ${readyCaps.length} ready` : ''}`}</Text>
+                      <Text style={[T.small, { color: notReady.length > 0 ? C.amber : C.mute, marginTop: 4 }]}>
+                        {caps.length === 0 ? 'Get matched to work nearby.' : notReady.length > 0 ? `${notReady.length} need tickets before you're matched` : 'Tap to add another skill.'}
+                      </Text>
+                    </View>
+                    <Text style={S_.capChevron}>›</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
           </ScrollView>
+
+          {/* MAP toggle — opens the map for spatial context (secondary, not the hero) */}
+          <TouchableOpacity onPress={() => setMapOpen(true)} activeOpacity={0.9}
+            style={{ position: 'absolute', right: 16, bottom: 108, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.ink, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 10 }}>
+            <Icon name="navigate" size={16} color="#fff" strokeWidth={2.2} />
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>Map</Text>
+          </TouchableOpacity>
         </View>
       </View>
     ) : (
-    <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 128 }}>
-      {(() => {
-        // Map presence follows the mission: big when navigating/offline context, compact when the
-        // mission is finding work or actively working (Laws 1+2 — don't let the map compete then).
-        const mapHeight = (mission === 'find' || mission === 'working') ? 150 : 300;
-        return (
-      <MapReveal height={mapHeight}>
-      <MapHero me={myLoc} markers={profile.is_online ? opMapJobs : []} mode="work" offline={!profile.is_online} dockedBottom demand={demandHeat}
+      <View style={{ flex: 1 }}>
+        {/* full-bleed green work map — same immersive frame as the offline home, active-job wired */}
+        <View style={StyleSheet.absoluteFill}>
+      <MapHero height={Dimensions.get('window').height} framed={false} me={myLoc} markers={profile.is_online ? opMapJobs : []} mode="work" offline={!profile.is_online} demand={demandHeat}
         hubJobs={profile.is_online ? [
           // MY active jobs — with the next lifecycle step, done right on the map
           ...(myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status)).map((a) => {
@@ -699,7 +1063,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
             const words = { committed: 'Assigned — ready to start', accepted: 'Assigned — ready to start', en_route: "You're on the way", on_site: "You're on site" };
             return {
               id: `mine-${a.id}`, kind: 'mine', assignId: a.id,
-              title: a.request_item?.type || 'Your job',
+              title: tradeTitle(a.request_item?.type) || 'Your job',
               sub: `${suburbOf(a.request_item?.request?.address_text)} · ${words[a.status] || ''}`,
               dotColor: a.status === 'on_site' ? C.green : a.status === 'en_route' ? C.indigo : C.mute,
               action: na ? na.label : null, _fn: na ? na.fn : null,
@@ -711,7 +1075,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
                 ].filter(Boolean),
                 actions: [
                   na ? { label: na.label, tone: a.status === 'on_site' ? 'green' : 'ready', fn: na.fn } : null,
-                  { label: 'Message client', tone: 'ghost', fn: () => setChat({ a, title: `${a.request_item?.type || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) },
+                  { label: 'Message client', tone: 'ghost', fn: () => setChat({ a, title: `${tradeTitle(a.request_item?.type) || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) },
                 ].filter(Boolean),
               },
             };
@@ -722,13 +1086,13 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
             const qty = it?.qty || 1; const left = qty - (d.taken || 0); const mineHere = d.mine_accepted || 0;
             return {
               id: d.id, kind: 'accept', itemId: it?.id,
-              title: it?.type || 'Job',
+              title: tradeTitle(it?.type) || 'Job',
               sub: `${suburbOf(r?.address_text)} · ${left > 0 ? `${left} of ${qty} open` : 'Full'}${r?.when_type === 'now' ? ' · Urgent' : ''}`,
               dotColor: r?.when_type === 'now' ? C.amber : C.green,
               action: left <= 0 ? 'Full' : mineHere > 0 ? 'Take another' : 'Accept', _left: left,
               detail: {
                 rows: [
-                  { k: 'Type', v: it?.type || 'Job' },
+                  { k: 'Type', v: tradeTitle(it?.type) || 'Job' },
                   { k: 'Site', v: suburbOf(r?.address_text) || '—' },
                   { k: 'Spots', v: left > 0 ? `${left} of ${qty} open` : 'Full' },
                   r?.when_type === 'now' ? { k: 'When', v: 'Urgent — now' } : { k: 'When', v: 'Booked' },
@@ -749,32 +1113,28 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           if (activeMine > 0) return `${activeMine} active${near ? ` · ${near} nearby` : ''}`;
           return near > 0 ? `${near} job${near > 1 ? 's' : ''} nearby` : 'No jobs nearby';
         })()}
-        primaryAction={(() => {
-          const mineActive = (myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status));
-          if (mineActive.length > 0) { const a = mineActive[0]; const na = nextAction(a); if (na) return { label: na.label, sub: a.request_item?.type || 'Your job', tone: a.status === 'on_site' ? 'green' : 'ready', fn: na.fn, chevron: false }; }
-          const near = (jobs || []).filter((d) => !passed.has(d.request_item?.id));
-          if (near.length > 0) { const it = near[0].request_item; return { label: 'Accept nearest job', sub: it?.type || 'Work nearby', tone: 'green', fn: () => it?.id && accept(it.id), chevron: false }; }
-          return null;
-        })()}
         chatBubble={(() => {
           const mineActive = (myAssigns || []).filter((a) => ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status));
           if (mineActive.length === 0) return null;
           const a = mineActive[0];
-          return { unread: 0, fn: () => setChat({ a, title: `${a.request_item?.type || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) };
+          return { unread: 0, fn: () => setChat({ a, title: `${tradeTitle(a.request_item?.type) || 'Job'} · ${suburbOf(a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) }) };
         })()}
       />
-      </MapReveal>
-        );
-      })()}
-      {/* Operator's live tracker — the SAME confidence experience, worker's lens. Closes the
-          loop: the worker sees what they've done + that the client can see it. */}
+        </View>
+        {/* floating green sheet — carries the online pill + the live job & actions */}
+        <View style={{ position: 'absolute', left: 0, right: 0, top: '40%', bottom: 0, backgroundColor: C.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 26, shadowOffset: { width: 0, height: -10 }, elevation: 14 }}>
+          <View style={{ paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16 }}>
+            <GoOnlineOrb online={profile.is_online} busy={busy} onConfirm={goLive} onGoOffline={handleGoOffline} earningsToday={opEarn.today} onlineSince={onlineSince} />
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 150 }} showsVerticalScrollIndicator={false}>
+      {/* Operator's live tracker — the SAME confidence experience, worker's lens. */}
       {(() => {
         const act = (myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status));
         const rid = act?.request_item?.request?.id;
         if (!rid) return null;
         return <TrackerContainer requestId={rid} perspective="operator" onAction={(action, arg) => {
           const aid = act?.id;
-          if (action === 'open_chat') setChat({ a: act, title: `${act.request_item?.type || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
+          if (action === 'open_chat') setChat({ a: act, title: `${tradeTitle(act.request_item?.type) || 'Job'} · ${suburbOf(act.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: act, it: act.request_item, r: act.request_item?.request }) });
           else if (action === 'start_journey' && aid) mapBeginJourney(aid);
           else if (action === 'arrive' && aid) mapArrive(aid);
           else if (action === 'complete' && aid) { if (prestartNeeds[aid] === true) setPrestart(aid); else if (isRunAssignment(act)) setRunOut(runInfoFor(act)); else setCloseOut(aid); }
@@ -782,24 +1142,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           else if (action === 'open_profile' && arg && onOpenProfile) onOpenProfile(arg);
         }} />;
       })()}
-      {/* dock bar — mirrors Hire's "Post a job" bar, but holds the online toggle. When a live
-          tracker card is showing above it, the dock becomes a separate rounded card with a gap
-          (otherwise its flush-top design collides with the tracker). */}
-      {(() => {
-        const hasTracker = !!(myAssigns || []).find((a) => ['committed', 'accepted', 'en_route', 'on_site', 'complete'].includes(a.status))?.request_item?.request?.id;
-        return (
-      <TouchableOpacity style={[S_.askDock, hasTracker && S_.askDockStandalone, profile.is_online && S_.askDockQuiet]} onPress={toggleOnline} activeOpacity={0.92} disabled={busy}>
-        <View style={{ flex: 1 }}>
-          <Text style={[S_.askDockLabel, profile.is_online && S_.askDockLabelQuiet]}>{profile.is_online ? 'YOU\'RE ONLINE' : 'YOU\'RE OFFLINE'}</Text>
-          <Text style={[S_.askDockT, profile.is_online ? S_.askDockTQuiet : S_.askDockTLg]}>{profile.is_online ? 'Receiving jobs near you' : 'Go online to get work'}</Text>
-        </View>
-        <View style={[S_.sw, profile.is_online && S_.swOn]}>
-          <View style={[S_.swKnob, profile.is_online && S_.swKnobOn]} />
-        </View>
-      </TouchableOpacity>
-        );
-      })()}
-      <View style={{ padding: 24, paddingTop: 24 }}>
+      <View style={{ paddingTop: 8 }}>
 
         {/* Run brief — the moment a worker has an active run, show what/where/cap/drop + the
             "message before you buy" CTA up front, so the details aren't buried in the finish sheet. */}
@@ -808,7 +1151,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           if (!runA) return null;
           const info = runInfoFor(runA);
           return <RunBrief list={info.list} pickup={info.pickup} cap={info.cap} drop={info.drop}
-            onMessage={() => setChat({ a: runA, title: `${runA.request_item?.type || 'Run'} · ${suburbOf(runA.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: runA, it: runA.request_item, r: runA.request_item?.request }) })} />;
+            onMessage={() => setChat({ a: runA, title: `${tradeTitle(runA.request_item?.type) || 'Run'} · ${suburbOf(runA.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: runA, it: runA.request_item, r: runA.request_item?.request }) })} />;
         })()}
 
         {/* offline first-impression — the display hero this screen was missing, pointing at the
@@ -825,6 +1168,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           jobs={jobs}
           passed={passed}
           busyId={busyId}
+          myLoc={myLoc}
           expandedBios={expandedBios}
           setExpandedBios={setExpandedBios}
           onAccept={accept}
@@ -856,7 +1200,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
                 ) : (
                   <View style={S_.capTagWrap}>
                     {readyCaps.slice(0, 4).map((c) => (
-                      <View key={c.id} style={S_.capTag}><Text style={S_.capTagT}>{c.type}</Text></View>
+                      <View key={c.id} style={S_.capTag}><Text style={S_.capTagT}>{tradeTitle(c.type)}</Text></View>
                     ))}
                     {caps.length - Math.min(readyCaps.length, 4) > 0 && (
                       <View style={S_.capTagMuted}><Text style={S_.capTagMutedT}>+{caps.length - Math.min(readyCaps.length, 4)} more</Text></View>
@@ -876,7 +1220,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
                   <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }} activeOpacity={0.7} onPress={() => setDiscSkill(c.type)}>
                     <Icon name={c.kind === 'gear' ? 'gear' : c.kind === 'task' ? 'task' : 'crew'} size={17} color={C.ink} strokeWidth={1.9} />
                     <View style={{ flex: 1 }}>
-                      <Text style={T.bodyStrong}>{c.type}</Text>
+                      <Text style={T.bodyStrong}>{tradeTitle(c.type)}</Text>
                       {r && !r.ready
                         ? <Text style={[T.small, { color: C.amber, marginTop: 2 }]}>Needs: {r.missing.join(', ')}</Text>
                         : <Text style={[T.small, { color: C.mute2, marginTop: 2 }]}>See others ›</Text>}
@@ -904,7 +1248,9 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           </>);
         })()}
       </View>
-    </Animated.ScrollView>
+          </ScrollView>
+        </View>
+      </View>
     )}
     <JobChat
       visible={!!chat}
@@ -929,7 +1275,43 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
         pending: (myAssigns || []).filter((a) => a.status === 'complete').length,   // done, not yet approved → why "earned" can read $0
       }}
     />
+    <RateJob
+      visible={!!ratePrompt}
+      assignmentId={ratePrompt?.assignmentId}
+      rateeName="the client"
+      rateeIsWorker={false}
+      onClose={() => setRatePrompt(null)}
+    />
+    <WorkerMoment
+      visible={!!paidMoment}
+      kind="paid"
+      title="You got paid"
+      big={paidMoment ? `$${(Number(paidMoment.amount) || 0).toLocaleString()}` : ''}
+      sub={`${tradeTitle(paidMoment?.type) || 'Job'} · sent to your bank`}
+      cta="Rate the client"
+      shareText={paidMoment ? `Just earned $${(Number(paidMoment.amount) || 0).toLocaleString()} on SiteCall${paidMoment?.type ? ` doing ${String(paidMoment.type).toLowerCase()}` : ''} 💪 Get paid work on site near you.` : ''}
+      onClose={() => { const m = paidMoment; setPaidMoment(null); if (m?.assignmentId) setRatePrompt({ assignmentId: m.assignmentId }); }}
+    />
+    <WorkerMoment
+      visible={!!shiftMoment}
+      kind="shift"
+      title="You're on shift"
+      big="Have a good one"
+      sub={`${tradeTitle(shiftMoment?.type) || 'Your job'} · you're clocked on. Put the phone away, stay safe — tap Complete when the job's done.`}
+      cta="Let's go"
+      onClose={() => setShiftMoment(null)}
+    />
     <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role="operator" />
+    <PayoutGateSheet
+      visible={payoutGate}
+      onClose={() => setPayoutGate(false)}
+      onReady={() => { setPayoutGate(false); refresh(); }}
+    />
+    <AbnGateSheet
+      visible={abnGate}
+      onClose={() => setAbnGate(false)}
+      onSaved={() => { setAbnGate(false); refresh(); }}
+    />
     <SkillDiscoverySheet skill={discSkill} excludeUserId={session.user.id} onClose={() => setDiscSkill(null)} onOpenProfile={onOpenProfile} />
     <CloseOutSheet
       assignmentId={closeOut}
@@ -952,7 +1334,7 @@ export function OperatorHome({ session, onOpenProfile, onScroll }) {
           pickup={run.pickup}
           onComplete={async () => { const id = run.id; setRunOut(null); await mapComplete(id); }}
           onCancel={() => setRunOut(null)}
-          onMessage={() => setChat({ a: run.a, title: `${run.a.request_item?.type || 'Run'} · ${suburbOf(run.a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
+          onMessage={() => setChat({ a: run.a, title: `${run.tradeTitle(a.request_item?.type) || 'Run'} · ${suburbOf(run.a.request_item?.request?.address_text) || ''}`, sub: 'Job room', info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
         />
       )}
     />
@@ -986,6 +1368,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
   const [chat, setChat] = useState(null);   // { a, title, sub } — the open job room
   const [matClaim, setMatClaim] = useState(null);   // assignment for the materials claim sheet
   const [expandedBios, setExpandedBios] = useState({});   // which job cards have duties/brief expanded
+  const [openJobs, setOpenJobs] = useState({});           // which job cards are expanded (accordion; null = smart default)
   const [closeOut, setCloseOut] = useState(null);   // assignmentId in the close-out gate (compliance) — same gate as OperatorHome
   const [runOut, setRunOut] = useState(null);       // { id, list, cap, a } for the run close-out
   const [prestart, setPrestart] = useState(null);   // assignmentId in the arrival safety-prestart gate — same gate as OperatorHome
@@ -996,6 +1379,8 @@ export function OperatorJobs({ session, onOpenProfile }) {
     try { setUnread(await getUnreadCounts(session.user.id)); } catch (_) {}
   }, [session.user.id]);
   useEffect(() => { refresh(); }, [refresh]);
+  const [refreshing, setRefreshing] = useState(false);
+  const onPull = useCallback(async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }, [refresh]);
   useEffect(() => {
     const t = setInterval(async () => { try { setUnread(await getUnreadCounts(session.user.id)); } catch (_) {} }, 10000);
     return () => clearInterval(t);
@@ -1089,33 +1474,75 @@ export function OperatorJobs({ session, onOpenProfile }) {
     } catch (e) { setMsg('Couldn\'t report: ' + friendly(e)); } finally { setBusy(false); setBusyId(null); }
   }
 
+  // ── Order + group jobs so the screen reads like a rideshare trips list, not a wall of text ──
+  // Urgency rank: the job you're actively doing floats to the top; finished/paid work sinks.
+  const RANK = { on_site: 0, en_route: 1, committed: 2, accepted: 2, complete: 3, approved: 4, cancelled: 5 };
+  const sorted = [...(assigns || [])].sort((a, b) => (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9));
+  // The single most-urgent actionable job opens by default (its action is visible without a tap),
+  // like the current-trip card in a rideshare app. Everything else starts collapsed — progressive
+  // disclosure: the essentials sit on the row, the full brief + actions are one tap away.
+  const heroId = (sorted.find((a) => ['on_site', 'en_route', 'committed', 'accepted'].includes(a.status)) || {}).id;
+  const isOpen = (a) => (openJobs[a.id] != null ? openJobs[a.id] : a.id === heroId);
+  const toggleJob = (id) => setOpenJobs((m) => ({ ...m, [id]: !(m[id] != null ? m[id] : id === heroId) }));
+
   return (
     <View style={{ flex: 1 }}>
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116, flexGrow: 1 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.green} colors={[C.green]} />}>
       <Text style={T.eyebrow}>My jobs</Text>
       {assigns === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : assigns.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No accepted jobs yet.</Text>
-        : assigns.map((a) => {
+        : assigns.length === 0 ? (
+          <EmptyState icon="jobs" title="No jobs yet"
+            sub="When you accept a job it shows up here — with the map, chat and check-in all in one place." />
+        )
+        : sorted.map((a, _i) => {
+          const open = isOpen(a);
+          // Section divider: label the first "finished" (paid/cancelled) card so history reads apart.
+          const isDone = ['approved', 'cancelled'].includes(a.status);
+          const firstDone = isDone && (_i === 0 || !['approved', 'cancelled'].includes(sorted[_i - 1].status));
           const committed = a.status === 'committed' || a.status === 'accepted';
           const next = committed ? ['en_route', 'Start journey']
             : a.status === 'en_route' ? ['on_site', 'Arrived on site']
             : a.status === 'on_site' ? ['complete', 'Mark complete'] : null;
           const st = a.status === 'approved' ? { label: 'Paid', color: C.green }
             : a.status === 'complete' ? { label: 'Awaiting approval', color: C.amber }
+            : a.status === 'cancelled' ? { label: 'Cancelled', color: C.red }
             : a.status === 'on_site' ? { label: 'On site', color: C.green }
             : a.status === 'en_route' ? { label: 'On the way', color: C.indigo }
             : { label: 'Committed', color: C.mute };
+          // Money at a glance, right on the collapsed row.
+          const _it = a.request_item; const _r = _it?.request;
+          const _rate = _it?.rate || _it?.rate_offered;
+          const _hrs = _r?.duration_hours || 4;
+          const payShort = _rate ? (_it?.price_mode === 'job' ? `$${Number(_rate).toLocaleString()}` : `~$${Number(_rate * _hrs).toLocaleString()}`) : null;
+          const unreadN = unread[a.id] || 0;
           return (
-            <View key={a.id} style={S_.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{a.request_item?.type}</Text>
-                <View style={{ backgroundColor: st.color + '1A', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 }}>
-                  <Text style={{ color: st.color, fontWeight: '800', fontSize: 11.5, letterSpacing: 0.2 }}>{st.label}</Text>
+            <React.Fragment key={a.id}>
+            {firstDone && <Text style={[T.eyebrow, { marginTop: 18 }]}>Completed</Text>}
+            <View style={[S_.card, open && { borderColor: st.color + '55', borderWidth: 1 }]}>
+              {/* HEADER — always visible; tap to expand/collapse (progressive disclosure) */}
+              <TouchableOpacity activeOpacity={0.7} onPress={() => toggleJob(a.id)}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+                  <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: st.color }} />
+                  <Text style={[T.heading, { flex: 1 }]} numberOfLines={1}>{tradeTitle(a.request_item?.type)}</Text>
+                  <View style={{ backgroundColor: st.color + '1A', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 }}>
+                    <Text style={{ color: st.color, fontWeight: '800', fontSize: 11.5, letterSpacing: 0.2 }}>{st.label}</Text>
+                  </View>
+                  <Icon name={open ? 'chevronUp' : 'chevronDown'} size={18} color={C.mute2} strokeWidth={2.4} />
                 </View>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 }}>
+                  <Icon name="pin" size={13} color={C.mute2} strokeWidth={2} />
+                  <Text style={[T.data, { color: C.mute, flex: 1 }]} numberOfLines={1}>{suburbOf(a.request_item?.request?.address_text)}</Text>
+                  {payShort && <Text style={{ color: C.green, fontWeight: '800', fontSize: 13.5 }}>{payShort}</Text>}
+                  {!open && unreadN > 0 && <View style={S_.matchBadge}><Text style={S_.matchBadgeT}>{unreadN}</Text></View>}
+                </View>
+              </TouchableOpacity>
+
+              {open && (<>
+              {/* full site address (collapsed row shows only the suburb) */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 10 }}>
                 <Icon name="pin" size={13} color={C.mute2} strokeWidth={2} />
-                <Text style={[T.data, { color: C.mute, flex: 1 }]} numberOfLines={1}>{a.request_item?.request?.address_text}</Text>
+                <Text style={[T.data, { color: C.mute, flex: 1 }]} numberOfLines={2}>{a.request_item?.request?.address_text}</Text>
               </View>
 
               {/* JOB BRIEF — what the worker accepted: pay, timing, client, materials, and the
@@ -1177,11 +1604,11 @@ export function OperatorJobs({ session, onOpenProfile }) {
                   buying the wrong thing is the #1 failure mode of an open run */}
               {isRunAssignment(a) && ['committed', 'accepted', 'en_route', 'on_site'].includes(a.status) && (
                 <TouchableOpacity
-                  onPress={() => setChat({ a, title: `Job room · ${a.request_item?.type || 'Run'}`, sub: suburbOf(a.request_item?.request?.address_text), info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) })}
+                  onPress={() => setChat({ a, title: `Job room · ${tradeTitle(a.request_item?.type) || 'Run'}`, sub: suburbOf(a.request_item?.request?.address_text), info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }) })}
                   activeOpacity={0.9}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.indigo, borderRadius: R.md, paddingVertical: 12, paddingHorizontal: 14, marginTop: 12 }}
                 >
-                  <Text style={{ fontSize: 16 }}>{'💬'}</Text>
+                  <Icon name="chat" size={17} color="#fff" strokeWidth={2.2} />
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14.5 }}>Not sure what's wanted?</Text>
                     <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12, marginTop: 1 }}>Message the client before you buy</Text>
@@ -1195,7 +1622,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
                   style={S_.opMsgBtn}
                   onPress={() => setChat({
                     a,
-                    title: `Job room · ${a.request_item?.type || 'Job'}`,
+                    title: `Job room · ${tradeTitle(a.request_item?.type) || 'Job'}`,
                     sub: suburbOf(a.request_item?.request?.address_text),
                     info: buildJobInfo({ a, it: a.request_item, r: a.request_item?.request }),
                   })}
@@ -1287,7 +1714,9 @@ export function OperatorJobs({ session, onOpenProfile }) {
                   </TouchableOpacity>
                 )
               )}
+              </>)}
             </View>
+            </React.Fragment>
           );
         })}
       {!!msg && <Text style={msg[0] === "✓" ? S_.successText : S_.msg}>{msg}</Text>}
@@ -1330,7 +1759,7 @@ export function OperatorJobs({ session, onOpenProfile }) {
           pickup={run.pickup}
           onComplete={async () => { const id = run.id; setRunOut(null); await complete(id); }}
           onCancel={() => setRunOut(null)}
-          onMessage={() => setChat({ a: run.a, title: `Job room · ${run.a.request_item?.type || 'Run'}`, sub: suburbOf(run.a.request_item?.request?.address_text), info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
+          onMessage={() => setChat({ a: run.a, title: `Job room · ${run.tradeTitle(a.request_item?.type) || 'Run'}`, sub: suburbOf(run.a.request_item?.request?.address_text), info: buildJobInfo({ a: run.a, it: run.a.request_item, r: run.a.request_item?.request }) })}
         />
       )}
     />
@@ -1339,22 +1768,61 @@ export function OperatorJobs({ session, onOpenProfile }) {
 }
 
 /* ============================================================ OPERATOR · EARNINGS */
+// Australian financial year runs 1 July – 30 June. These drive the tax-period summaries.
+function auFyStart(d = new Date()) { const july1 = new Date(d.getFullYear(), 6, 1); return d >= july1 ? july1 : new Date(d.getFullYear() - 1, 6, 1); }
+function auFyLabel(d = new Date()) { const s = auFyStart(d); return `FY${String(s.getFullYear()).slice(2)}–${String(s.getFullYear() + 1).slice(2)}`; }
+function monthStart(d = new Date()) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+function weekStart(d = new Date()) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); const dow = (x.getDay() + 6) % 7; x.setDate(x.getDate() - dow); return x; }
+
 export function OperatorEarnings({ session }) {
   const [assigns, setAssigns] = useState(() => cacheGet('operator-assignments'));   // instant paint
+  const [payouts, setPayouts] = useState([]);   // the real Stripe transfer ledger (status truth)
   const refresh = useCallback(async () => {
     try { const d = await listMyAssignments(); setAssigns(d); cacheSet('operator-assignments', d); }
     catch { setAssigns((p) => (p == null ? [] : p)); }
+    try { setPayouts(await listMyPayouts()); } catch (_) {}
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
-  useRealtime(['assignments'], refresh);
+  useRealtime(['assignments', 'payouts'], refresh);
+  const [refreshing, setRefreshing] = useState(false);
+  const [earnPeriod, setEarnPeriod] = useState('month');   // week · month · year
+  const onPull = useCallback(async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }, [refresh]);
 
   const paid = (assigns || []).filter((a) => a.status === 'approved');
   const pending = (assigns || []).filter((a) => a.status === 'complete');
   const totalPaid = paid.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
   const pendingValue = pending.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
+  // Net-earned by period, for the worker's own records. Plain-English window selector, no "FY" jargon.
+  const nowD = new Date();
+  const earnStarts = { week: weekStart(nowD).getTime(), month: monthStart(nowD).getTime(), year: auFyStart(nowD).getTime() };
+  const paidWhen = (a) => new Date(a.paid_at || a.completed_at || 0).getTime();
+  const inEarnPeriod = paid.filter((a) => paidWhen(a) >= earnStarts[earnPeriod]);
+  const periodPaid = inEarnPeriod.reduce((n, a) => n + (Number(a.net_amount) || 0), 0);
+  const earnCaption = earnPeriod === 'week' ? 'this week'
+    : earnPeriod === 'month' ? nowD.toLocaleDateString('en-AU', { month: 'long' })
+    : 'financial year so far';
+  const EARN_PERIODS = [['week', 'This week'], ['month', 'This month'], ['year', 'This year']];
+  // Map the real payout status onto each settled job, and flag any that didn't land.
+  const poByAssign = {};
+  for (const p of payouts) if (p.assignment_id && !poByAssign[p.assignment_id]) poByAssign[p.assignment_id] = p;
+  const troubled = payouts.filter((p) => p.status === 'failed' || p.status === 'pending');
+
+  const money = (n) => '$' + Number(n || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Group settled jobs by month → a tidy grouped ledger (one card per month) instead of a wall of
+  // identical cards. Each group carries its own subtotal, like Uber's earnings history.
+  const groups = [];
+  const gIndex = {};
+  for (const a of paid) {
+    const d = new Date(a.paid_at || a.completed_at || 0);
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    if (gIndex[key] == null) { gIndex[key] = groups.length; groups.push({ key, label: d.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), items: [], total: 0 }); }
+    const g = groups[gIndex[key]];
+    g.items.push(a); g.total += Number(a.net_amount) || 0;
+  }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 116 }}>
+    <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 140 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPull} tintColor={C.green} colors={[C.green]} />}>
       <Text style={T.eyebrow}>Earnings</Text>
       <View style={[S_.card, { marginTop: 12, alignItems: 'center', paddingVertical: 26 }]}>
         <Text style={T.label}>Paid to you</Text>
@@ -1362,6 +1830,24 @@ export function OperatorEarnings({ session }) {
         <Text style={[T.small, { marginTop: 2 }]}>{paid.length} job{paid.length !== 1 ? 's' : ''} settled · net after fees</Text>
         <Text style={[T.tiny, { marginTop: 6, color: C.mute2, textAlign: 'center', paddingHorizontal: 12 }]}>SiteCall keeps 10% of labour + $3 per task. Tips & travel are 100% yours.</Text>
       </View>
+
+      {/* Period summary — for the worker's own records. Pick a window; the figure reacts. */}
+      <View style={[S_.seg, { marginBottom: 12 }]}>
+        {EARN_PERIODS.map(([key, label]) => {
+          const on = earnPeriod === key;
+          return (
+            <TouchableOpacity key={key} style={[S_.segBtn, on && S_.segBtnOn]} onPress={() => setEarnPeriod(key)} activeOpacity={0.85}>
+              <Text style={[S_.segT, on && S_.segTOn]}>{label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View style={[S_.card, { marginTop: 0, alignItems: 'center', paddingVertical: 18 }]}>
+        <Text style={[T.heading, { fontSize: 30, color: C.green }]}>${periodPaid.toLocaleString()}</Text>
+        <Text style={[T.small, { marginTop: 3 }]}>{inEarnPeriod.length} job{inEarnPeriod.length !== 1 ? 's' : ''} · net {earnCaption}</Text>
+        {earnPeriod === 'year' && <Text style={[T.tiny, { color: C.mute2, marginTop: 4 }]}>Australian financial year · 1 Jul – 30 Jun</Text>}
+      </View>
+      <Text style={[T.tiny, { color: C.mute2, marginBottom: 8, paddingHorizontal: 2 }]}>Net earned (after fees), for your own tax records. Keep your invoices — you handle your own tax &amp; super.</Text>
 
       {pending.length > 0 && (
         <View style={[S_.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
@@ -1373,24 +1859,72 @@ export function OperatorEarnings({ session }) {
         </View>
       )}
 
+      {troubled.length > 0 && (
+        <View style={[S_.card, { borderWidth: 1, borderColor: C.red, backgroundColor: C.red + '0D' }]}>
+          <Text style={[T.label, { color: C.red }]}>{troubled.some((p) => p.status === 'failed') ? 'A payout didn’t go through' : 'A payout is still processing'}</Text>
+          <Text style={[T.small, { marginTop: 3, lineHeight: 18 }]}>
+            {troubled.some((p) => p.status === 'failed')
+              ? 'Your pay for a completed job couldn’t be sent. This is almost always because payouts aren’t fully set up — open Account → Payouts & bank to finish, and we’ll retry automatically.'
+              : 'Your pay is on its way — bank transfers can take a moment to show. Check back shortly.'}
+          </Text>
+        </View>
+      )}
+
       <Text style={[T.eyebrow, { marginTop: 8 }]}>History</Text>
       {assigns === null ? <ActivityIndicator color={C.indigo} style={{ marginTop: 12 }} />
-        : paid.length === 0 ? <Text style={[T.small, { marginTop: 8 }]}>No settled jobs yet. Finish a job and get it approved to see earnings here.</Text>
-        : paid.map((a) => (
-          <View key={a.id} style={S_.card}>
-            <View style={S_.rowBetween}>
-              <Text style={T.heading}>{a.request_item?.type}</Text>
-              <Text style={T.money}>${Number(a.net_amount || 0).toLocaleString()}</Text>
+        : paid.length === 0 ? (
+          <EmptyState icon="earnings" title="No earnings yet"
+            sub="Finish a job and get it approved — your pay lands here, grouped by month for your tax records." />
+        )
+        : groups.map((g) => (
+          <View key={g.key} style={{ marginTop: 10 }}>
+            <View style={es.groupHead}>
+              <Text style={es.groupTitle}>{g.label}</Text>
+              <Text style={es.groupTotal}>{money(g.total)}</Text>
             </View>
-            <View style={S_.rowBetween}>
-              <Text style={[T.data, { color: C.mute, marginTop: 4, flex: 1 }]} numberOfLines={1}>{suburbOf(a.request_item?.request?.address_text)}</Text>
-              <Text style={[T.label, { fontSize: 9, marginTop: 4, marginLeft: 8 }]}>{a.paid_at ? new Date(a.paid_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}</Text>
+            <View style={es.groupCard}>
+              {g.items.map((a, i) => {
+                const po = poByAssign[a.id];
+                const pill = po?.status === 'failed' ? { t: 'Payout failed', c: C.red }
+                  : po?.status === 'pending' ? { t: 'Processing', c: C.amber }
+                  : po?.status === 'paid' ? { t: 'Paid', c: C.green } : null;
+                return (
+                  <View key={a.id} style={[es.row, i > 0 && es.rowDivider]}>
+                    <View style={es.icon}><Icon name={iconForType(a.request_item?.type)} size={17} color={C.green} strokeWidth={2.2} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={es.rowTitle} numberOfLines={1}>{tradeTitle(a.request_item?.type)}</Text>
+                      <Text style={es.rowSub} numberOfLines={1}>
+                        {suburbOf(a.request_item?.request?.address_text)}
+                        {a.paid_at ? ` · ${new Date(a.paid_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` : ''}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={es.rowAmt}>{money(a.net_amount)}</Text>
+                      {pill ? <Text style={[es.rowPill, { color: pill.c }]}>{pill.t}</Text> : null}
+                    </View>
+                  </View>
+                );
+              })}
             </View>
           </View>
         ))}
     </ScrollView>
   );
 }
+
+const es = StyleSheet.create({
+  groupHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingHorizontal: 4, marginBottom: 8 },
+  groupTitle: { fontSize: 13, fontWeight: '800', color: C.ink, letterSpacing: -0.2 },
+  groupTotal: { fontSize: 13, fontWeight: '800', color: C.mute },
+  groupCard: { backgroundColor: C.panel, borderRadius: R.lg, ...E.sm, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 13 },
+  rowDivider: { borderTopWidth: 1, borderTopColor: C.line },
+  icon: { width: 36, height: 36, borderRadius: 11, backgroundColor: C.green + '14', alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { fontSize: 15, fontWeight: '700', color: C.ink, letterSpacing: -0.2 },
+  rowSub: { fontSize: 12.5, color: C.mute, marginTop: 2 },
+  rowAmt: { fontSize: 15.5, fontWeight: '800', color: C.ink },
+  rowPill: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.2, marginTop: 3 },
+});
 
 /* ============================================================ ACCOUNT (both roles) */
 export function Account({ session, role, onNameSaved, onOpenProfile }) {
@@ -1403,13 +1937,15 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
   const [nameMsg, setNameMsg] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);   // server-checked; the panel only appears for admins
   const [helpOpen, setHelpOpen] = useState(false);
+  const [payReady, setPayReady] = useState(null);  // operator payout status → drives the live "Active/Set up" badge
 
   useEffect(() => {
     (async () => {
       try { const p = await getMyProfile(); if (p.full_name) { setSavedName(p.full_name); setName(p.full_name); cacheSet('profile-name', p.full_name); } } catch (_) {}
     })();
     (async () => { try { setIsAdmin(await amIAdmin()); } catch (_) {} })();
-  }, []);
+    if (role === 'operator') (async () => { try { const st = await payoutStatus(); setPayReady(!!st?.payouts_enabled); } catch (_) {} })();
+  }, [role, screen]);
 
   async function saveName() {
     if (!name.trim() || saving) return;
@@ -1496,10 +2032,10 @@ export function Account({ session, role, onNameSaved, onOpenProfile }) {
         : [['company', 'Company & ABN', 'Manage', () => setScreen('business')], ['gear', 'Vehicles & plant', 'Manage', () => setScreen('rig')], ['pin', 'Saved sites', 'Soon', () => setComingSoon('Saved sites')], ['payment', 'Payment methods', 'Soon', () => setComingSoon('Payment methods')]]} />
 
       <AccountSection title={role === 'operator' ? 'Payouts' : 'Business'} rows={role === 'operator'
-        ? [['payment', 'Payouts & bank', 'Set up', () => setScreen('payouts')], ['earnings', 'Payout speed', 'Soon', () => setComingSoon('Payout speed')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
+        ? [['payment', 'Payouts & bank', payReady === true ? 'Active' : payReady === false ? 'Set up' : '', () => setScreen('payouts')], ['earnings', 'Payout speed', 'Manage', () => setScreen('payouts')], ['activity', 'Tax summary', 'Soon', () => setComingSoon('Tax summary')]]
         : [['users', 'Team seats', 'Soon', () => setComingSoon('Team seats')], ['payment', 'Monthly billing', 'Soon', () => setComingSoon('Monthly billing')], ['trending', 'Spend reporting', 'Soon', () => setComingSoon('Spend reporting')]]} />
 
-      <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Active', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
+      <AccountSection title="Settings" rows={[['bell', 'Notifications', 'Soon', () => setComingSoon('Notifications')], ['insurance', 'Verified network', 'Soon', () => setComingSoon('Verified network')], ['settings', 'Help & support', '', () => setHelpOpen(true)]]} />
 
       <HelpCenter visible={helpOpen} onClose={() => setHelpOpen(false)} role={role === 'operator' ? 'operator' : 'client'} />
 

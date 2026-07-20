@@ -2,10 +2,10 @@
 // Self-contained. Props: onClose()
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
-import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential, isAutoVerifiable } from './credentialsService';
+import { listCredentialTypes, listMyCredentials, addMyCredential, removeMyCredential, verifyMyCredential, isAutoVerifiable, requiredTicketsForTrades } from './credentialsService';
 import CredentialEvidence from './CredentialEvidence';
-import { getMyProfile } from './operatorService';
-import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn } from './accountService';
+import { getMyProfile, listMyCapabilities } from './operatorService';
+import { setMyAbn, abnValid, normalizeAbn, setMyIdentity, verifyMyAbn, getMyIdentity } from './accountService';
 import { formatDMY, dmyToISO, isoToDMY } from './dateFormat';
 import { C, MONO, S, R, T, shadowSm } from './theme';
 import Icon from './Icon';
@@ -13,12 +13,23 @@ import Icon from './Icon';
 const formatAbn = (clean) => (clean || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4');
 
 const TIER_LABEL = { baseline: 'Baseline', ticket: 'Ticket', hrwl: 'High Risk Licence', induction: 'Induction', licence: 'Trade licence', insurance: 'Insurance' };
+// "Add more" folders, in order. Everything you DON'T already hold gets tucked into one of these,
+// collapsed by default, so the screen opens short instead of listing 40 tickets at once.
+const CATS = [
+  { key: 'baseline', label: 'The basics', sub: 'White Card, driver licence', icon: 'crew', color: C.green },
+  { key: 'ticket', label: 'Tickets', sub: 'Traffic control, rail, asbestos…', icon: 'verified', color: C.indigo },
+  { key: 'induction', label: 'Inductions', sub: 'Site & safety inductions', icon: 'check', color: '#B87514' },
+  { key: 'licence', label: 'Trade licences', sub: 'Your trade qualifications', icon: 'jobs', color: '#2C6E8F' },
+  { key: 'hrwl', label: 'High-risk work licences', sub: 'Cranes, rigging, scaffolding…', icon: 'gear', color: '#C0492B' },
+  { key: 'insurance', label: 'Insurance', sub: 'Public liability & more', icon: 'insurance', color: C.green },
+];
+const catOf = (t) => (t.needs_provider ? 'insurance' : (t.self_declared ? 'licence' : (t.tier || 'ticket')));
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T00:00:00').getTime());
 // display status: self-declared cover expired past its date shows Expired even when 'unverified'.
 const displayStatus = (held) => (held && held.expires_at && held.expires_at < todayISO()) ? 'expired' : (held ? held.status : 'none');
 const STATUS_COLOR = { verified: C.green, unverified: C.amber, expired: C.red, suspended: C.red, review: C.amber, none: C.mute };
-const STATUS_LABEL = { verified: '✓ Verified', unverified: 'Unverified', expired: 'Expired', suspended: 'Suspended', review: 'In review' };
+const STATUS_LABEL = { verified: '✓ Verified', unverified: 'Added', expired: 'Expired', suspended: 'Suspended', review: 'Checking' };
 
 export default function CredentialsScreen({ onClose }) {
   const [types, setTypes] = useState(null);
@@ -34,6 +45,8 @@ export default function CredentialsScreen({ onClose }) {
   const [msg, setMsg] = useState('');
   const [verifying, setVerifying] = useState(null);   // id being verified
   const [evidenceFor, setEvidenceFor] = useState(null);   // credential_type id whose photo panel is open
+  const [openCat, setOpenCat] = useState({});             // which "add more" folder is expanded (collapsed by default)
+  const [reqIds, setReqIds] = useState(() => new Set());  // credential_ids the worker's trades require
   const [abnSaved, setAbnSaved] = useState(null);     // stored ABN (digits) or null
   const [abnStatus, setAbnStatus] = useState(null);   // 'valid' | 'verified' | null
   const [abnInput, setAbnInput] = useState('');
@@ -44,9 +57,9 @@ export default function CredentialsScreen({ onClose }) {
     setAbnBusy(true); setAbnMsg('');
     try {
       const r = await verifyMyAbn();
-      if (r && r.status === 'verified') { setAbnStatus('verified'); setAbnMsg('✓ Verified against the ABR.'); }
-      else setAbnMsg(r && r.detail ? `Needs a check: ${r.detail}` : 'Sent for manual review.');
-    } catch (e) { setAbnMsg('Verify failed: ' + (e.message || String(e))); } finally { setAbnBusy(false); }
+      if (r && r.status === 'verified') { setAbnStatus('verified'); setAbnMsg('✓ Your ABN is confirmed.'); }
+      else setAbnMsg(r && r.detail ? r.detail : 'Added — we’ll take a closer look for you.');
+    } catch (e) { setAbnMsg('Couldn’t check that just now — please try again.'); } finally { setAbnBusy(false); }
   }
   const [idSaved, setIdSaved] = useState(null);       // { legal_name, date_of_birth } or null
   const [idEditing, setIdEditing] = useState(false);
@@ -78,28 +91,96 @@ export default function CredentialsScreen({ onClose }) {
     setVerifying(id); setMsg('');
     try {
       const res = await verifyMyCredential(id);
-      if (res && res.status === 'verified') setMsg('✓ Verified against the NSW register.');
-      else setMsg(res && res.detail ? `Sent for review: ${res.detail}` : 'Sent for manual review.');
+      if (res && res.status === 'verified') setMsg('✓ Verified.');
+      else setMsg(res && res.detail ? res.detail : 'Added — we’ll check this one for you.');
       await refresh();
-    } catch (e) { setMsg('Verify failed: ' + (e.message || String(e))); } finally { setVerifying(null); }
+    } catch (e) { setMsg('Couldn’t check that just now — please try again.'); } finally { setVerifying(null); }
   }
 
   const refresh = useCallback(async () => {
     try {
-      const [t, m, p] = await Promise.all([listCredentialTypes(), listMyCredentials(), getMyProfile().catch(() => null)]);
+      // capabilities from the profile; the sensitive identity/ABN PII comes from the definer function
+      // (those columns are column-REVOKEd on profiles — 0067 — so a direct select can't read them).
+      const [t, m, p, id, myCaps] = await Promise.all([
+        listCredentialTypes(), listMyCredentials(),
+        getMyProfile().catch(() => null), getMyIdentity().catch(() => ({})),
+        listMyCapabilities().catch(() => []),
+      ]);
       setTypes(t); setMine(m);
-      if (p) {
-        setCaps({ can_work: p.can_work, can_task: p.can_task });
-        setAbnSaved(p.abn || null);
-        setAbnStatus(p.abn_status || null);
-        setIdSaved(p.legal_name ? { legal_name: p.legal_name, date_of_birth: p.date_of_birth } : null);
-      }
+      if (p) setCaps({ can_work: p.can_work, can_task: p.can_task });
+      setAbnSaved(id.abn || null);
+      setAbnStatus(id.abn_status || (p && p.abn_status) || null);
+      setIdSaved(id.legal_name ? { legal_name: id.legal_name, date_of_birth: id.date_of_birth } : null);
+      // Tickets the worker's chosen trades require → the tailored "Required" section.
+      const tradeIds = (myCaps || []).map((c) => c.trade_id).filter(Boolean);
+      const req = tradeIds.length ? await requiredTicketsForTrades(tradeIds).catch(() => []) : [];
+      setReqIds(new Set(req.map((r) => r.credential_id)));
     } catch (e) { setMsg(e.message || String(e)); setTypes([]); }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
   const heldById = {};
   mine.forEach((c) => { heldById[c.credential_id] = c; });
+
+  // One row — reused for the "on file" list and inside the collapsible "add more" folders.
+  function renderRow(t) {
+    const held = heldById[t.id];
+    const ds = displayStatus(held);
+    const autoVerify = isAutoVerifiable(t);
+    // Photo-evidence path: held, not yet verified, and NO free register check.
+    const canEvidence = held && ds !== 'verified' && !autoVerify;
+    return (
+      <View key={t.id}>
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name}>{t.name}</Text>
+            <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${isoToDMY(held.expires_at)}` : ''}</Text>
+          </View>
+          {held ? (
+            <View style={styles.heldRight}>
+              {held.status !== 'verified' && autoVerify && (
+                <TouchableOpacity style={styles.verifyBtn} onPress={() => verify(held.id)} disabled={verifying === held.id}>
+                  <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Check'}</Text>
+                </TouchableOpacity>
+              )}
+              {canEvidence && (
+                <TouchableOpacity style={styles.photoBtn} onPress={() => setEvidenceFor(evidenceFor === t.id ? null : t.id)}>
+                  <Text style={styles.photoBtnT}>{held.evidence_url ? '📷 ✓' : '📷 ID'}</Text>
+                </TouchableOpacity>
+              )}
+              {(() => {
+                const selfDecl = !!t.self_declared;
+                const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
+                const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
+                return (
+                  <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
+                    <Text style={[styles.statusText, { color }]}>{label}</Text>
+                  </View>
+                );
+              })()}
+              <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(t)}>
+              <Text style={styles.addText}>+ Add</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        {canEvidence && evidenceFor === t.id && (
+          <CredentialEvidence credentialId={t.id} existingPath={held.evidence_url} onDone={() => refresh()} />
+        )}
+      </View>
+    );
+  }
+
+  // Partition into three: REQUIRED for the trades you picked (tailored), ALSO ON FILE (other held
+  // tickets), and ADD MORE (everything else, in collapsed folders). `types` is null until loaded.
+  const typeList = types || [];
+  const requiredList = typeList.filter((t) => reqIds.has(t.id));
+  const heldList = typeList.filter((t) => heldById[t.id] && !reqIds.has(t.id));
+  const notHeldByCat = {};
+  typeList.filter((t) => !heldById[t.id] && !reqIds.has(t.id)).forEach((t) => { const k = catOf(t); (notHeldByCat[k] = notHeldByCat[k] || []).push(t); });
+  const addCats = CATS.map((cat) => ({ cat, items: notHeldByCat[cat.key] || [] })).filter((g) => g.items.length > 0);
 
   function resetAddForm() { setAdding(null); setNumber(''); setExpiry(''); setProvider(''); setCardNumber(''); setCredState('NSW'); setMsg(''); }
   async function save() {
@@ -142,7 +223,7 @@ export default function CredentialsScreen({ onClose }) {
           <Text style={styles.h1}>{adding.name}</Text>
           <Text style={styles.tier}>{adding.needs_provider ? 'Insurance' : adding.self_declared ? 'Trade licence' : (TIER_LABEL[adding.tier] || adding.tier)}{adding.renews_years ? ` · renews every ${adding.renews_years}yr` : ''}</Text>
         </View>
-        <ScrollView contentContainerStyle={{ padding: S.xl }}>
+        <ScrollView contentContainerStyle={{ padding: S.xl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
           {adding.needs_provider && (
             <>
               <Text style={styles.label}>Insurer / provider</Text>
@@ -172,11 +253,11 @@ export default function CredentialsScreen({ onClose }) {
             </>
           )}
           <Text style={styles.hint}>{adding.self_declared
-            ? "Saved as self-declared — we record what you enter and flag it as expired past its date. We don't verify it against a register."
-            : "You'll be able to upload a photo of the card and get it verified. For now it's saved as unverified — verified tickets unlock high-risk jobs."}</Text>
+            ? "We'll save this as you enter it and remind you before it expires. No register to check it against — just keep it current."
+            : "Save it now, then check it or add a photo. Verified tickets open up the jobs that need them."}</Text>
           {!!msg && <Text style={styles.err}>{msg}</Text>}
           <TouchableOpacity style={[styles.primary, busy && { opacity: 0.6 }]} onPress={save} disabled={busy}>
-            <Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save credential'}</Text>
+            <Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save'}</Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -187,29 +268,29 @@ export default function CredentialsScreen({ onClose }) {
     <View style={styles.screen}>
       <View style={styles.head}>
         {onClose && <TouchableOpacity onPress={onClose}><Text style={styles.back}>‹ Done</Text></TouchableOpacity>}
-        <Text style={styles.h1}>Tickets & expiry</Text>
-        <Text style={styles.tier}>Verified tickets unlock the jobs that require them.</Text>
+        <Text style={styles.h1}>Your tickets</Text>
+        <Text style={styles.tier}>Add your White Card and any licences — verified ones open up more jobs.</Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 130 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
         {caps && (
           <View style={styles.capBanner}>
             <View style={styles.capRow}>
               <Text style={styles.capIcon}>{caps.can_work ? '✓' : '○'}</Text>
               <Text style={[styles.capText, caps.can_work && styles.capOn]}>
-                {caps.can_work ? 'Cleared for site work' : 'Add a verified White Card to work sites'}
+                {caps.can_work ? 'Cleared for site work' : 'Add your White Card to work on sites'}
               </Text>
             </View>
             <View style={styles.capRow}>
               <Text style={styles.capIcon}>{caps.can_task ? '✓' : '○'}</Text>
               <Text style={[styles.capText, caps.can_task && styles.capOn]}>
-                {caps.can_task ? 'Cleared for driving tasks' : 'Add a verified licence + vehicle for tasks'}
+                {caps.can_task ? 'Cleared for driving tasks' : 'Add a licence + vehicle for driving tasks'}
               </Text>
             </View>
           </View>
         )}
         {/* Identity — legal name + DOB. The anchor a register/DVS check matches against. Sensitive PII. */}
         <View style={styles.abnCard}>
-          <Text style={styles.abnLabel}>Your identity</Text>
+          <Text style={styles.abnLabel}>About you</Text>
           {idSaved && !idEditing ? (
             <View style={styles.abnRow}>
               <View style={{ flex: 1 }}>
@@ -222,14 +303,14 @@ export default function CredentialsScreen({ onClose }) {
             </View>
           ) : (
             <>
-              <Text style={styles.abnHint}>Your full legal name and date of birth — used only to check your tickets & licences against the registers, never shown publicly.</Text>
+              <Text style={styles.abnHint}>Your full name and date of birth — used only to check your tickets, never shown to anyone.</Text>
               <Text style={styles.label}>Full legal name</Text>
               <TextInput style={styles.input} value={idName} onChangeText={setIdName} placeholder="As on your licence / White Card" placeholderTextColor={C.mute2} />
               <Text style={styles.label}>Date of birth</Text>
               <TextInput style={styles.input} value={idDob} onChangeText={(t) => setIdDob(formatDMY(t))} placeholder="DD/MM/YYYY" placeholderTextColor={C.mute2} keyboardType="number-pad" />
               {!!idMsg && <Text style={styles.err}>{idMsg}</Text>}
               <TouchableOpacity style={[styles.abnSave, idBusy && { opacity: 0.5 }]} disabled={idBusy} onPress={saveIdentity}>
-                <Text style={styles.abnSaveT}>{idBusy ? 'Saving…' : 'Save identity'}</Text>
+                <Text style={styles.abnSaveT}>{idBusy ? 'Saving…' : 'Save'}</Text>
               </TouchableOpacity>
             </>
           )}
@@ -245,7 +326,7 @@ export default function CredentialsScreen({ onClose }) {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.abnValue}>{formatAbn(abnSaved)}</Text>
                   <Text style={[styles.abnOk, abnStatus !== 'verified' && { color: C.mute }]}>
-                    {abnStatus === 'verified' ? '✓ Verified against the ABR' : 'Valid format · not yet register-checked'}
+                    {abnStatus === 'verified' ? '✓ Confirmed with the ABR' : 'Saved — not checked yet'}
                   </Text>
                 </View>
                 <TouchableOpacity onPress={() => { setAbnInput(abnSaved); setAbnSaved(null); setAbnMsg(''); }}>
@@ -254,7 +335,7 @@ export default function CredentialsScreen({ onClose }) {
               </View>
               {abnStatus !== 'verified' && (
                 <TouchableOpacity style={[styles.abnSave, abnBusy && { opacity: 0.5 }]} disabled={abnBusy} onPress={verifyAbn}>
-                  <Text style={styles.abnSaveT}>{abnBusy ? 'Checking…' : 'Verify against the ABR'}</Text>
+                  <Text style={styles.abnSaveT}>{abnBusy ? 'Checking…' : 'Check my ABN'}</Text>
                 </TouchableOpacity>
               )}
               {!!abnMsg && <Text style={[styles.hint, { marginTop: 8 }]}>{abnMsg}</Text>}
@@ -278,8 +359,8 @@ export default function CredentialsScreen({ onClose }) {
               ) : null}
               {!!abnMsg && <Text style={styles.err}>{abnMsg}</Text>}
               <TouchableOpacity
-                style={[styles.abnSave, (!abnValid(abnInput) || abnBusy) && { opacity: 0.5 }]}
-                disabled={!abnValid(abnInput) || abnBusy}
+                style={[styles.abnSave, (abnBusy || !abnInput.trim()) && { opacity: 0.5 }]}
+                disabled={abnBusy || !abnInput.trim()}
                 onPress={saveAbn}
               >
                 <Text style={styles.abnSaveT}>{abnBusy ? 'Saving…' : 'Save ABN'}</Text>
@@ -288,69 +369,51 @@ export default function CredentialsScreen({ onClose }) {
           )}
         </View>
         {!!msg && <Text style={styles.err}>{msg}</Text>}
-        {types.map((t) => {
-          const held = heldById[t.id];
-          const ds = displayStatus(held);
-          const autoVerify = isAutoVerifiable(t);
-          // Photo-evidence path: held, not yet verified, and NO free register check (driver's
-          // licence, HRWL, insurance, trade licences). The honest interim for those.
-          const canEvidence = held && ds !== 'verified' && !autoVerify;
-          return (
-            <View key={t.id}>
-              <View style={styles.row}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.name}>{t.name}</Text>
-                  <Text style={styles.sub}>{t.needs_provider ? 'Insurance' : t.self_declared ? 'Trade licence' : (TIER_LABEL[t.tier] || t.tier)}{held && held.provider ? ` · ${held.provider}` : ''}{held && held.expires_at ? ` · exp ${isoToDMY(held.expires_at)}` : ''}</Text>
-                </View>
-                {held ? (
-                  <View style={styles.heldRight}>
-                    {/* register check only where we actually have a live register (White Card etc.) */}
-                    {held.status !== 'verified' && autoVerify && (
-                      <TouchableOpacity
-                        style={styles.verifyBtn}
-                        onPress={() => verify(held.id)}
-                        disabled={verifying === held.id}
-                      >
-                        <Text style={styles.verifyText}>{verifying === held.id ? '…' : 'Verify'}</Text>
-                      </TouchableOpacity>
-                    )}
-                    {/* photo ID toggle for the no-register interim */}
-                    {canEvidence && (
-                      <TouchableOpacity
-                        style={styles.photoBtn}
-                        onPress={() => setEvidenceFor(evidenceFor === t.id ? null : t.id)}
-                      >
-                        <Text style={styles.photoBtnT}>{held.evidence_url ? '📷 ✓' : '📷 ID'}</Text>
-                      </TouchableOpacity>
-                    )}
-                    {(() => {
-                      const selfDecl = !!t.self_declared;
-                      const label = ds === 'expired' ? 'Expired' : (selfDecl && ds === 'unverified' ? 'On file' : (STATUS_LABEL[ds] || ds));
-                      const color = ds === 'expired' ? C.red : (selfDecl && ds === 'unverified' ? C.mute : (STATUS_COLOR[ds] || C.mute));
-                      return (
-                        <View style={[styles.statusPill, { backgroundColor: color + '1A' }]}>
-                          <Text style={[styles.statusText, { color }]}>{label}</Text>
-                        </View>
-                      );
-                    })()}
-                    <TouchableOpacity onPress={() => remove(held.id)}><Text style={styles.rm}>✕</Text></TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(t)}>
-                    <Text style={styles.addText}>+ Add</Text>
+
+        {/* Tailored to the trades they picked — exactly the tickets those jobs need, nothing else */}
+        {requiredList.length > 0 && (
+          <>
+            <Text style={styles.sectionH}>FOR YOUR TRADES</Text>
+            <Text style={styles.sectionSub}>The tickets the work you picked needs. Add these to start accepting those jobs.</Text>
+            {requiredList.map(renderRow)}
+          </>
+        )}
+
+        {/* Other tickets you already hold */}
+        {heldList.length > 0 && (
+          <>
+            <Text style={styles.sectionH}>{requiredList.length > 0 ? 'ALSO ON FILE' : 'ON FILE'}</Text>
+            {heldList.map(renderRow)}
+          </>
+        )}
+
+        {/* Everything else, tucked into collapsible folders so the screen opens short */}
+        {addCats.length > 0 && (
+          <>
+            <Text style={styles.sectionH}>ADD MORE</Text>
+            {addCats.map(({ cat, items }) => {
+              const open = !!openCat[cat.key];
+              const accent = cat.color || C.indigo;
+              return (
+                <View key={cat.key} style={[styles.folder, open && { borderColor: accent + '44', borderWidth: 1 }]}>
+                  <TouchableOpacity style={styles.folderHead} activeOpacity={0.7}
+                    onPress={() => setOpenCat((p) => ({ ...p, [cat.key]: !open }))}>
+                    <View style={[styles.folderGlyph, { backgroundColor: accent + '18' }]}>
+                      <Icon name={cat.icon || 'verified'} size={19} color={accent} strokeWidth={2.1} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.folderTitle}>{cat.label}</Text>
+                      <Text style={styles.folderSub}>{cat.sub}</Text>
+                    </View>
+                    {!open && <View style={styles.folderCount}><Text style={styles.folderCountT}>{items.length}</Text></View>}
+                    <Icon name={open ? 'chevronUp' : 'chevronDown'} size={18} color={C.mute2} strokeWidth={2.4} />
                   </TouchableOpacity>
-                )}
-              </View>
-              {canEvidence && evidenceFor === t.id && (
-                <CredentialEvidence
-                  credentialId={t.id}
-                  existingPath={held.evidence_url}
-                  onDone={() => refresh()}
-                />
-              )}
-            </View>
-          );
-        })}
+                  {open && <View style={styles.folderBody}>{items.map(renderRow)}</View>}
+                </View>
+              );
+            })}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -359,13 +422,13 @@ export default function CredentialsScreen({ onClose }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.canvas },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  head: { paddingHorizontal: S.xl, paddingTop: 48, paddingBottom: 12 },
-  back: { color: C.indigo, fontWeight: '600', fontSize: 15, marginBottom: 10 },
-  h1: { fontSize: 24, fontWeight: '800', letterSpacing: -0.5, color: C.ink },
+  head: { paddingHorizontal: S.xl, paddingTop: 22, paddingBottom: 16 },
+  back: { color: C.mute, fontWeight: '700', fontSize: 14, marginBottom: 12 },
+  h1: { fontSize: 27, fontWeight: '900', letterSpacing: -0.7, color: C.ink },
   tier: { fontSize: 13, color: C.mute, marginTop: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, borderRadius: R.md, paddingHorizontal: 14, paddingVertical: 13, marginBottom: 8 },
   name: { fontSize: 14.5, fontWeight: '600', color: C.ink },
-  sub: { fontSize: 11, color: C.mute2, marginTop: 2, fontFamily: MONO },
+  sub: { fontSize: 11, color: C.mute2, marginTop: 2 },
   heldRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   verifyBtn: { backgroundColor: C.indigo, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 7 },
   verifyText: { color: '#fff', fontWeight: '700', fontSize: 12 },
@@ -375,7 +438,7 @@ const styles = StyleSheet.create({
   abnCard: { backgroundColor: C.panel, borderRadius: R.lg, padding: 14, marginBottom: 18, ...shadowSm },
   abnLabel: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 },
   abnRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  abnValue: { fontSize: 17, fontWeight: '800', color: C.ink, fontFamily: MONO, letterSpacing: 0.5 },
+  abnValue: { fontSize: 17, fontWeight: '800', color: C.ink, letterSpacing: 0.5 },
   abnOk: { fontSize: 12, color: C.green, fontWeight: '700', marginTop: 3 },
   abnEdit: { fontSize: 13, fontWeight: '700', color: C.indigo },
   idDisplayName: { fontSize: 16, fontWeight: '800', color: C.ink },
@@ -393,14 +456,24 @@ const styles = StyleSheet.create({
   capIcon: { fontSize: 15, fontWeight: '800', color: C.mute, width: 18, textAlign: 'center' },
   capText: { fontSize: 13.5, color: C.mute, fontWeight: '600', flex: 1 },
   capOn: { color: C.green, fontWeight: '700' },
-  statusText: { fontSize: 10.5, fontWeight: '700', fontFamily: MONO, letterSpacing: 0.3 },
+  statusText: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.3 },
   rm: { color: C.mute2, fontSize: 15, paddingHorizontal: 4 },
   addBtn: { backgroundColor: C.indigo + '14', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
   addText: { color: C.indigo, fontWeight: '700', fontSize: 13 },
   label: { fontSize: 12, fontWeight: '600', color: C.mute, marginBottom: 6, marginTop: 14 },
-  input: { backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, borderRadius: R.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: C.ink },
+  input: { backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, borderRadius: R.lg, paddingHorizontal: 16, paddingVertical: 15, fontSize: 16, color: C.ink, ...shadowSm },
   hint: { fontSize: 12, color: C.mute2, marginTop: 14, lineHeight: 17 },
   err: { color: C.red, fontSize: 13, marginBottom: 10 },
   primary: { backgroundColor: C.indigo, borderRadius: R.lg, padding: 16, alignItems: 'center', marginTop: 20 },
   primaryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  sectionH: { fontSize: 12, fontWeight: '800', color: C.mute, letterSpacing: 0.8, marginTop: 8, marginBottom: 10 },
+  sectionSub: { fontSize: 12.5, color: C.mute, lineHeight: 17, marginTop: -4, marginBottom: 12 },
+  folder: { backgroundColor: C.panel, borderRadius: R.lg, marginBottom: 10, ...shadowSm, overflow: 'hidden' },
+  folderHead: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 14 },
+  folderGlyph: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  folderTitle: { fontSize: 15.5, fontWeight: '800', color: C.ink, letterSpacing: -0.2 },
+  folderSub: { fontSize: 12.5, color: C.mute, marginTop: 2, fontWeight: '600' },
+  folderCount: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: C.canvas, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  folderCountT: { fontSize: 12, fontWeight: '800', color: C.mute },
+  folderBody: { paddingHorizontal: 10, paddingBottom: 8 },
 });

@@ -1,5 +1,6 @@
 // completionService.js — shift lifecycle + settlement data layer
 import { supabase } from './supabaseClient';
+import { releasePayment } from './paymentsService';
 
 // Operator: move my assignment forward (accepted->en_route->on_site->complete)
 export async function advanceAssignment(assignmentId, to) {
@@ -100,12 +101,15 @@ export async function approveRequest(requestId, adj = {}) {
   return data;
 }
 
-// Client: cancel a whole request (any stage before settlement).
+// Client: cancel a whole request (any stage before settlement). Also release any Stripe hold so a
+// card authorization is never left dangling (best-effort — a cancel must succeed even if release does
+// not; release-payment is a no-op when there's nothing authorized to void).
 export async function cancelRequest(requestId, reason = null) {
   const { data, error } = await supabase.rpc('cancel_request', {
     p_request_id: requestId, p_reason: reason,
   });
   if (error) throw error;
+  try { await releasePayment(requestId); } catch (_) { /* no hold to release, or offline — the cancel still stands */ }
   return data;
 }
 
@@ -173,7 +177,7 @@ export async function listMyRequestsFull() {
     try {
       const { data: ops } = await supabase
         .from('profiles')
-        .select('id, full_name, rating, rating_count, jobs_done, vehicle_type')
+        .select('id, full_name, rating, rating_count, jobs_done, vehicle_type, gst_registered')
         .in('id', opIds);
       const byId = Object.fromEntries((ops || []).map((o) => [o.id, o]));
       rows.forEach((r) => (r.request_items || []).forEach((it) => (it.assignments || []).forEach((a) => {
